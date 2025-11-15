@@ -7,10 +7,10 @@ const incomes = []; // {month, owner, amount}
 let nextId = 1;
 const getNextId = () => nextId++;
 
-// Tipos de gasto (linha vermelha da planilha)
+// Tipos de gasto (linha vermelha da tua planilha)
 const RECEIPT_TYPES = ['Transporte', 'Supermercado', 'Contas', 'Eventos', 'Jantar fora', 'Lojas', 'Assinaturas', 'Combustível', 'Cuidados pessoais'];
 
-// Cadastro inicial de empresas por tipo
+// Empresas por tipo
 const companyDirectory = {
   Transporte: ['STM', 'UBER'],
   Supermercado: ['MARCHE SA', 'WALMART', 'SUPER C', 'MAXI', 'MARCHE DOMAINE', 'IGA', 'COSTCO', 'PROVIGO', 'SAQ', 'MARCHE BRESILIEN', 'BULKBARN', 'METRO', 'ADONIS', 'T&T', 'KIMPHAY', 'MERCADO'],
@@ -25,19 +25,27 @@ const companyDirectory = {
 
 // ===== Utilitários =====
 
+// Formata como "CAD 1.234,56"
 function formatCurrency(value) {
   const n = Number(value) || 0;
-  return 'CAD ' + n.toFixed(2).replace('.', ',');
+  const fixed = n.toFixed(2); // "1234.56"
+  const [intPart, decPart] = fixed.split('.');
+  const withThousands = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return 'CAD ' + withThousands + ',' + decPart;
 }
 
 function parseAmount(str) {
-  if (!str) return NaN;
+  if (str === null || str === undefined || str === '') return NaN;
   return parseFloat(String(str).replace(',', '.'));
 }
 
 function getCurrentMonthISO() {
   const today = new Date();
-  return today.toISOString().slice(0, 7);
+  return today.toISOString().slice(0, 7); // AAAA-MM
+}
+
+function makeKey(category, description) {
+  return (category || '').trim().toLowerCase() + '||' + (description || '').trim().toLowerCase();
 }
 
 // ===== Navegação entre telas =====
@@ -57,28 +65,26 @@ navButtons.forEach((btn) => {
   });
 });
 
-// ===== ORÇAMENTO MENSAL =====
+// ===== Controles globais (mês + rendas + resumo) =====
 
-const budgetMonthInput = document.getElementById('budget-month');
+const monthInput = document.getElementById('current-month');
 const incomeLuanaInput = document.getElementById('income-luana');
 const incomeGabrielInput = document.getElementById('income-gabriel');
 const btnSaveIncome = document.getElementById('btn-save-income');
 
-const summaryIncomeTotal = document.getElementById('summary-income-total');
+const summaryIncomeInline = document.getElementById('summary-income-inline');
 const summaryTotalPlanned = document.getElementById('summary-total-planned');
 const summaryTotalActual = document.getElementById('summary-total-actual');
 const summarySaldoPrevisto = document.getElementById('summary-saldo-previsto');
 const summarySaldoReal = document.getElementById('summary-saldo-real');
+const summaryDiffSaldo = document.getElementById('summary-diff-saldo');
 
-const budgetTableBody = document.getElementById('budget-table-body');
-const plannedItemsTbody = document.getElementById('planned-items-tbody');
-
-const formPlanned = document.getElementById('form-planned');
-const plannedSubmitBtn = document.querySelector("#form-planned button[type='submit']");
-let editingPlannedId = null;
+function getCurrentMonth() {
+  return monthInput.value;
+}
 
 btnSaveIncome.addEventListener('click', () => {
-  const month = budgetMonthInput.value;
+  const month = getCurrentMonth();
   if (!month) {
     alert('Escolha o mês antes de salvar as rendas.');
     return;
@@ -87,34 +93,150 @@ btnSaveIncome.addEventListener('click', () => {
   const luana = parseAmount(incomeLuanaInput.value) || 0;
   const gabriel = parseAmount(incomeGabrielInput.value) || 0;
 
-  // remove rendas antigas deste mês
+  // Remove rendas antigas desse mês
   for (let i = incomes.length - 1; i >= 0; i--) {
     if (incomes[i].month === month) incomes.splice(i, 1);
   }
+
   incomes.push({ month, owner: 'Luana', amount: luana });
   incomes.push({ month, owner: 'Gabriel', amount: gabriel });
 
-  updateBudgetView();
+  refreshAll();
   alert('Rendas salvas para ' + month + '!');
+});
+
+monthInput.addEventListener('change', () => {
+  refreshAll();
+});
+
+// ===== Chips de tipos & empresas (uso em 2 telas) =====
+
+const plannedTypeChips = document.getElementById('planned-type-chips');
+const plannedCompanyChips = document.getElementById('planned-company-chips');
+const receiptTypeChips = document.getElementById('receipt-type-chips');
+const receiptCompanyChips = document.getElementById('receipt-company-chips');
+
+let selectedPlannedType = RECEIPT_TYPES[0];
+let selectedReceiptType = RECEIPT_TYPES[0];
+
+function renderTypeChips(container, selectedType, onSelect) {
+  container.innerHTML = '';
+  RECEIPT_TYPES.forEach((type) => {
+    const chip = document.createElement('div');
+    chip.className = 'chip' + (type === selectedType ? ' active' : '');
+    chip.textContent = type;
+    chip.addEventListener('click', () => onSelect(type));
+    container.appendChild(chip);
+  });
+}
+
+function renderCompanyChips(container, type, onSelectCompany) {
+  container.innerHTML = '';
+  const companies = companyDirectory[type] || [];
+
+  if (!companies.length) {
+    const span = document.createElement('span');
+    span.className = 'hint small';
+    span.textContent = 'Nenhuma empresa cadastrada para este tipo ainda. Use o campo abaixo para adicionar.';
+    container.appendChild(span);
+    return;
+  }
+
+  companies.forEach((name) => {
+    const chip = document.createElement('div');
+    chip.className = 'chip';
+    chip.textContent = name;
+    chip.addEventListener('click', () => onSelectCompany(name));
+    container.appendChild(chip);
+  });
+}
+
+function updatePlannedChips() {
+  renderTypeChips(plannedTypeChips, selectedPlannedType, (type) => {
+    selectedPlannedType = type;
+    plannedCategoryInput.value = type;
+    updatePlannedChips();
+  });
+
+  renderCompanyChips(plannedCompanyChips, selectedPlannedType, (company) => {
+    plannedDescriptionInput.value = company;
+  });
+}
+
+function updateReceiptChips() {
+  renderTypeChips(receiptTypeChips, selectedReceiptType, (type) => {
+    selectedReceiptType = type;
+    actualCategoryInput.value = type;
+    updateReceiptChips();
+  });
+
+  renderCompanyChips(receiptCompanyChips, selectedReceiptType, (company) => {
+    actualMerchantInput.value = company;
+  });
+}
+
+// ===== Orçamento mensal (custos previstos) =====
+
+const formPlanned = document.getElementById('form-planned');
+const plannedCategoryInput = document.getElementById('planned-category');
+const plannedDescriptionInput = document.getElementById('planned-description');
+const plannedAmountInput = document.getElementById('planned-amount');
+const plannedOwnerSelect = document.getElementById('planned-owner');
+const plannedFixedCheckbox = document.getElementById('planned-fixed');
+const plannedSubmitBtn = document.getElementById('planned-submit-btn');
+
+const budgetTableBody = document.getElementById('budget-table-body');
+const plannedItemsTbody = document.getElementById('planned-items-tbody');
+
+const formCompany = document.getElementById('form-company');
+const companyNameInput = document.getElementById('company-name');
+
+let editingPlannedId = null;
+
+formCompany.addEventListener('submit', (e) => {
+  e.preventDefault();
+
+  const name = companyNameInput.value.trim();
+  if (!name) {
+    alert('Digite o nome da empresa para cadastrar.');
+    return;
+  }
+
+  const type = selectedPlannedType || plannedCategoryInput.value.trim();
+  if (!type) {
+    alert('Selecione um tipo de gasto antes de cadastrar a empresa.');
+    return;
+  }
+
+  if (!companyDirectory[type]) {
+    companyDirectory[type] = [];
+  }
+  if (!companyDirectory[type].includes(name)) {
+    companyDirectory[type].push(name);
+  }
+
+  companyNameInput.value = '';
+  updatePlannedChips();
+  updateReceiptChips();
 });
 
 formPlanned.addEventListener('submit', (e) => {
   e.preventDefault();
 
-  const month = budgetMonthInput.value;
+  const month = getCurrentMonth();
   if (!month) {
-    alert('Escolha o mês de referência primeiro.');
+    alert('Escolha o mês de referência no topo primeiro.');
     return;
   }
 
-  const category = document.getElementById('planned-category').value.trim();
-  const description = document.getElementById('planned-description').value.trim();
-  const amount = parseAmount(document.getElementById('planned-amount').value);
-  const owner = document.getElementById('planned-owner').value;
-  const fixed = document.getElementById('planned-fixed').checked;
+  const category = plannedCategoryInput.value.trim();
+  const description = plannedDescriptionInput.value.trim();
+  const amount = parseAmount(plannedAmountInput.value);
+  const owner = plannedOwnerSelect.value;
+  const fixed = plannedFixedCheckbox.checked;
 
   if (!category || !description || isNaN(amount)) {
-    alert('Preencha categoria, descrição e valor.');
+    alert('Preencha categoria, descrição e valor previsto.');
     return;
   }
 
@@ -141,7 +263,7 @@ formPlanned.addEventListener('submit', (e) => {
   }
 
   resetPlannedForm();
-  updateBudgetView();
+  refreshAll();
 });
 
 function resetPlannedForm() {
@@ -155,88 +277,27 @@ function startEditPlanned(id) {
   if (!item) return;
   editingPlannedId = id;
 
-  budgetMonthInput.value = item.month;
-  document.getElementById('planned-category').value = item.category;
-  document.getElementById('planned-description').value = item.description;
-  document.getElementById('planned-amount').value = item.amount;
-  document.getElementById('planned-owner').value = item.owner;
-  document.getElementById('planned-fixed').checked = item.fixed;
+  monthInput.value = item.month;
+  plannedCategoryInput.value = item.category;
+  plannedDescriptionInput.value = item.description;
+  plannedAmountInput.value = item.amount;
+  plannedOwnerSelect.value = item.owner;
+  plannedFixedCheckbox.checked = item.fixed;
+
+  if (RECEIPT_TYPES.includes(item.category)) {
+    selectedPlannedType = item.category;
+    updatePlannedChips();
+  }
 
   plannedSubmitBtn.textContent = 'Salvar alterações';
-  updateBudgetView();
+  refreshAll();
 }
 
 function deletePlanned(id) {
   const idx = plannedItems.findIndex((p) => p.id === id);
   if (idx >= 0) plannedItems.splice(idx, 1);
   if (editingPlannedId === id) resetPlannedForm();
-  updateBudgetView();
-}
-
-function updateBudgetView() {
-  const month = budgetMonthInput.value;
-  if (!month) return;
-
-  const incomeForMonth = incomes.filter((i) => i.month === month);
-  const totalIncome = incomeForMonth.reduce((s, i) => s + i.amount, 0);
-
-  const plannedForMonth = plannedItems.filter((p) => p.month === month);
-  const totalPlanned = plannedForMonth.reduce((s, p) => s + p.amount, 0);
-
-  const actualForMonth = receipts.filter((r) => r.date.startsWith(month));
-  const totalActual = actualForMonth.reduce((s, r) => s + r.amount, 0);
-
-  const saldoPrevisto = totalIncome - totalPlanned;
-  const saldoReal = totalIncome - totalActual;
-
-  summaryIncomeTotal.textContent = formatCurrency(totalIncome);
-  summaryTotalPlanned.textContent = formatCurrency(totalPlanned);
-  summaryTotalActual.textContent = formatCurrency(totalActual);
-  summarySaldoPrevisto.textContent = formatCurrency(saldoPrevisto);
-  summarySaldoReal.textContent = formatCurrency(saldoReal);
-
-  // tabela agregada por categoria
-  const mapCat = {};
-  plannedForMonth.forEach((p) => {
-    if (!mapCat[p.category]) mapCat[p.category] = { planned: 0, actual: 0 };
-    mapCat[p.category].planned += p.amount;
-  });
-  actualForMonth.forEach((r) => {
-    if (!mapCat[r.category]) mapCat[r.category] = { planned: 0, actual: 0 };
-    mapCat[r.category].actual += r.amount;
-  });
-
-  budgetTableBody.innerHTML = '';
-  Object.keys(mapCat).forEach((cat) => {
-    const { planned, actual } = mapCat[cat];
-    const diff = actual - planned;
-
-    const tr = document.createElement('tr');
-
-    const tdCat = document.createElement('td');
-    tdCat.textContent = cat;
-
-    const tdPlanned = document.createElement('td');
-    tdPlanned.textContent = formatCurrency(planned);
-
-    const tdActual = document.createElement('td');
-    tdActual.textContent = formatCurrency(actual);
-
-    const tdDiff = document.createElement('td');
-    tdDiff.textContent = formatCurrency(diff);
-    tdDiff.className = diff > 0 ? 'negative' : diff < 0 ? 'positive' : '';
-
-    tr.appendChild(tdCat);
-    tr.appendChild(tdPlanned);
-    tr.appendChild(tdActual);
-    tr.appendChild(tdDiff);
-
-    budgetTableBody.appendChild(tr);
-  });
-
-  renderPlannedItemsList(month);
-  updateReceiptsView();
-  updateChartsView();
+  refreshAll();
 }
 
 function renderPlannedItemsList(month) {
@@ -265,6 +326,7 @@ function renderPlannedItemsList(month) {
 
     const tdVal = document.createElement('td');
     tdVal.textContent = formatCurrency(p.amount);
+    tdVal.classList.add('numeric');
 
     const tdOwner = document.createElement('td');
     tdOwner.textContent = p.owner;
@@ -273,8 +335,9 @@ function renderPlannedItemsList(month) {
     tdFixed.textContent = p.fixed ? 'Sim' : 'Não';
 
     const tdActions = document.createElement('td');
-    const actionsDiv = document.createElement('div');
-    actionsDiv.className = 'planned-actions';
+    tdActions.classList.add('actions-col');
+    const actions = document.createElement('div');
+    actions.className = 'planned-actions';
 
     const editBtn = document.createElement('button');
     editBtn.className = 'action-btn';
@@ -286,9 +349,9 @@ function renderPlannedItemsList(month) {
     delBtn.textContent = 'Excluir';
     delBtn.onclick = () => deletePlanned(p.id);
 
-    actionsDiv.appendChild(editBtn);
-    actionsDiv.appendChild(delBtn);
-    tdActions.appendChild(actionsDiv);
+    actions.appendChild(editBtn);
+    actions.appendChild(delBtn);
+    tdActions.appendChild(actions);
 
     tr.appendChild(tdCat);
     tr.appendChild(tdDesc);
@@ -301,103 +364,29 @@ function renderPlannedItemsList(month) {
   });
 }
 
-// ===== LANÇAMENTO DE NOTAS FISCAIS =====
+// ===== Lançamento de notas fiscais =====
 
 const formActual = document.getElementById('form-actual');
 const actualSubmitBtn = document.getElementById('actual-submit-btn');
-const receiptsMonthInput = document.getElementById('receipts-month');
-const receiptsList = document.getElementById('receipts-list');
-
-const receiptTypeChipsContainer = document.getElementById('receipt-type-chips');
-const companyChipsContainer = document.getElementById('company-chips');
-const formCompany = document.getElementById('form-company');
-const companyNameInput = document.getElementById('company-name');
-
+const actualDateInput = document.getElementById('actual-date');
 const actualCategoryInput = document.getElementById('actual-category');
 const actualMerchantInput = document.getElementById('actual-merchant');
+const actualAmountInput = document.getElementById('actual-amount');
+const actualOwnerSelect = document.getElementById('actual-owner');
+const actualFixedCheckbox = document.getElementById('actual-fixed');
+const receiptsList = document.getElementById('receipts-list');
 
-let selectedReceiptType = RECEIPT_TYPES[0];
 let editingReceiptId = null;
 
-// mostra empresas de um tipo
-function renderCompaniesForType(type) {
-  companyChipsContainer.innerHTML = '';
-  const companies = companyDirectory[type] || [];
-
-  if (!companies.length) {
-    const msg = document.createElement('span');
-    msg.className = 'hint small';
-    msg.textContent = 'Nenhuma empresa cadastrada para este tipo ainda. Use o campo abaixo para adicionar.';
-    companyChipsContainer.appendChild(msg);
-    return;
-  }
-
-  companies.forEach((name) => {
-    const chip = document.createElement('div');
-    chip.className = 'chip';
-    chip.textContent = name;
-    chip.addEventListener('click', () => {
-      actualMerchantInput.value = name;
-    });
-    companyChipsContainer.appendChild(chip);
-  });
-}
-
-// cria chips de tipo
-RECEIPT_TYPES.forEach((type, idx) => {
-  const chip = document.createElement('div');
-  chip.className = 'chip';
-  chip.textContent = type;
-  chip.addEventListener('click', () => {
-    selectedReceiptType = type;
-    actualCategoryInput.value = type;
-
-    receiptTypeChipsContainer.querySelectorAll('.chip').forEach((c) => c.classList.remove('active'));
-    chip.classList.add('active');
-
-    renderCompaniesForType(type);
-  });
-  receiptTypeChipsContainer.appendChild(chip);
-  if (idx === 0) chip.classList.add('active');
-});
-
-// cadastro de empresa (sem criar lançamento)
-formCompany.addEventListener('submit', (e) => {
-  e.preventDefault();
-
-  const name = companyNameInput.value.trim();
-  if (!name) {
-    alert('Digite o nome da empresa para cadastrar.');
-    return;
-  }
-
-  const type = selectedReceiptType || actualCategoryInput.value.trim();
-  if (!type) {
-    alert('Selecione um tipo de gasto antes de cadastrar a empresa.');
-    return;
-  }
-
-  if (!companyDirectory[type]) {
-    companyDirectory[type] = [];
-  }
-  if (!companyDirectory[type].includes(name)) {
-    companyDirectory[type].push(name);
-  }
-
-  companyNameInput.value = '';
-  renderCompaniesForType(type);
-});
-
-// salvar / editar lançamento
 formActual.addEventListener('submit', (e) => {
   e.preventDefault();
 
-  const date = document.getElementById('actual-date').value;
+  const date = actualDateInput.value;
   const category = actualCategoryInput.value.trim();
   const merchant = actualMerchantInput.value.trim();
-  const amount = parseAmount(document.getElementById('actual-amount').value);
-  const owner = document.getElementById('actual-owner').value;
-  const fixed = document.getElementById('actual-fixed').checked;
+  const amount = parseAmount(actualAmountInput.value);
+  const owner = actualOwnerSelect.value;
+  const fixed = actualFixedCheckbox.checked;
 
   if (!date || !category || !merchant || isNaN(amount)) {
     alert('Preencha data, categoria, nome e valor.');
@@ -427,7 +416,7 @@ formActual.addEventListener('submit', (e) => {
   }
 
   resetReceiptForm();
-  updateBudgetView(); // atualiza real, lista, gráfico
+  refreshAll();
 });
 
 function resetReceiptForm() {
@@ -441,20 +430,16 @@ function startEditReceipt(id) {
   if (!r) return;
   editingReceiptId = id;
 
-  document.getElementById('actual-date').value = r.date;
+  actualDateInput.value = r.date;
   actualCategoryInput.value = r.category;
   actualMerchantInput.value = r.merchant;
-  document.getElementById('actual-amount').value = r.amount;
-  document.getElementById('actual-owner').value = r.owner;
-  document.getElementById('actual-fixed').checked = r.fixed;
+  actualAmountInput.value = r.amount;
+  actualOwnerSelect.value = r.owner;
+  actualFixedCheckbox.checked = r.fixed;
 
-  // Seleciona o tipo, se existir
   if (RECEIPT_TYPES.includes(r.category)) {
     selectedReceiptType = r.category;
-    receiptTypeChipsContainer.querySelectorAll('.chip').forEach((c) => {
-      c.classList.toggle('active', c.textContent === r.category);
-    });
-    renderCompaniesForType(r.category);
+    updateReceiptChips();
   }
 
   actualSubmitBtn.textContent = 'Salvar alterações';
@@ -464,15 +449,15 @@ function deleteReceipt(id) {
   const idx = receipts.findIndex((r) => r.id === id);
   if (idx >= 0) receipts.splice(idx, 1);
   if (editingReceiptId === id) resetReceiptForm();
-  updateBudgetView();
+  refreshAll();
 }
 
 function updateReceiptsView() {
-  const month = receiptsMonthInput.value;
+  const month = getCurrentMonth();
+  receiptsList.innerHTML = '';
   if (!month) return;
 
   const list = receipts.filter((r) => r.date.startsWith(month));
-  receiptsList.innerHTML = '';
 
   if (!list.length) {
     receiptsList.innerHTML = "<p class='hint'>Nenhum lançamento para este mês.</p>";
@@ -501,10 +486,7 @@ function updateReceiptsView() {
       main.appendChild(meta);
 
       const right = document.createElement('div');
-      right.style.display = 'flex';
-      right.style.flexDirection = 'column';
-      right.style.alignItems = 'flex-end';
-      right.style.gap = '4px';
+      right.className = 'receipt-right';
 
       const amountDiv = document.createElement('div');
       amountDiv.className = 'receipt-amount';
@@ -536,17 +518,186 @@ function updateReceiptsView() {
     });
 }
 
-receiptsMonthInput.addEventListener('change', updateReceiptsView);
+// ===== Comparativo por item (Orçamento x Notas) =====
 
-// ===== GRÁFICOS (Chart.js) =====
+const comparisonTbody = document.getElementById('comparison-tbody');
+
+function updateComparisonTable() {
+  const month = getCurrentMonth();
+  comparisonTbody.innerHTML = '';
+  if (!month) return;
+
+  const plannedForMonth = plannedItems.filter((p) => p.month === month);
+  const receiptsForMonth = receipts.filter((r) => r.date.startsWith(month));
+
+  const map = new Map();
+
+  plannedForMonth.forEach((p) => {
+    const key = makeKey(p.category, p.description);
+    if (!map.has(key)) {
+      map.set(key, {
+        category: p.category,
+        description: p.description,
+        planned: 0,
+        actual: 0,
+      });
+    }
+    map.get(key).planned += p.amount;
+  });
+
+  receiptsForMonth.forEach((r) => {
+    const key = makeKey(r.category, r.merchant);
+    if (!map.has(key)) {
+      map.set(key, {
+        category: r.category,
+        description: r.merchant,
+        planned: 0,
+        actual: 0,
+      });
+    }
+    map.get(key).actual += r.amount;
+  });
+
+  const rows = Array.from(map.values());
+
+  if (!rows.length) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 5;
+    td.textContent = 'Nenhum dado de orçamento ou notas para este mês.';
+    td.className = 'hint small';
+    tr.appendChild(td);
+    comparisonTbody.appendChild(tr);
+    return;
+  }
+
+  rows.sort((a, b) => a.category.localeCompare(b.category) || a.description.localeCompare(b.description));
+
+  rows.forEach((row) => {
+    const diff = row.planned - row.actual;
+
+    const tr = document.createElement('tr');
+
+    const tdCat = document.createElement('td');
+    tdCat.textContent = row.category;
+
+    const tdDesc = document.createElement('td');
+    tdDesc.textContent = row.description;
+
+    const tdPrev = document.createElement('td');
+    tdPrev.textContent = formatCurrency(row.planned);
+    tdPrev.classList.add('numeric');
+
+    const tdReal = document.createElement('td');
+    tdReal.textContent = formatCurrency(row.actual);
+    tdReal.classList.add('numeric');
+
+    const tdDiff = document.createElement('td');
+    tdDiff.textContent = formatCurrency(diff);
+    tdDiff.classList.add('numeric');
+    tdDiff.classList.add(diff >= 0 ? 'positive' : 'negative');
+
+    tr.appendChild(tdCat);
+    tr.appendChild(tdDesc);
+    tr.appendChild(tdPrev);
+    tr.appendChild(tdReal);
+    tr.appendChild(tdDiff);
+
+    comparisonTbody.appendChild(tr);
+  });
+}
+
+// ===== Resumo + tabela por categoria =====
+
+function updateSummaryAndBudgetTables() {
+  const month = getCurrentMonth();
+  if (!month) return;
+
+  const incomeForMonth = incomes.filter((i) => i.month === month);
+  const totalIncome = incomeForMonth.reduce((s, i) => s + i.amount, 0);
+
+  const plannedForMonth = plannedItems.filter((p) => p.month === month);
+  const totalPlanned = plannedForMonth.reduce((s, p) => s + p.amount, 0);
+
+  const actualForMonth = receipts.filter((r) => r.date.startsWith(month));
+  const totalActual = actualForMonth.reduce((s, r) => s + r.amount, 0);
+
+  const diffExpenses = totalPlanned - totalActual; // previsto - real (se quiser usar depois)
+  const saldoPrevisto = totalIncome - totalPlanned;
+  const saldoReal = totalIncome - totalActual;
+  const diffSaldo = saldoReal - saldoPrevisto; // Economia / Estouro do mês
+
+  summaryIncomeInline.textContent = formatCurrency(totalIncome);
+  summaryTotalPlanned.textContent = formatCurrency(totalPlanned);
+  summaryTotalActual.textContent = formatCurrency(totalActual);
+
+  summarySaldoPrevisto.textContent = formatCurrency(saldoPrevisto);
+  summarySaldoReal.textContent = formatCurrency(saldoReal);
+
+  summaryDiffSaldo.textContent = formatCurrency(diffSaldo);
+  summaryDiffSaldo.className = 'summary-value ' + (diffSaldo >= 0 ? 'positive' : 'negative');
+
+  // Tabela por categoria
+  const mapCat = {};
+
+  plannedForMonth.forEach((p) => {
+    if (!mapCat[p.category]) {
+      mapCat[p.category] = { planned: 0, actual: 0 };
+    }
+    mapCat[p.category].planned += p.amount;
+  });
+
+  actualForMonth.forEach((r) => {
+    if (!mapCat[r.category]) {
+      mapCat[r.category] = { planned: 0, actual: 0 };
+    }
+    mapCat[r.category].actual += r.amount;
+  });
+
+  budgetTableBody.innerHTML = '';
+
+  const cats = Object.keys(mapCat).sort((a, b) => a.localeCompare(b));
+  cats.forEach((cat) => {
+    const { planned, actual } = mapCat[cat];
+    const diff = planned - actual; // Previsto − Real
+
+    const tr = document.createElement('tr');
+
+    const tdCat = document.createElement('td');
+    tdCat.textContent = cat;
+
+    const tdPlanned = document.createElement('td');
+    tdPlanned.textContent = formatCurrency(planned);
+    tdPlanned.classList.add('numeric');
+
+    const tdActual = document.createElement('td');
+    tdActual.textContent = formatCurrency(actual);
+    tdActual.classList.add('numeric');
+
+    const tdDiff = document.createElement('td');
+    tdDiff.textContent = formatCurrency(diff);
+    tdDiff.classList.add('numeric');
+    tdDiff.classList.add(diff >= 0 ? 'positive' : 'negative');
+
+    tr.appendChild(tdCat);
+    tr.appendChild(tdPlanned);
+    tr.appendChild(tdActual);
+    tr.appendChild(tdDiff);
+
+    budgetTableBody.appendChild(tr);
+  });
+
+  renderPlannedItemsList(month);
+}
+
+// ===== Gráficos (Chart.js) =====
 
 let categoriesChart = null;
-const chartsMonthInput = document.getElementById('charts-month');
-const chartCanvas = document.getElementById('chart-categories');
+const chartsCanvas = document.getElementById('chart-categories');
 
 function updateChartsView() {
-  const month = chartsMonthInput.value;
-  if (!month) return;
+  const month = getCurrentMonth();
+  if (!month || !chartsCanvas) return;
 
   const plannedForMonth = plannedItems.filter((p) => p.month === month);
   const actualForMonth = receipts.filter((r) => r.date.startsWith(month));
@@ -561,7 +712,7 @@ function updateChartsView() {
     mapCat[r.category].actual += r.amount;
   });
 
-  const labels = Object.keys(mapCat);
+  const labels = Object.keys(mapCat).sort((a, b) => a.localeCompare(b));
   const plannedData = labels.map((cat) => mapCat[cat].planned);
   const actualData = labels.map((cat) => mapCat[cat].actual);
 
@@ -569,7 +720,7 @@ function updateChartsView() {
     categoriesChart.destroy();
   }
 
-  categoriesChart = new Chart(chartCanvas, {
+  categoriesChart = new Chart(chartsCanvas, {
     type: 'bar',
     data: {
       labels,
@@ -580,35 +731,48 @@ function updateChartsView() {
     },
     options: {
       responsive: true,
-      scales: { y: { beginAtZero: true } },
+      scales: {
+        y: { beginAtZero: true },
+      },
     },
   });
 }
 
-chartsMonthInput.addEventListener('change', updateChartsView);
+// ===== Refresh geral =====
+
+function refreshAll() {
+  const month = getCurrentMonth();
+  if (!month) {
+    summaryIncomeInline.textContent = 'CAD 0,00';
+    summaryTotalPlanned.textContent = 'CAD 0,00';
+    summaryTotalActual.textContent = 'CAD 0,00';
+    summarySaldoPrevisto.textContent = 'CAD 0,00';
+    summarySaldoReal.textContent = 'CAD 0,00';
+    summaryDiffSaldo.textContent = 'CAD 0,00';
+    budgetTableBody.innerHTML = '';
+    plannedItemsTbody.innerHTML = '';
+    receiptsList.innerHTML = '';
+    comparisonTbody.innerHTML = '';
+    return;
+  }
+
+  updateSummaryAndBudgetTables();
+  updateReceiptsView();
+  updateComparisonTable();
+  updateChartsView();
+}
 
 // ===== Inicialização =====
 
 (function init() {
   const m = getCurrentMonthISO();
+  monthInput.value = m;
 
-  budgetMonthInput.value = m;
-  receiptsMonthInput.value = m;
-  chartsMonthInput.value = m;
-
-  // tipo inicial
+  selectedPlannedType = RECEIPT_TYPES[0];
   selectedReceiptType = RECEIPT_TYPES[0];
-  actualCategoryInput.value = selectedReceiptType;
-  renderCompaniesForType(selectedReceiptType);
 
-  updateBudgetView();
-  updateReceiptsView();
-  updateChartsView();
+  updatePlannedChips();
+  updateReceiptChips();
+
+  refreshAll();
 })();
-
-//registrar o service worker
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./service-worker.js').catch((err) => console.error('SW registration failed:', err));
-  });
-}

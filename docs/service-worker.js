@@ -1,11 +1,13 @@
-// service-worker.js do Controle Financeiro
+// docs/service-worker.js
+const CACHE_NAME = 'controle-financeiro-v2';
 
-const CACHE_NAME = 'controle-financeiro-v1';
+const urlsToCache = [
+  '/custo_financeiro/', // página inicial
+  '/custo_financeiro/index.html',
+  '/custo_financeiro/style.css',
+  '/custo_financeiro/app.js',
+];
 
-// Arquivos básicos da tua PWA
-const urlsToCache = ['./', './index.html', './style.css', './app.js'];
-
-// Instalação: coloca tudo no cache
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
@@ -15,7 +17,6 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// Ativação: limpa caches antigos
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
@@ -25,11 +26,6 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch: tenta responder do cache, se não tiver busca na rede
 self.addEventListener('fetch', (event) => {
-  event.respondWith(
-    caches.match(event.request).then((response) => {
-      return response || fetch(event.request);
-    })
-  );
+  event.respondWith(caches.match(event.request).then((response) => response || fetch(event.request)));
 });

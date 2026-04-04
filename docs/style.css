@@ -408,6 +408,11 @@ button:active {
   border: 1px solid transparent;
 }
 
+.chip.edit-mode {
+  border-color: #ff7b7b;
+  color: #ff7b7b;
+}
+
 .chip.active {
   border-color: #fddf7b;
   background: #2b2b40;

@@ -12,10 +12,7 @@ const openDashboardCats = new Set();
 let nextId = 1;
 const getNextId = () => nextId++;
 
-// Tipos de gasto (linha vermelha da tua planilha)
-const RECEIPT_TYPES = ['Transporte', 'Supermercado', 'Contas', 'Eventos', 'Jantar fora', 'Lojas', 'Assinaturas', 'Combustível', 'Cuidados pessoais'];
-
-// Empresas por tipo
+// Categorias e Empresas unificadas e dinâmicas
 const companyDirectory = {
   Transporte: ['STM', 'UBER'],
   Supermercado: ['MARCHE SA', 'WALMART', 'SUPER C', 'MAXI', 'MARCHE DOMAINE', 'IGA', 'COSTCO', 'PROVIGO', 'SAQ', 'MARCHE BRESILIEN', 'BULKBARN', 'METRO', 'ADONIS', 'T&T', 'KIMPHAY', 'MERCADO'],
@@ -27,6 +24,11 @@ const companyDirectory = {
   Combustível: ['PETRO CANADA', 'COSTCO GASOLINA', 'ESSO'],
   'Cuidados pessoais': ['CABELO', 'UNHA', 'PHARMAPRIX', 'JEAN COUTO', 'ACADEMIA', 'REMÉDIO', 'MASSAGEM', 'MÉDICO', 'VETERINÁRIO'],
 };
+
+// Helper dinâmico
+function getCategories() {
+  return Object.keys(companyDirectory);
+}
 
 // ===== Utilitários =====
 
@@ -117,53 +119,65 @@ function loadIncomeToInputs(month) {
   incomeGabrielInput.value = income ? income.gabriel || 0 : 0;
 }
 
-// 2. Evento do botão Carregar
-// Evento do botão Carregar (Agora carrega Renda + Orçamento Fixo)
-btnLoadMonth.addEventListener('click', () => {
+// 2. Evento do botão Carregar (Clona do Firebase)
+btnLoadMonth.addEventListener('click', async () => {
   const targetMonth = getCurrentMonth();
   if (!targetMonth) return alert('Selecione um mês primeiro.');
 
-  // 1. Verificar se o mês atual já tem itens (para não duplicar por acidente)
-  const hasItems = plannedItems.some((p) => p.month === targetMonth);
+  const originalText = btnLoadMonth.textContent;
+  btnLoadMonth.textContent = 'Processando...';
+  btnLoadMonth.disabled = true;
 
-  if (!hasItems) {
-    // 2. Buscar o mês anterior mais recente que possua dados
-    const pastMonthsWithData = [...new Set(plannedItems.map((p) => p.month))].filter((m) => m < targetMonth).sort((a, b) => b.localeCompare(a));
+  try {
+    const hasItems = plannedItems.some((p) => p.month === targetMonth);
 
-    if (pastMonthsWithData.length > 0) {
-      const lastMonth = pastMonthsWithData[0];
+    if (!hasItems) {
+      // Calcula o mês anterior matematicamente (Ex: 2026-04 vira 2026-03)
+      const [year, month] = targetMonth.split('-');
+      let prevDate = new Date(year, parseInt(month) - 2, 1);
+      const prevMonthStr = prevDate.getFullYear() + '-' + String(prevDate.getMonth() + 1).padStart(2, '0');
 
-      // 3. Filtrar apenas os itens FIXOS do mês anterior
-      const fixedItemsToClone = plannedItems.filter((p) => p.month === lastMonth && p.fixed);
+      // Busca os itens do mês anterior direto do Firebase
+      const prevItems = await FinanceAPI.loadPlanned(prevMonthStr);
+      const fixedItemsToClone = prevItems.filter((p) => p.fixed);
 
-      // 4. Clonar para o mês atual com novos IDs
-      fixedItemsToClone.forEach((item) => {
-        plannedItems.push({
-          ...item,
-          id: getNextId(),
-          month: targetMonth,
-        });
-      });
+      for (const item of fixedItemsToClone) {
+        const newItem = { ...item, month: targetMonth };
+        delete newItem.id; // Remove ID antigo para o Firebase gerar um novo
+        const savedId = await FinanceAPI.savePlanned(targetMonth, newItem);
+        newItem.id = savedId;
+        plannedItems.push(newItem);
+      }
 
-      console.log(`${fixedItemsToClone.length} itens fixos clonados de ${lastMonth} para ${targetMonth}.`);
+      if (fixedItemsToClone.length > 0) {
+        console.log(`${fixedItemsToClone.length} itens fixos clonados de ${prevMonthStr}.`);
+      }
     }
+
+    loadIncomeToInputs(targetMonth);
+    refreshAll();
+    alert(`Dados de ${targetMonth} processados com sucesso!`);
+  } catch (error) {
+    console.error('Erro ao clonar:', error);
+    alert('Erro ao carregar mês.');
+  } finally {
+    btnLoadMonth.textContent = originalText;
+    btnLoadMonth.disabled = false;
   }
-
-  // 5. Carregar a renda (já possui lógica de recorrência)
-  loadIncomeToInputs(targetMonth);
-
-  // 6. Atualizar a tela
-  refreshAll();
-  alert(`Dados de ${targetMonth} processados com sucesso!`);
 });
 
-// 3. Novo Salvar Rendas (Salva como objeto único por mês)
-btnSaveIncome.addEventListener('click', () => {
+// 3. Novo Salvar Rendas
+btnSaveIncome.addEventListener('click', async () => {
   const month = getCurrentMonth();
   if (!month) return alert('Selecione o mês.');
 
   const luana = parseAmount(incomeLuanaInput.value) || 0;
   const gabriel = parseAmount(incomeGabrielInput.value) || 0;
+
+  btnSaveIncome.textContent = 'Salvando...';
+  btnSaveIncome.disabled = true;
+
+  await FinanceAPI.saveIncome(month, luana, gabriel);
 
   const index = incomes.findIndex((i) => i.month === month);
   if (index !== -1) {
@@ -172,22 +186,22 @@ btnSaveIncome.addEventListener('click', () => {
     incomes.push({ month, luana, gabriel });
   }
 
-  alert(`Rendas de ${month} salvas! Valor fixado para os próximos meses.`);
+  btnSaveIncome.textContent = 'Salvar Rendas';
+  btnSaveIncome.disabled = false;
+  alert(`Rendas de ${month} salvas!`);
   refreshAll();
 });
 
-// 4. Helper para o cálculo de saldo (considerando a recorrência)
+// 4. Helper para o cálculo de saldo
 function getIncomeTotalForMonth(month) {
   const exact = incomes.find((i) => i.month === month);
   if (exact) return (exact.luana || 0) + (exact.gabriel || 0);
-
   const past = incomes.filter((i) => i.month < month).sort((a, b) => b.month.localeCompare(a.month));
-
   return past.length > 0 ? past[0].luana + past[0].gabriel : 0;
 }
 
 monthInput.addEventListener('change', () => {
-  refreshAll();
+  syncData(getCurrentMonth());
 });
 
 // ===== Chips de tipos & empresas (uso em 2 telas) =====
@@ -197,25 +211,45 @@ const plannedCompanyChips = document.getElementById('planned-company-chips');
 const receiptTypeChips = document.getElementById('receipt-type-chips');
 const receiptCompanyChips = document.getElementById('receipt-company-chips');
 
-let selectedPlannedType = RECEIPT_TYPES[0];
-let selectedReceiptType = RECEIPT_TYPES[0];
+let selectedPlannedType = getCategories()[0];
+let selectedReceiptType = getCategories()[0];
+let isEditMode = false; // Flag para interceptar os cliques
 
 function renderTypeChips(container, selectedType, onSelect) {
   container.innerHTML = '';
-  RECEIPT_TYPES.forEach((type) => {
+  const categories = getCategories();
+
+  categories.forEach((type) => {
     const chip = document.createElement('div');
-    chip.className = 'chip' + (type === selectedType ? ' active' : '');
+    chip.className = 'chip' + (type === selectedType ? ' active' : '') + (isEditMode ? ' edit-mode' : '');
     chip.textContent = type;
-    chip.addEventListener('click', () => onSelect(type));
+    chip.addEventListener('click', () => {
+      if (isEditMode) handleEditCategory(type);
+      else onSelect(type);
+    });
     container.appendChild(chip);
   });
+
+  // Botão embutido e minimalista
+  const manageChip = document.createElement('div');
+  manageChip.className = 'chip special-action';
+  manageChip.style.background = isEditMode ? '#62c462' : 'transparent';
+  manageChip.style.color = isEditMode ? '#0b0b10' : '#fddf7b';
+  manageChip.style.border = '1px dashed #fddf7b';
+  manageChip.textContent = isEditMode ? '✅ Concluir Edição' : '⚙️ Gerenciar Tags';
+  manageChip.addEventListener('click', () => {
+    isEditMode = !isEditMode;
+    updatePlannedChips();
+    updateReceiptChips();
+  });
+  container.appendChild(manageChip);
 }
 
 function renderCompanyChips(container, type, onSelectCompany) {
   container.innerHTML = '';
   const companies = companyDirectory[type] || [];
 
-  if (!companies.length) {
+  if (!companies.length && !isEditMode) {
     const span = document.createElement('span');
     span.className = 'hint small';
     span.textContent = 'Nenhuma empresa cadastrada para este tipo ainda. Digite abaixo para adicionar.';
@@ -225,15 +259,60 @@ function renderCompanyChips(container, type, onSelectCompany) {
 
   companies.forEach((name) => {
     const chip = document.createElement('div');
-    // Adicionamos a classe 'chip-company' aqui:
-    chip.className = 'chip chip-company';
+    chip.className = 'chip chip-company' + (isEditMode ? ' edit-mode' : '');
     chip.textContent = name;
-    chip.addEventListener('click', () => onSelectCompany(name));
+    chip.addEventListener('click', () => {
+      if (isEditMode) handleEditCompany(type, name);
+      else onSelectCompany(name);
+    });
     container.appendChild(chip);
   });
 }
 
+// Funções de CRUD das Tags (Nativo e leve)
+async function handleEditCategory(oldName) {
+  const newName = prompt(`Renomear a categoria "${oldName}"?\n\nDeixe em branco e clique em OK para EXCLUIR.`, oldName);
+  if (newName === null) return;
+
+  const trimmed = newName.trim();
+  if (trimmed === '') {
+    if (confirm(`Atenção: Excluir a categoria "${oldName}" vai sumir com todas as empresas dentro dela. Continuar?`)) {
+      delete companyDirectory[oldName];
+    }
+  } else if (trimmed !== oldName) {
+    companyDirectory[trimmed] = companyDirectory[oldName];
+    delete companyDirectory[oldName];
+    if (selectedPlannedType === oldName) selectedPlannedType = trimmed;
+    if (selectedReceiptType === oldName) selectedReceiptType = trimmed;
+  }
+
+  updatePlannedChips();
+  updateReceiptChips();
+  await FinanceAPI.saveCompanies(companyDirectory);
+}
+
+async function handleEditCompany(category, oldName) {
+  const newName = prompt(`Renomear a empresa "${oldName}"?\n\nDeixe em branco e clique em OK para EXCLUIR.`, oldName);
+  if (newName === null) return;
+
+  const trimmed = newName.trim().toUpperCase();
+  if (trimmed === '') {
+    if (confirm(`Excluir a empresa "${oldName}"?`)) {
+      companyDirectory[category] = companyDirectory[category].filter((c) => c !== oldName);
+    }
+  } else if (trimmed !== oldName) {
+    const idx = companyDirectory[category].indexOf(oldName);
+    if (idx !== -1) companyDirectory[category][idx] = trimmed;
+  }
+
+  updatePlannedChips();
+  updateReceiptChips();
+  await FinanceAPI.saveCompanies(companyDirectory);
+}
+
 function updatePlannedChips() {
+  if (!getCategories().includes(selectedPlannedType)) selectedPlannedType = getCategories()[0] || '';
+
   renderTypeChips(plannedTypeChips, selectedPlannedType, (type) => {
     selectedPlannedType = type;
     plannedCategoryInput.value = type;
@@ -246,6 +325,8 @@ function updatePlannedChips() {
 }
 
 function updateReceiptChips() {
+  if (!getCategories().includes(selectedReceiptType)) selectedReceiptType = getCategories()[0] || '';
+
   renderTypeChips(receiptTypeChips, selectedReceiptType, (type) => {
     selectedReceiptType = type;
     actualCategoryInput.value = type;
@@ -275,68 +356,58 @@ const companyNameInput = document.getElementById('company-name');
 
 let editingPlannedId = null;
 
-// Adicione isso junto dos utilitários
-function autoRegisterCompany(type, name) {
+// Auto Register Assíncrono
+async function autoRegisterCompany(type, name) {
   const t = type.trim();
-  const n = name.trim().toUpperCase(); // Padroniza tudo em maiúsculo igual você fez
+  const n = name.trim().toUpperCase();
 
   if (!t || !n) return;
 
   if (!companyDirectory[t]) {
-    companyDirectory[t] = []; // Cria a categoria se não existir
+    companyDirectory[t] = [];
   }
 
   if (!companyDirectory[t].includes(n)) {
     companyDirectory[t].push(n);
-    // Atualiza os chips na tela imediatamente
     updatePlannedChips();
     updateReceiptChips();
+    await FinanceAPI.saveCompanies(companyDirectory);
   }
 }
 
-formPlanned.addEventListener('submit', (e) => {
+formPlanned.addEventListener('submit', async (e) => {
   e.preventDefault();
-
   const month = getCurrentMonth();
-  if (!month) {
-    alert('Escolha o mês de referência no topo primeiro.');
-    return;
-  }
+  if (!month) return alert('Escolha o mês de referência no topo primeiro.');
 
   const category = plannedCategoryInput.value.trim();
   const description = plannedDescriptionInput.value.trim();
-  autoRegisterCompany(category, description);
   const amount = parseAmount(plannedAmountInput.value);
   const owner = plannedOwnerSelect.value;
   const fixed = plannedFixedCheckbox.checked;
 
-  if (!category || !description || isNaN(amount)) {
-    alert('Preencha categoria, descrição e valor previsto.');
-    return;
-  }
+  if (!category || !description || isNaN(amount)) return alert('Preencha categoria, descrição e valor.');
+
+  plannedSubmitBtn.textContent = 'Salvando...';
+  plannedSubmitBtn.disabled = true;
+
+  await autoRegisterCompany(category, description);
+
+  const itemData = { category, description, amount, owner, fixed, month };
+  if (editingPlannedId !== null) itemData.id = editingPlannedId;
+
+  const savedId = await FinanceAPI.savePlanned(month, itemData);
+  itemData.id = savedId;
 
   if (editingPlannedId === null) {
-    plannedItems.push({
-      id: getNextId(),
-      month,
-      category,
-      description,
-      amount,
-      owner,
-      fixed,
-    });
+    plannedItems.push(itemData);
   } else {
-    const item = plannedItems.find((p) => p.id === editingPlannedId);
-    if (item) {
-      item.month = month;
-      item.category = category;
-      item.description = description;
-      item.amount = amount;
-      item.owner = owner;
-      item.fixed = fixed;
-    }
+    const idx = plannedItems.findIndex((p) => p.id === editingPlannedId);
+    if (idx !== -1) plannedItems[idx] = itemData;
   }
 
+  plannedSubmitBtn.textContent = 'Adicionar ao Orçamento';
+  plannedSubmitBtn.disabled = false;
   resetPlannedForm();
   refreshAll();
 });
@@ -344,7 +415,7 @@ formPlanned.addEventListener('submit', (e) => {
 function resetPlannedForm() {
   formPlanned.reset();
   editingPlannedId = null;
-  plannedSubmitBtn.textContent = 'Adicionar ao orçamento do mês';
+  plannedSubmitBtn.textContent = 'Adicionar ao Orçamento';
 }
 
 function startEditPlanned(id) {
@@ -359,7 +430,7 @@ function startEditPlanned(id) {
   plannedOwnerSelect.value = item.owner;
   plannedFixedCheckbox.checked = item.fixed;
 
-  if (RECEIPT_TYPES.includes(item.category)) {
+  if (getCategories().includes(item.category)) {
     selectedPlannedType = item.category;
     updatePlannedChips();
   }
@@ -368,7 +439,11 @@ function startEditPlanned(id) {
   refreshAll();
 }
 
-function deletePlanned(id) {
+async function deletePlanned(id) {
+  if (!confirm('Excluir este item?')) return;
+  const month = getCurrentMonth();
+  await FinanceAPI.deletePlanned(month, id);
+
   const idx = plannedItems.findIndex((p) => p.id === id);
   if (idx >= 0) plannedItems.splice(idx, 1);
   if (editingPlannedId === id) resetPlannedForm();
@@ -475,8 +550,8 @@ function renderPlannedItemsList(month) {
           <div class="receipt-right">
             <div class="receipt-amount">${formatCurrency(p.amount)}</div>
             <div class="receipt-actions">
-              <button class="action-btn" onclick="startEditPlanned(${p.id})">Editar</button>
-              <button class="action-btn danger" onclick="deletePlanned(${p.id})">Excluir</button>
+              <button class="action-btn" onclick="startEditPlanned('${p.id}')">Editar</button>
+              <button class="action-btn danger" onclick="deletePlanned('${p.id}')">Excluir</button>
             </div>
           </div>
         `;
@@ -505,44 +580,38 @@ const receiptsList = document.getElementById('receipts-list');
 
 let editingReceiptId = null;
 
-formActual.addEventListener('submit', (e) => {
+formActual.addEventListener('submit', async (e) => {
   e.preventDefault();
-
   const date = actualDateInput.value;
+  const month = date.substring(0, 7); // Extrai o AAAA-MM da data selecionada
   const category = actualCategoryInput.value.trim();
   const merchant = actualMerchantInput.value.trim();
-  autoRegisterCompany(category, merchant);
   const amount = parseAmount(actualAmountInput.value);
   const owner = actualOwnerSelect.value;
   const fixed = actualFixedCheckbox.checked;
 
-  if (!date || !category || !merchant || isNaN(amount)) {
-    alert('Preencha data, categoria, nome e valor.');
-    return;
-  }
+  if (!date || !category || !merchant || isNaN(amount)) return alert('Preencha data, categoria, nome e valor.');
+
+  actualSubmitBtn.textContent = 'Salvando...';
+  actualSubmitBtn.disabled = true;
+
+  await autoRegisterCompany(category, merchant);
+
+  const itemData = { date, category, merchant, amount, owner, fixed };
+  if (editingReceiptId !== null) itemData.id = editingReceiptId;
+
+  const savedId = await FinanceAPI.saveReceipt(month, itemData);
+  itemData.id = savedId;
 
   if (editingReceiptId === null) {
-    receipts.push({
-      id: getNextId(),
-      date,
-      category,
-      merchant,
-      amount,
-      owner,
-      fixed,
-    });
+    receipts.push(itemData);
   } else {
-    const r = receipts.find((x) => x.id === editingReceiptId);
-    if (r) {
-      r.date = date;
-      r.category = category;
-      r.merchant = merchant;
-      r.amount = amount;
-      r.owner = owner;
-      r.fixed = fixed;
-    }
+    const rIdx = receipts.findIndex((x) => x.id === editingReceiptId);
+    if (rIdx !== -1) receipts[rIdx] = itemData;
   }
 
+  actualSubmitBtn.textContent = 'Salvar Nota Fiscal';
+  actualSubmitBtn.disabled = false;
   resetReceiptForm();
   refreshAll();
 });
@@ -550,7 +619,7 @@ formActual.addEventListener('submit', (e) => {
 function resetReceiptForm() {
   formActual.reset();
   editingReceiptId = null;
-  actualSubmitBtn.textContent = 'Salvar nota fiscal';
+  actualSubmitBtn.textContent = 'Salvar Nota Fiscal';
 }
 
 function startEditReceipt(id) {
@@ -565,7 +634,7 @@ function startEditReceipt(id) {
   actualOwnerSelect.value = r.owner;
   actualFixedCheckbox.checked = r.fixed;
 
-  if (RECEIPT_TYPES.includes(r.category)) {
+  if (getCategories().includes(r.category)) {
     selectedReceiptType = r.category;
     updateReceiptChips();
   }
@@ -573,8 +642,15 @@ function startEditReceipt(id) {
   actualSubmitBtn.textContent = 'Salvar alterações';
 }
 
-function deleteReceipt(id) {
-  const idx = receipts.findIndex((r) => r.id === id);
+async function deleteReceipt(id) {
+  if (!confirm('Excluir esta nota fiscal?')) return;
+  const r = receipts.find((x) => x.id === id);
+  if (!r) return;
+  const month = r.date.substring(0, 7);
+
+  await FinanceAPI.deleteReceipt(month, id);
+
+  const idx = receipts.findIndex((x) => x.id === id);
   if (idx >= 0) receipts.splice(idx, 1);
   if (editingReceiptId === id) resetReceiptForm();
   refreshAll();
@@ -634,8 +710,8 @@ function updateReceiptsView() {
           <div class="receipt-right">
             <div class="receipt-amount">${formatCurrency(r.amount)}</div>
             <div class="receipt-actions">
-              <button class="action-btn" onclick="startEditReceipt(${r.id})">Editar</button>
-              <button class="action-btn danger" onclick="deleteReceipt(${r.id})">Excluir</button>
+              <button class="action-btn" onclick="startEditReceipt('${r.id}')">Editar</button>
+              <button class="action-btn danger" onclick="deleteReceipt('${r.id}')">Excluir</button>
             </div>
           </div>
         `;
@@ -1099,21 +1175,112 @@ function refreshAll() {
   updateHistoricalChart();
 }
 
-// ===== Inicialização =====
+// ===== Inicialização e Autenticação =====
 
-(function init() {
+const loginOverlay = document.getElementById('login-overlay');
+const formLogin = document.getElementById('form-login');
+const btnLogout = document.getElementById('btn-logout');
+const btnDoLogin = document.getElementById('btn-do-login');
+
+async function syncData(month) {
+  if (!month) return;
+
+  const originalText = btnLoadMonth.textContent;
+  btnLoadMonth.textContent = 'Carregando banco...';
+  btnLoadMonth.disabled = true;
+
+  try {
+    const comps = await FinanceAPI.loadCompanies();
+    if (Object.keys(comps).length > 0) {
+      // Limpa e recarrega diretório de empresas
+      for (const k in companyDirectory) delete companyDirectory[k];
+      Object.assign(companyDirectory, comps);
+      updatePlannedChips();
+      updateReceiptChips();
+    }
+
+    const inc = await FinanceAPI.loadIncome(month);
+    const idx = incomes.findIndex((i) => i.month === month);
+    if (inc) {
+      if (idx >= 0) incomes[idx] = { month, ...inc };
+      else incomes.push({ month, ...inc });
+    }
+
+    const pItems = await FinanceAPI.loadPlanned(month);
+    for (let i = plannedItems.length - 1; i >= 0; i--) {
+      if (plannedItems[i].month === month) plannedItems.splice(i, 1);
+    }
+    plannedItems.push(...pItems);
+
+    const rItems = await FinanceAPI.loadReceipts(month);
+    for (let i = receipts.length - 1; i >= 0; i--) {
+      if (receipts[i].date.startsWith(month)) receipts.splice(i, 1);
+    }
+    receipts.push(...rItems);
+
+    loadIncomeToInputs(month);
+    refreshAll();
+  } catch (error) {
+    console.error('Erro na sincronização:', error);
+  } finally {
+    btnLoadMonth.textContent = originalText;
+    btnLoadMonth.disabled = false;
+  }
+}
+
+function initAppUI() {
   const m = getCurrentMonthISO();
   monthInput.value = m;
 
-  selectedPlannedType = RECEIPT_TYPES[0];
-  selectedReceiptType = RECEIPT_TYPES[0];
+  selectedPlannedType = getCategories()[0] || '';
+  selectedReceiptType = getCategories()[0] || '';
 
   updatePlannedChips();
   updateReceiptChips();
 
-  refreshAll();
-  loadIncomeToInputs(monthInput.value); // Já tenta carregar os valores assim que abre o app
-})();
+  syncData(m);
+}
+
+// Escuta mudanças no Firebase Auth
+FinanceAPI.onAuthStateChanged((user) => {
+  if (user) {
+    // Logado
+    loginOverlay.style.display = 'none';
+    btnLogout.style.display = 'block';
+
+    // Inicia a UI agora que estamos autenticados
+    initAppUI();
+
+    // O próximo passo será carregar os dados reais do banco aqui.
+    console.log('Usuário logado:', user.email);
+  } else {
+    // Deslogado
+    loginOverlay.style.display = 'flex';
+    btnLogout.style.display = 'none';
+  }
+});
+
+formLogin.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = document.getElementById('login-email').value;
+  const pass = document.getElementById('login-password').value;
+  const originalText = btnDoLogin.textContent;
+
+  try {
+    btnDoLogin.textContent = 'Autenticando...';
+    btnDoLogin.disabled = true;
+    await FinanceAPI.login(email, pass);
+  } catch (error) {
+    alert('Erro no login: ' + error.message);
+  } finally {
+    btnDoLogin.textContent = originalText;
+    btnDoLogin.disabled = false;
+  }
+});
+
+btnLogout.addEventListener('click', async () => {
+  await FinanceAPI.logout();
+});
 
 // ===== PWA e Service Worker =====
 

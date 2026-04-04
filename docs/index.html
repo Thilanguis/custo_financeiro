@@ -12,8 +12,26 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   </head>
   <body>
-    <header class="app-header">
+    <div id="login-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #0b0b10; z-index: 9999; display: flex; align-items: center; justify-content: center">
+      <div class="card" style="width: 90%; max-width: 350px">
+        <h2 style="text-align: center; margin-bottom: 20px">Acesso Restrito</h2>
+        <form id="form-login">
+          <div class="field" style="margin-bottom: 12px">
+            <label>E-mail</label>
+            <input type="email" id="login-email" required autocomplete="username" />
+          </div>
+          <div class="field" style="margin-bottom: 20px">
+            <label>Senha</label>
+            <input type="password" id="login-password" required autocomplete="current-password" />
+          </div>
+          <button type="submit" class="btn-primary" id="btn-do-login">Entrar no Sistema</button>
+        </form>
+      </div>
+    </div>
+
+    <header class="app-header" style="position: relative">
       <h1>Controle Financeiro</h1>
+      <button id="btn-logout" class="action-btn" style="position: absolute; top: 14px; right: 16px; display: none">Sair</button>
       <div class="header-summary">
         <span>
           Renda:
@@ -261,10 +279,37 @@
     </main>
 
     <footer class="app-footer">
-      <p>Frontend estático pronto pra conversar com Firebase 🚀</p>
+      <p>Conectando ao Firebase... 🚀</p>
     </footer>
 
+    <script src="https://www.gstatic.com/firebasejs/10.11.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.11.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.11.0/firebase-auth-compat.js"></script>
+
+    <script>
+      const firebaseConfig = {
+        apiKey: 'AIzaSyA7j58iLqwN1wJQ1Q1rri7RxgpY3_I9kHY',
+        authDomain: 'custofinanceiro-234b2.firebaseapp.com',
+        projectId: 'custofinanceiro-234b2',
+        storageBucket: 'custofinanceiro-234b2.firebasestorage.app',
+        messagingSenderId: '958107581548',
+        appId: '1:958107581548:web:0407133267d32f89fdec49',
+        measurementId: 'G-LYDD72WH8P',
+      };
+
+      firebase.initializeApp(firebaseConfig);
+      window.db = firebase.firestore();
+
+      // Ativa o cache local para uso offline
+      window.db.enablePersistence().catch((err) => {
+        console.error('Erro ao ativar persistência offline:', err);
+      });
+
+      window.auth = firebase.auth();
+    </script>
+
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="firebase-api.js"></script>
     <script src="app.js"></script>
     <script src="seed-dev.js"></script>
   </body>

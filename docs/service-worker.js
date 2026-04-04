@@ -1,5 +1,5 @@
 // docs/service-worker.js
-const CACHE_NAME = 'controle-financeiro-v6';
+const CACHE_NAME = 'controle-financeiro-v7';
 
 const urlsToCache = ['./', './index.html', './style.css', './app.js', './manifest.json'];
 

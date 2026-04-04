@@ -58,7 +58,7 @@
         amount: 800,
         owner: 'Luana',
         fixed: true,
-      }
+      },
     );
 
     // ===== NOTAS FISCAIS (REAIS) =====
@@ -89,7 +89,7 @@
         amount: 620.5,
         owner: 'Luana',
         fixed: false,
-      }
+      },
     );
 
     // atualiza todas as telas

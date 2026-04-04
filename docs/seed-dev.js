@@ -16,7 +16,19 @@
     nextId = 1;
 
     // ===== RENDAS =====
-    incomes.push({ month, owner: 'Luana', amount: 4000 }, { month, owner: 'Gabriel', amount: 3500 });
+    // Adicionando o mês de Março para testar a herança de valores (Recorrência)
+    incomes.push({
+      month: '2026-03',
+      luana: 3800,
+      gabriel: 3300,
+    });
+
+    // Mês de Abril (Atual)
+    incomes.push({
+      month,
+      luana: 4000,
+      gabriel: 3500,
+    });
 
     // ===== CUSTOS PREVISTOS =====
     plannedItems.push(

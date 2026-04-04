@@ -75,6 +75,7 @@ const monthInput = document.getElementById('current-month');
 const incomeLuanaInput = document.getElementById('income-luana');
 const incomeGabrielInput = document.getElementById('income-gabriel');
 const btnSaveIncome = document.getElementById('btn-save-income');
+const btnLoadMonth = document.getElementById('btn-load-month');
 
 // Painel Global
 const summaryIncomeInline = document.getElementById('summary-income-inline');
@@ -90,27 +91,92 @@ function getCurrentMonth() {
   return monthInput.value;
 }
 
+// 1. Função para buscar a renda (atual ou a última salva no passado)
+function loadIncomeToInputs(month) {
+  let income = incomes.find((i) => i.month === month);
+
+  // Se não tem renda para esse mês, busca a última disponível antes dele
+  if (!income) {
+    const pastIncomes = incomes.filter((i) => i.month < month).sort((a, b) => b.month.localeCompare(a.month));
+
+    if (pastIncomes.length > 0) {
+      income = pastIncomes[0];
+    }
+  }
+
+  // Preenche os campos de input
+  incomeLuanaInput.value = income ? income.luana || 0 : 0;
+  incomeGabrielInput.value = income ? income.gabriel || 0 : 0;
+}
+
+// 2. Evento do botão Carregar
+// Evento do botão Carregar (Agora carrega Renda + Orçamento Fixo)
+btnLoadMonth.addEventListener('click', () => {
+  const targetMonth = getCurrentMonth();
+  if (!targetMonth) return alert('Selecione um mês primeiro.');
+
+  // 1. Verificar se o mês atual já tem itens (para não duplicar por acidente)
+  const hasItems = plannedItems.some((p) => p.month === targetMonth);
+
+  if (!hasItems) {
+    // 2. Buscar o mês anterior mais recente que possua dados
+    const pastMonthsWithData = [...new Set(plannedItems.map((p) => p.month))].filter((m) => m < targetMonth).sort((a, b) => b.localeCompare(a));
+
+    if (pastMonthsWithData.length > 0) {
+      const lastMonth = pastMonthsWithData[0];
+
+      // 3. Filtrar apenas os itens FIXOS do mês anterior
+      const fixedItemsToClone = plannedItems.filter((p) => p.month === lastMonth && p.fixed);
+
+      // 4. Clonar para o mês atual com novos IDs
+      fixedItemsToClone.forEach((item) => {
+        plannedItems.push({
+          ...item,
+          id: getNextId(),
+          month: targetMonth,
+        });
+      });
+
+      console.log(`${fixedItemsToClone.length} itens fixos clonados de ${lastMonth} para ${targetMonth}.`);
+    }
+  }
+
+  // 5. Carregar a renda (já possui lógica de recorrência)
+  loadIncomeToInputs(targetMonth);
+
+  // 6. Atualizar a tela
+  refreshAll();
+  alert(`Dados de ${targetMonth} processados com sucesso!`);
+});
+
+// 3. Novo Salvar Rendas (Salva como objeto único por mês)
 btnSaveIncome.addEventListener('click', () => {
   const month = getCurrentMonth();
-  if (!month) {
-    alert('Escolha o mês antes de salvar as rendas.');
-    return;
-  }
+  if (!month) return alert('Selecione o mês.');
 
   const luana = parseAmount(incomeLuanaInput.value) || 0;
   const gabriel = parseAmount(incomeGabrielInput.value) || 0;
 
-  // Remove rendas antigas desse mês
-  for (let i = incomes.length - 1; i >= 0; i--) {
-    if (incomes[i].month === month) incomes.splice(i, 1);
+  const index = incomes.findIndex((i) => i.month === month);
+  if (index !== -1) {
+    incomes[index] = { month, luana, gabriel };
+  } else {
+    incomes.push({ month, luana, gabriel });
   }
 
-  incomes.push({ month, owner: 'Luana', amount: luana });
-  incomes.push({ month, owner: 'Gabriel', amount: gabriel });
-
+  alert(`Rendas de ${month} salvas! Valor fixado para os próximos meses.`);
   refreshAll();
-  alert('Rendas salvas para ' + month + '!');
 });
+
+// 4. Helper para o cálculo de saldo (considerando a recorrência)
+function getIncomeTotalForMonth(month) {
+  const exact = incomes.find((i) => i.month === month);
+  if (exact) return (exact.luana || 0) + (exact.gabriel || 0);
+
+  const past = incomes.filter((i) => i.month < month).sort((a, b) => b.month.localeCompare(a.month));
+
+  return past.length > 0 ? past[0].luana + past[0].gabriel : 0;
+}
 
 monthInput.addEventListener('change', () => {
   refreshAll();
@@ -668,8 +734,7 @@ function updateSummaryAndBudgetTables() {
   const month = getCurrentMonth();
   if (!month) return;
 
-  const incomeForMonth = incomes.filter((i) => i.month === month);
-  const totalIncome = incomeForMonth.reduce((s, i) => s + i.amount, 0);
+  const totalIncome = getIncomeTotalForMonth(month);
 
   const plannedForMonth = plannedItems.filter((p) => p.month === month);
   const totalPlanned = plannedForMonth.reduce((s, p) => s + p.amount, 0);
@@ -868,4 +933,5 @@ function refreshAll() {
   updateReceiptChips();
 
   refreshAll();
+  loadIncomeToInputs(monthInput.value);
 })();

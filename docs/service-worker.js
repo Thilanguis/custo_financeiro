@@ -1,7 +1,7 @@
 // docs/service-worker.js
-const CACHE_NAME = 'controle-financeiro-v7';
+const CACHE_NAME = 'controle-financeiro-v8'; // Incrementei a versão
 
-const urlsToCache = ['./', './index.html', './style.css', './app.js', './manifest.json'];
+const urlsToCache = ['./', './index.html', './style.css', './app.js', './firebase-api.js', './manifest.json', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

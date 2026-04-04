@@ -1,12 +1,7 @@
 // docs/service-worker.js
-const CACHE_NAME = 'controle-financeiro-v5';
+const CACHE_NAME = 'controle-financeiro-v6';
 
-const urlsToCache = [
-  '/custo_financeiro/', // página inicial
-  '/custo_financeiro/index.html',
-  '/custo_financeiro/style.css',
-  '/custo_financeiro/app.js',
-];
+const urlsToCache = ['./', './index.html', './style.css', './app.js', './manifest.json'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

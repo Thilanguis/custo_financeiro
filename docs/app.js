@@ -7,6 +7,7 @@ const incomes = []; // {month, owner, amount}
 // Memória para não resetar o agrupamento ao adicionar/excluir item (Padrão: tudo fechado)
 const openPlannedCats = new Set();
 const openReceiptCats = new Set();
+const openDashboardCats = new Set();
 
 let nextId = 1;
 const getNextId = () => nextId++;
@@ -76,6 +77,13 @@ const incomeLuanaInput = document.getElementById('income-luana');
 const incomeGabrielInput = document.getElementById('income-gabriel');
 const btnSaveIncome = document.getElementById('btn-save-income');
 const btnLoadMonth = document.getElementById('btn-load-month');
+const btnToggleIncome = document.getElementById('btn-toggle-income');
+const incomePanel = document.getElementById('income-panel');
+
+btnToggleIncome.addEventListener('click', () => {
+  const isHidden = incomePanel.style.display === 'none';
+  incomePanel.style.display = isHidden ? 'block' : 'none';
+});
 
 // Painel Global
 const summaryIncomeInline = document.getElementById('summary-income-inline');
@@ -372,6 +380,23 @@ const btnExpandPlanned = document.getElementById('btn-expand-planned');
 const btnCollapsePlanned = document.getElementById('btn-collapse-planned');
 const btnExpandReceipts = document.getElementById('btn-expand-receipts');
 const btnCollapseReceipts = document.getElementById('btn-collapse-receipts');
+const btnExpandDashboard = document.getElementById('btn-expand-dashboard');
+const btnCollapseDashboard = document.getElementById('btn-collapse-dashboard');
+
+if (btnExpandDashboard) {
+  btnExpandDashboard.addEventListener('click', () => {
+    const month = getCurrentMonth();
+    if (!month) return;
+    const items = [...plannedItems.filter((p) => p.month === month), ...receipts.filter((r) => r.date.startsWith(month))];
+    items.forEach((i) => openDashboardCats.add(i.category));
+    refreshAll();
+  });
+
+  btnCollapseDashboard.addEventListener('click', () => {
+    openDashboardCats.clear();
+    refreshAll();
+  });
+}
 
 btnExpandPlanned.addEventListener('click', () => {
   const month = getCurrentMonth();
@@ -625,112 +650,9 @@ function updateReceiptsView() {
   receiptsList.appendChild(footerDiv);
 }
 
-// ===== Comparativo por item (Orçamento x Notas) =====
+// ===== Resumo Global =====
 
-const comparisonTbody = document.getElementById('comparison-tbody');
-
-function updateComparisonTable() {
-  const month = getCurrentMonth();
-  comparisonTbody.innerHTML = '';
-  if (!month) return;
-
-  const plannedForMonth = plannedItems.filter((p) => p.month === month);
-  const receiptsForMonth = receipts.filter((r) => r.date.startsWith(month));
-
-  const map = new Map();
-
-  plannedForMonth.forEach((p) => {
-    const key = makeKey(p.category, p.description);
-    if (!map.has(key)) {
-      map.set(key, {
-        category: p.category,
-        description: p.description,
-        planned: 0,
-        actual: 0,
-      });
-    }
-    map.get(key).planned += p.amount;
-  });
-
-  receiptsForMonth.forEach((r) => {
-    const key = makeKey(r.category, r.merchant);
-    if (!map.has(key)) {
-      map.set(key, {
-        category: r.category,
-        description: r.merchant,
-        planned: 0,
-        actual: 0,
-      });
-    }
-    map.get(key).actual += r.amount;
-  });
-
-  const rows = Array.from(map.values());
-
-  if (!rows.length) {
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    td.colSpan = 5;
-    td.textContent = 'Nenhum dado de orçamento ou notas para este mês.';
-    td.className = 'hint small';
-    tr.appendChild(td);
-    comparisonTbody.appendChild(tr);
-    return;
-  }
-
-  rows.sort((a, b) => a.category.localeCompare(b.category) || a.description.localeCompare(b.description));
-
-  let sumPlanned = 0;
-  let sumActual = 0;
-
-  rows.forEach((row) => {
-    const diff = row.planned - row.actual;
-    sumPlanned += row.planned;
-    sumActual += row.actual;
-
-    const tr = document.createElement('tr');
-
-    const tdCat = document.createElement('td');
-    tdCat.textContent = row.category;
-
-    const tdDesc = document.createElement('td');
-    tdDesc.textContent = row.description;
-
-    const tdPrev = document.createElement('td');
-    tdPrev.textContent = formatCurrency(row.planned);
-    tdPrev.classList.add('numeric');
-
-    const tdReal = document.createElement('td');
-    tdReal.textContent = formatCurrency(row.actual);
-    tdReal.classList.add('numeric');
-
-    const tdDiff = document.createElement('td');
-    tdDiff.textContent = formatCurrency(diff);
-    tdDiff.classList.add('numeric');
-    tdDiff.classList.add(diff >= 0 ? 'positive' : 'negative');
-
-    tr.appendChild(tdCat);
-    tr.appendChild(tdDesc);
-    tr.appendChild(tdPrev);
-    tr.appendChild(tdReal);
-    tr.appendChild(tdDiff);
-
-    comparisonTbody.appendChild(tr);
-  });
-
-  // Atualiza os valores do rodapé
-  const totalDiff = sumPlanned - sumActual;
-  document.getElementById('comparison-total-planned').textContent = formatCurrency(sumPlanned);
-  document.getElementById('comparison-total-actual').textContent = formatCurrency(sumActual);
-
-  const tdDiffTotal = document.getElementById('comparison-total-diff');
-  tdDiffTotal.textContent = formatCurrency(totalDiff);
-  tdDiffTotal.className = 'numeric ' + (totalDiff >= 0 ? 'positive' : 'negative');
-}
-
-// ===== Resumo + tabela por categoria =====
-
-function updateSummaryAndBudgetTables() {
+function updateGlobalSummaries() {
   const month = getCurrentMonth();
   if (!month) return;
 
@@ -745,94 +667,183 @@ function updateSummaryAndBudgetTables() {
   const saldoPrevisto = totalIncome - totalPlanned;
   const saldoReal = totalIncome - totalActual;
 
-  // Atualiza Painel Global (se os IDs existirem)
-  if (summaryIncomeInline) summaryIncomeInline.textContent = formatCurrency(totalIncome);
-  if (summaryExpenseInline) summaryExpenseInline.textContent = formatCurrency(totalActual);
+  if (summaryIncomeInline) {
+    summaryIncomeInline.textContent = formatCurrency(totalIncome);
+    summaryIncomeInline.className = 'positive'; // Renda sempre verde
+  }
+  if (summaryExpenseInline) {
+    summaryExpenseInline.textContent = formatCurrency(totalActual);
+    summaryExpenseInline.className = saldoReal < 0 ? 'negative' : ''; // Gasto fica vermelho se estourar
+  }
   if (summarySaldoLivre) {
     summarySaldoLivre.textContent = formatCurrency(saldoReal);
-    summarySaldoLivre.className = 'summary-value ' + (saldoReal >= 0 ? 'positive' : 'negative');
+    summarySaldoLivre.className = saldoReal >= 0 ? 'positive' : 'negative';
   }
 
-  // Atualiza Aba 3 - Saldos Detalhados (se os IDs existirem)
-  if (summarySaldoPrevisto) summarySaldoPrevisto.textContent = formatCurrency(saldoPrevisto);
-  if (summarySaldoReal) summarySaldoReal.textContent = formatCurrency(saldoReal);
+  const summaryPlannedExpense = document.getElementById('summary-planned-expense');
+  if (summaryPlannedExpense) {
+    summaryPlannedExpense.textContent = formatCurrency(totalPlanned);
+  }
 
-  // Tabela por categoria com barra de progresso
+  if (summarySaldoPrevisto) {
+    summarySaldoPrevisto.textContent = formatCurrency(saldoPrevisto);
+    summarySaldoPrevisto.className = saldoPrevisto >= 0 ? 'positive-planned' : 'negative-planned';
+  }
+
+  if (summarySaldoReal) {
+    summarySaldoReal.textContent = formatCurrency(saldoReal);
+    summarySaldoReal.className = saldoReal >= 0 ? 'positive' : 'negative';
+  }
+
+  renderPlannedItemsList(month);
+}
+
+// ===== Dashboard Unificado (Sanfona) =====
+
+function updateDashboardView() {
+  const month = getCurrentMonth();
+  const tbody = document.getElementById('dashboard-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  if (!month) return;
+
+  const plannedForMonth = plannedItems.filter((p) => p.month === month);
+  const receiptsForMonth = receipts.filter((r) => r.date.startsWith(month));
+
   const mapCat = {};
 
+  // Agrupa os previstos
   plannedForMonth.forEach((p) => {
-    if (!mapCat[p.category]) mapCat[p.category] = { planned: 0, actual: 0 };
+    if (!mapCat[p.category]) mapCat[p.category] = { planned: 0, actual: 0, items: new Map() };
     mapCat[p.category].planned += p.amount;
+
+    const key = makeKey(p.category, p.description);
+    if (!mapCat[p.category].items.has(key)) {
+      mapCat[p.category].items.set(key, { name: p.description, planned: 0, actual: 0 });
+    }
+    mapCat[p.category].items.get(key).planned += p.amount;
   });
 
-  actualForMonth.forEach((r) => {
-    if (!mapCat[r.category]) mapCat[r.category] = { planned: 0, actual: 0 };
+  // Agrupa os reais
+  receiptsForMonth.forEach((r) => {
+    if (!mapCat[r.category]) mapCat[r.category] = { planned: 0, actual: 0, items: new Map() };
     mapCat[r.category].actual += r.amount;
+
+    const key = makeKey(r.category, r.merchant);
+    if (!mapCat[r.category].items.has(key)) {
+      mapCat[r.category].items.set(key, { name: r.merchant, planned: 0, actual: 0 });
+    }
+    mapCat[r.category].items.get(key).actual += r.amount;
   });
 
-  budgetTableBody.innerHTML = '';
+  let sumPlanned = 0;
+  let sumActual = 0;
 
   const cats = Object.keys(mapCat).sort((a, b) => a.localeCompare(b));
+
+  if (!cats.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="hint small" style="text-align:center; padding: 20px;">Nenhum dado de orçamento ou notas para este mês.</td></tr>';
+    return;
+  }
+
   cats.forEach((cat) => {
-    const { planned, actual } = mapCat[cat];
-    const diff = planned - actual;
+    const data = mapCat[cat];
+    sumPlanned += data.planned;
+    sumActual += data.actual;
+    const diffCat = data.planned - data.actual;
+    const isOpen = openDashboardCats.has(cat);
 
-    const tr = document.createElement('tr');
+    // Header da Categoria
+    const trCat = document.createElement('tr');
+    trCat.className = 'dashboard-group-header';
+    trCat.onclick = () => {
+      if (isOpen) openDashboardCats.delete(cat);
+      else openDashboardCats.add(cat);
+      updateDashboardView();
+    };
 
-    const tdCat = document.createElement('td');
+    const tdCatName = document.createElement('td');
     const catContainer = document.createElement('div');
     catContainer.className = 'cat-name-container';
 
-    const catName = document.createElement('span');
-    catName.textContent = cat;
-    catContainer.appendChild(catName);
+    const catTitle = document.createElement('span');
+    catTitle.innerHTML = `<span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}`;
+    catContainer.appendChild(catTitle);
 
-    if (planned > 0 || actual > 0) {
-      let percent = planned > 0 ? (actual / planned) * 100 : 100;
-
+    if (data.planned > 0 || data.actual > 0) {
+      let percent = data.planned > 0 ? (data.actual / data.planned) * 100 : 100;
       const progressContainer = document.createElement('div');
       progressContainer.className = 'progress-bar-container';
-
       const progressFill = document.createElement('div');
       progressFill.className = 'progress-bar-fill';
       progressFill.style.width = Math.min(percent, 100) + '%';
 
-      if (percent <= 75) {
-        progressFill.classList.add('progress-safe');
-      } else if (percent <= 95) {
-        progressFill.classList.add('progress-warning');
-      } else {
-        progressFill.classList.add('progress-danger');
-      }
+      if (percent <= 75) progressFill.classList.add('progress-safe');
+      else if (percent <= 95) progressFill.classList.add('progress-warning');
+      else progressFill.classList.add('progress-danger');
 
       progressContainer.appendChild(progressFill);
       catContainer.appendChild(progressContainer);
     }
+    tdCatName.appendChild(catContainer);
 
-    tdCat.appendChild(catContainer);
+    const tdCatPrev = document.createElement('td');
+    tdCatPrev.className = 'numeric';
+    tdCatPrev.textContent = formatCurrency(data.planned);
 
-    const tdPlanned = document.createElement('td');
-    tdPlanned.textContent = formatCurrency(planned);
-    tdPlanned.classList.add('numeric');
+    const tdCatReal = document.createElement('td');
+    tdCatReal.className = 'numeric';
+    tdCatReal.textContent = formatCurrency(data.actual);
 
-    const tdActual = document.createElement('td');
-    tdActual.textContent = formatCurrency(actual);
-    tdActual.classList.add('numeric');
+    const tdCatDiff = document.createElement('td');
+    tdCatDiff.className = 'numeric ' + (diffCat >= 0 ? 'positive' : 'negative');
+    tdCatDiff.textContent = formatCurrency(diffCat);
 
-    const tdDiff = document.createElement('td');
-    tdDiff.textContent = formatCurrency(diff);
-    tdDiff.classList.add('numeric');
-    tdDiff.classList.add(diff >= 0 ? 'positive' : 'negative');
+    trCat.appendChild(tdCatName);
+    trCat.appendChild(tdCatPrev);
+    trCat.appendChild(tdCatReal);
+    trCat.appendChild(tdCatDiff);
+    tbody.appendChild(trCat);
 
-    tr.appendChild(tdCat);
-    tr.appendChild(tdPlanned);
-    tr.appendChild(tdActual);
-    tr.appendChild(tdDiff);
+    // Linhas de Detalhe (Filhos)
+    if (isOpen) {
+      const items = Array.from(data.items.values()).sort((a, b) => a.name.localeCompare(b.name));
+      items.forEach((item) => {
+        const diffItem = item.planned - item.actual;
+        const trItem = document.createElement('tr');
+        trItem.className = 'dashboard-detail-row';
 
-    budgetTableBody.appendChild(tr);
+        const tdItemName = document.createElement('td');
+        tdItemName.textContent = item.name;
+
+        const tdItemPrev = document.createElement('td');
+        tdItemPrev.className = 'numeric';
+        tdItemPrev.textContent = formatCurrency(item.planned);
+
+        const tdItemReal = document.createElement('td');
+        tdItemReal.className = 'numeric';
+        tdItemReal.textContent = formatCurrency(item.actual);
+
+        const tdItemDiff = document.createElement('td');
+        tdItemDiff.className = 'numeric ' + (diffItem >= 0 ? 'positive' : 'negative');
+        tdItemDiff.textContent = formatCurrency(diffItem);
+
+        trItem.appendChild(tdItemName);
+        trItem.appendChild(tdItemPrev);
+        trItem.appendChild(tdItemReal);
+        trItem.appendChild(tdItemDiff);
+        tbody.appendChild(trItem);
+      });
+    }
   });
 
-  renderPlannedItemsList(month);
+  // Totais do Rodapé
+  const totalDiff = sumPlanned - sumActual;
+  document.getElementById('dashboard-total-planned').textContent = formatCurrency(sumPlanned);
+  document.getElementById('dashboard-total-actual').textContent = formatCurrency(sumActual);
+  const tdDiffTotal = document.getElementById('dashboard-total-diff');
+  tdDiffTotal.textContent = formatCurrency(totalDiff);
+  tdDiffTotal.className = 'numeric ' + (totalDiff >= 0 ? 'positive' : 'negative');
 }
 
 // ===== Gráficos (Chart.js) =====
@@ -865,6 +876,33 @@ function updateChartsView() {
     categoriesChart.destroy();
   }
 
+  // Plugin customizado para desenhar os valores diretamente nas barras
+  const valueLabelsPlugin = {
+    id: 'valueLabels',
+    afterDatasetsDraw(chart) {
+      const { ctx } = chart;
+      chart.data.datasets.forEach((dataset, i) => {
+        const meta = chart.getDatasetMeta(i);
+        meta.data.forEach((bar, index) => {
+          const value = dataset.data[index];
+          if (value === 0) return;
+
+          ctx.save();
+          ctx.fillStyle = '#c3c3d5';
+          ctx.font = '11px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = value >= 0 ? 'bottom' : 'top';
+
+          const yPos = value >= 0 ? bar.y - 5 : bar.y + 5;
+          const text = Math.round(value).toLocaleString('pt-BR');
+
+          ctx.fillText(text, bar.x, yPos);
+          ctx.restore();
+        });
+      });
+    },
+  };
+
   categoriesChart = new Chart(chartsCanvas, {
     type: 'bar',
     data: {
@@ -874,8 +912,132 @@ function updateChartsView() {
         { label: 'Real', data: actualData },
       ],
     },
+    plugins: [valueLabelsPlugin],
     options: {
       responsive: true,
+      layout: {
+        padding: {
+          top: 25, // Dá espaço extra no topo para o número não cortar
+          bottom: 10,
+        },
+      },
+      scales: {
+        y: { beginAtZero: true },
+      },
+    },
+  });
+}
+
+// ===== Gráfico Histórico (Evolução) =====
+
+let historyChart = null;
+const chartHistoryCanvas = document.getElementById('chart-history');
+const historyMonthsSelect = document.getElementById('history-months-select');
+
+if (historyMonthsSelect) {
+  historyMonthsSelect.addEventListener('change', updateHistoricalChart);
+}
+
+function updateHistoricalChart() {
+  if (!chartHistoryCanvas) return;
+
+  const allMonthsSet = new Set();
+  incomes.forEach((i) => allMonthsSet.add(i.month));
+  receipts.forEach((r) => allMonthsSet.add(r.date.substring(0, 7)));
+  plannedItems.forEach((p) => allMonthsSet.add(p.month));
+
+  let allMonths = Array.from(allMonthsSet).sort();
+
+  if (allMonths.length === 0) {
+    if (historyChart) historyChart.destroy();
+    return;
+  }
+
+  const limit = historyMonthsSelect.value;
+  if (limit !== 'all') {
+    allMonths = allMonths.slice(-parseInt(limit));
+  }
+
+  const labels = [];
+  const monthlyBalances = [];
+  let selectedPeriodTotal = 0; // Somador para o período filtrado
+
+  allMonths.forEach((m) => {
+    const inc = getIncomeTotalForMonth(m);
+    const exp = receipts.filter((r) => r.date.startsWith(m)).reduce((sum, r) => sum + r.amount, 0);
+    const bal = inc - exp;
+
+    labels.push(m);
+    monthlyBalances.push(bal);
+    selectedPeriodTotal += bal;
+  });
+
+  // Atualiza o texto de Total Acumulado na tela
+  const totalEl = document.getElementById('history-total-accumulated');
+  if (totalEl) {
+    totalEl.textContent = 'Total: ' + formatCurrency(selectedPeriodTotal);
+    totalEl.className = selectedPeriodTotal >= 0 ? 'positive' : 'negative';
+  }
+
+  if (historyChart) {
+    historyChart.destroy();
+  }
+
+  // Plugin customizado para desenhar os valores diretamente nas barras
+  const valueLabelsPlugin = {
+    id: 'valueLabels',
+    afterDatasetsDraw(chart) {
+      const { ctx } = chart;
+      chart.data.datasets.forEach((dataset, i) => {
+        const meta = chart.getDatasetMeta(i);
+        meta.data.forEach((bar, index) => {
+          const value = dataset.data[index];
+          if (value === 0) return; // Não desenha nada se for zero absoluto
+
+          ctx.save();
+          ctx.fillStyle = '#c3c3d5'; // Cor discreta para o texto
+          ctx.font = '11px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = value >= 0 ? 'bottom' : 'top';
+
+          // Posiciona o texto levemente acima (se positivo) ou abaixo (se negativo)
+          const yPos = value >= 0 ? bar.y - 5 : bar.y + 5;
+
+          // Formata o número arredondado e com separador de milhar (Ex: 4.098)
+          const text = Math.round(value).toLocaleString('pt-BR');
+
+          ctx.fillText(text, bar.x, yPos);
+          ctx.restore();
+        });
+      });
+    },
+  };
+
+  historyChart = new Chart(chartHistoryCanvas, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Saldo Livre do Mês',
+          data: monthlyBalances,
+          backgroundColor: monthlyBalances.map((v) => (v >= 0 ? '#62c462' : '#d9534f')),
+          borderRadius: 4,
+        },
+      ],
+    },
+    plugins: [valueLabelsPlugin],
+    options: {
+      responsive: true,
+      layout: {
+        padding: {
+          top: 25, // Dá espaço extra no topo para o número não cortar
+          bottom: 10,
+        },
+      },
+      plugins: {
+        legend: { display: false },
+      },
       scales: {
         y: { beginAtZero: true },
       },
@@ -888,25 +1050,41 @@ function updateChartsView() {
 function refreshAll() {
   const month = getCurrentMonth();
   if (!month) {
-    if (summaryIncomeInline) summaryIncomeInline.textContent = 'CAD 0,00';
-    if (summaryExpenseInline) summaryExpenseInline.textContent = 'CAD 0,00';
+    if (summaryIncomeInline) {
+      summaryIncomeInline.textContent = 'CAD 0,00';
+      summaryIncomeInline.className = '';
+    }
+    if (summaryExpenseInline) {
+      summaryExpenseInline.textContent = 'CAD 0,00';
+      summaryExpenseInline.className = '';
+    }
     if (summarySaldoLivre) {
       summarySaldoLivre.textContent = 'CAD 0,00';
-      summarySaldoLivre.className = 'summary-value';
+      summarySaldoLivre.className = '';
     }
-    if (summarySaldoPrevisto) summarySaldoPrevisto.textContent = 'CAD 0,00';
-    if (summarySaldoReal) summarySaldoReal.textContent = 'CAD 0,00';
+    const summaryPlannedExpense = document.getElementById('summary-planned-expense');
+    if (summaryPlannedExpense) summaryPlannedExpense.textContent = 'CAD 0,00';
 
-    budgetTableBody.innerHTML = '';
+    if (summarySaldoPrevisto) {
+      summarySaldoPrevisto.textContent = 'CAD 0,00';
+      summarySaldoPrevisto.className = '';
+    }
+    if (summarySaldoReal) {
+      summarySaldoReal.textContent = 'CAD 0,00';
+      summarySaldoReal.className = '';
+    }
+
     if (plannedItemsList) plannedItemsList.innerHTML = '';
     receiptsList.innerHTML = '';
-    comparisonTbody.innerHTML = '';
 
-    const tPlanned = document.getElementById('comparison-total-planned');
+    const dashTbody = document.getElementById('dashboard-tbody');
+    if (dashTbody) dashTbody.innerHTML = '';
+
+    const tPlanned = document.getElementById('dashboard-total-planned');
     if (tPlanned) tPlanned.textContent = 'CAD 0,00';
-    const tActual = document.getElementById('comparison-total-actual');
+    const tActual = document.getElementById('dashboard-total-actual');
     if (tActual) tActual.textContent = 'CAD 0,00';
-    const tDiff = document.getElementById('comparison-total-diff');
+    const tDiff = document.getElementById('dashboard-total-diff');
     if (tDiff) {
       tDiff.textContent = 'CAD 0,00';
       tDiff.className = 'numeric';
@@ -914,10 +1092,11 @@ function refreshAll() {
     return;
   }
 
-  updateSummaryAndBudgetTables();
+  updateGlobalSummaries();
   updateReceiptsView();
-  updateComparisonTable();
+  updateDashboardView();
   updateChartsView();
+  updateHistoricalChart();
 }
 
 // ===== Inicialização =====
@@ -933,5 +1112,47 @@ function refreshAll() {
   updateReceiptChips();
 
   refreshAll();
-  loadIncomeToInputs(monthInput.value);
+  loadIncomeToInputs(monthInput.value); // Já tenta carregar os valores assim que abre o app
 })();
+
+// ===== PWA e Service Worker =====
+
+// 1. Registra o Service Worker (Necessário para o app instalar offline)
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./service-worker.js').catch((err) => console.error('Falha no Service Worker:', err));
+  });
+}
+
+// 2. Intercepta o evento de instalação do Chrome/Android
+let deferredPrompt;
+const installBanner = document.getElementById('install-banner');
+const btnInstall = document.getElementById('btn-install');
+const btnCloseInstall = document.getElementById('btn-close-install');
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  // Impede o mini-infobar padrão de aparecer em dispositivos móveis
+  e.preventDefault();
+  // Guarda o evento para acionar o botão depois
+  deferredPrompt = e;
+  // Exibe o nosso banner customizado
+  if (installBanner) installBanner.style.display = 'flex';
+});
+
+if (btnInstall) {
+  btnInstall.addEventListener('click', async () => {
+    installBanner.style.display = 'none';
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      console.log(`Instalação PWA: ${outcome}`);
+      deferredPrompt = null;
+    }
+  });
+}
+
+if (btnCloseInstall) {
+  btnCloseInstall.addEventListener('click', () => {
+    installBanner.style.display = 'none';
+  });
+}

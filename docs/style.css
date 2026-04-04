@@ -555,3 +555,21 @@ button:active {
   background: #35354a;
   color: #fff;
 }
+
+/* Totalizador no final das listas */
+.list-footer-total {
+  position: sticky;
+  bottom: 0;
+  background: #1a1a2e; /* Fundo sólido para cobrir a rolagem */
+  padding: 12px 10px;
+  border-top: 2px solid #35354a;
+  border-radius: 0 0 10px 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 700;
+  color: #fddf7b;
+  box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.3);
+  z-index: 10;
+  margin-top: auto;
+}

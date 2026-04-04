@@ -342,24 +342,21 @@ function renderPlannedItemsList(month) {
     return;
   }
 
-  // Agrupar por categoria
+  const grandTotal = items.reduce((acc, curr) => acc + curr.amount, 0);
+
   const grouped = {};
   items.forEach((p) => {
     if (!grouped[p.category]) grouped[p.category] = [];
     grouped[p.category].push(p);
   });
 
-  // Renderizar cada grupo
   Object.keys(grouped)
     .sort()
     .forEach((cat) => {
       const groupItems = grouped[cat];
       const isOpen = openPlannedCats.has(cat);
-
-      // Total do grupo
       const catTotal = groupItems.reduce((acc, curr) => acc + curr.amount, 0);
 
-      // Div de Cabeçalho (Clicável) - Padrão novo
       const headerDiv = document.createElement('div');
       headerDiv.className = 'group-header-div';
       headerDiv.innerHTML = `
@@ -370,64 +367,37 @@ function renderPlannedItemsList(month) {
       headerDiv.onclick = () => {
         if (openPlannedCats.has(cat)) openPlannedCats.delete(cat);
         else openPlannedCats.add(cat);
-        renderPlannedItemsList(month); // Recarrega só a lista
+        renderPlannedItemsList(month);
       };
 
       plannedItemsList.appendChild(headerDiv);
 
-      // Linhas dos itens
       if (isOpen) {
         groupItems.forEach((p) => {
           const item = document.createElement('div');
           item.className = 'receipt-item';
-
-          const main = document.createElement('div');
-          main.className = 'receipt-main';
-
-          const line = document.createElement('div');
-          line.className = 'receipt-line';
-          line.textContent = p.description;
-
-          const meta = document.createElement('div');
-          meta.className = 'receipt-meta';
-          meta.textContent = `Resp: ${p.owner}${p.fixed ? ' • Fixo' : ''}`;
-
-          main.appendChild(line);
-          main.appendChild(meta);
-
-          const right = document.createElement('div');
-          right.className = 'receipt-right';
-
-          const amountDiv = document.createElement('div');
-          amountDiv.className = 'receipt-amount';
-          amountDiv.textContent = formatCurrency(p.amount);
-
-          const actionsDiv = document.createElement('div');
-          actionsDiv.className = 'receipt-actions';
-
-          const editBtn = document.createElement('button');
-          editBtn.className = 'action-btn';
-          editBtn.textContent = 'Editar';
-          editBtn.onclick = () => startEditPlanned(p.id);
-
-          const delBtn = document.createElement('button');
-          delBtn.className = 'action-btn danger';
-          delBtn.textContent = 'Excluir';
-          delBtn.onclick = () => deletePlanned(p.id);
-
-          actionsDiv.appendChild(editBtn);
-          actionsDiv.appendChild(delBtn);
-
-          right.appendChild(amountDiv);
-          right.appendChild(actionsDiv);
-
-          item.appendChild(main);
-          item.appendChild(right);
-
+          item.innerHTML = `
+          <div class="receipt-main">
+            <div class="receipt-line">${p.description}</div>
+            <div class="receipt-meta">Resp: ${p.owner}${p.fixed ? ' • Fixo' : ''}</div>
+          </div>
+          <div class="receipt-right">
+            <div class="receipt-amount">${formatCurrency(p.amount)}</div>
+            <div class="receipt-actions">
+              <button class="action-btn" onclick="startEditPlanned(${p.id})">Editar</button>
+              <button class="action-btn danger" onclick="deletePlanned(${p.id})">Excluir</button>
+            </div>
+          </div>
+        `;
           plannedItemsList.appendChild(item);
         });
       }
     });
+
+  const footerDiv = document.createElement('div');
+  footerDiv.className = 'list-footer-total';
+  footerDiv.innerHTML = `<span>TOTAL PREVISTO</span><span>${formatCurrency(grandTotal)}</span>`;
+  plannedItemsList.appendChild(footerDiv);
 }
 
 // ===== Lançamento de notas fiscais =====
@@ -531,7 +501,8 @@ function updateReceiptsView() {
     return;
   }
 
-  // Agrupar por categoria
+  const grandTotal = list.reduce((acc, curr) => acc + curr.amount, 0);
+
   const grouped = {};
   list.forEach((r) => {
     if (!grouped[r.category]) grouped[r.category] = [];
@@ -543,11 +514,8 @@ function updateReceiptsView() {
     .forEach((cat) => {
       const groupItems = grouped[cat].sort((a, b) => a.date.localeCompare(b.date));
       const isOpen = openReceiptCats.has(cat);
-
-      // Total gasto na categoria
       const catTotal = groupItems.reduce((acc, curr) => acc + curr.amount, 0);
 
-      // Div de Cabeçalho (Clicável)
       const headerDiv = document.createElement('div');
       headerDiv.className = 'group-header-div';
       headerDiv.innerHTML = `
@@ -558,65 +526,37 @@ function updateReceiptsView() {
       headerDiv.onclick = () => {
         if (openReceiptCats.has(cat)) openReceiptCats.delete(cat);
         else openReceiptCats.add(cat);
-        updateReceiptsView(); // Recarrega só a lista
+        updateReceiptsView();
       };
 
       receiptsList.appendChild(headerDiv);
 
-      // Renderiza itens se estiver aberto
       if (isOpen) {
         groupItems.forEach((r) => {
           const item = document.createElement('div');
           item.className = 'receipt-item';
-
-          const main = document.createElement('div');
-          main.className = 'receipt-main';
-
-          const line = document.createElement('div');
-          line.className = 'receipt-line';
-          line.textContent = `${r.merchant} • ${r.category}`;
-
-          const meta = document.createElement('div');
-          meta.className = 'receipt-meta';
-          const dateStr = r.date.split('-').reverse().join('/');
-          meta.textContent = `${dateStr} • ${r.owner}${r.fixed ? ' • Fixo' : ''}`;
-
-          main.appendChild(line);
-          main.appendChild(meta);
-
-          const right = document.createElement('div');
-          right.className = 'receipt-right';
-
-          const amountDiv = document.createElement('div');
-          amountDiv.className = 'receipt-amount';
-          amountDiv.textContent = formatCurrency(r.amount);
-
-          const actionsDiv = document.createElement('div');
-          actionsDiv.className = 'receipt-actions';
-
-          const editBtn = document.createElement('button');
-          editBtn.className = 'action-btn';
-          editBtn.textContent = 'Editar';
-          editBtn.onclick = () => startEditReceipt(r.id);
-
-          const delBtn = document.createElement('button');
-          delBtn.className = 'action-btn danger';
-          delBtn.textContent = 'Excluir';
-          delBtn.onclick = () => deleteReceipt(r.id);
-
-          actionsDiv.appendChild(editBtn);
-          actionsDiv.appendChild(delBtn);
-
-          right.appendChild(amountDiv);
-          right.appendChild(actionsDiv);
-
-          item.appendChild(main);
-          item.appendChild(right);
-
+          item.innerHTML = `
+          <div class="receipt-main">
+            <div class="receipt-line">${r.merchant} • ${r.category}</div>
+            <div class="receipt-meta">${r.date.split('-').reverse().join('/')} • ${r.owner}${r.fixed ? ' • Fixo' : ''}</div>
+          </div>
+          <div class="receipt-right">
+            <div class="receipt-amount">${formatCurrency(r.amount)}</div>
+            <div class="receipt-actions">
+              <button class="action-btn" onclick="startEditReceipt(${r.id})">Editar</button>
+              <button class="action-btn danger" onclick="deleteReceipt(${r.id})">Excluir</button>
+            </div>
+          </div>
+        `;
           receiptsList.appendChild(item);
         });
       }
     });
+
+  const footerDiv = document.createElement('div');
+  footerDiv.className = 'list-footer-total';
+  footerDiv.innerHTML = `<span>TOTAL REAL ACUMULADO</span><span>${formatCurrency(grandTotal)}</span>`;
+  receiptsList.appendChild(footerDiv);
 }
 
 // ===== Comparativo por item (Orçamento x Notas) =====

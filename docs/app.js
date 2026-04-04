@@ -4,6 +4,10 @@ const plannedItems = []; // {id, month, category, description, amount, owner, fi
 const receipts = []; // {id, date, category, merchant, amount, owner, fixed}
 const incomes = []; // {month, owner, amount}
 
+// Memória para não resetar o agrupamento ao adicionar/excluir item (Padrão: tudo fechado)
+const openPlannedCats = new Set();
+const openReceiptCats = new Set();
+
 let nextId = 1;
 const getNextId = () => nextId++;
 
@@ -72,9 +76,12 @@ const incomeLuanaInput = document.getElementById('income-luana');
 const incomeGabrielInput = document.getElementById('income-gabriel');
 const btnSaveIncome = document.getElementById('btn-save-income');
 
+// Painel Global
 const summaryIncomeInline = document.getElementById('summary-income-inline');
-const summaryTotalPlanned = document.getElementById('summary-total-planned');
-const summaryTotalActual = document.getElementById('summary-total-actual');
+const summaryExpenseInline = document.getElementById('summary-expense-inline');
+const summarySaldoLivre = document.getElementById('summary-saldo-livre');
+
+// Aba 3 (Dashboard)
 const summarySaldoPrevisto = document.getElementById('summary-saldo-previsto');
 const summarySaldoReal = document.getElementById('summary-saldo-real');
 const summaryDiffSaldo = document.getElementById('summary-diff-saldo');
@@ -137,14 +144,15 @@ function renderCompanyChips(container, type, onSelectCompany) {
   if (!companies.length) {
     const span = document.createElement('span');
     span.className = 'hint small';
-    span.textContent = 'Nenhuma empresa cadastrada para este tipo ainda. Use o campo abaixo para adicionar.';
+    span.textContent = 'Nenhuma empresa cadastrada para este tipo ainda. Digite abaixo para adicionar.';
     container.appendChild(span);
     return;
   }
 
   companies.forEach((name) => {
     const chip = document.createElement('div');
-    chip.className = 'chip';
+    // Adicionamos a classe 'chip-company' aqui:
+    chip.className = 'chip chip-company';
     chip.textContent = name;
     chip.addEventListener('click', () => onSelectCompany(name));
     container.appendChild(chip);
@@ -186,39 +194,31 @@ const plannedFixedCheckbox = document.getElementById('planned-fixed');
 const plannedSubmitBtn = document.getElementById('planned-submit-btn');
 
 const budgetTableBody = document.getElementById('budget-table-body');
-const plannedItemsTbody = document.getElementById('planned-items-tbody');
+const plannedItemsList = document.getElementById('planned-items-list');
 
 const formCompany = document.getElementById('form-company');
 const companyNameInput = document.getElementById('company-name');
 
 let editingPlannedId = null;
 
-formCompany.addEventListener('submit', (e) => {
-  e.preventDefault();
+// Adicione isso junto dos utilitários
+function autoRegisterCompany(type, name) {
+  const t = type.trim();
+  const n = name.trim().toUpperCase(); // Padroniza tudo em maiúsculo igual você fez
 
-  const name = companyNameInput.value.trim();
-  if (!name) {
-    alert('Digite o nome da empresa para cadastrar.');
-    return;
+  if (!t || !n) return;
+
+  if (!companyDirectory[t]) {
+    companyDirectory[t] = []; // Cria a categoria se não existir
   }
 
-  const type = selectedPlannedType || plannedCategoryInput.value.trim();
-  if (!type) {
-    alert('Selecione um tipo de gasto antes de cadastrar a empresa.');
-    return;
+  if (!companyDirectory[t].includes(n)) {
+    companyDirectory[t].push(n);
+    // Atualiza os chips na tela imediatamente
+    updatePlannedChips();
+    updateReceiptChips();
   }
-
-  if (!companyDirectory[type]) {
-    companyDirectory[type] = [];
-  }
-  if (!companyDirectory[type].includes(name)) {
-    companyDirectory[type].push(name);
-  }
-
-  companyNameInput.value = '';
-  updatePlannedChips();
-  updateReceiptChips();
-});
+}
 
 formPlanned.addEventListener('submit', (e) => {
   e.preventDefault();
@@ -231,6 +231,7 @@ formPlanned.addEventListener('submit', (e) => {
 
   const category = plannedCategoryInput.value.trim();
   const description = plannedDescriptionInput.value.trim();
+  autoRegisterCompany(category, description);
   const amount = parseAmount(plannedAmountInput.value);
   const owner = plannedOwnerSelect.value;
   const fixed = plannedFixedCheckbox.checked;
@@ -300,68 +301,133 @@ function deletePlanned(id) {
   refreshAll();
 }
 
+// ===== Lógica Abrir/Fechar Tudo =====
+const btnExpandPlanned = document.getElementById('btn-expand-planned');
+const btnCollapsePlanned = document.getElementById('btn-collapse-planned');
+const btnExpandReceipts = document.getElementById('btn-expand-receipts');
+const btnCollapseReceipts = document.getElementById('btn-collapse-receipts');
+
+btnExpandPlanned.addEventListener('click', () => {
+  const month = getCurrentMonth();
+  if (!month) return;
+  const items = plannedItems.filter((p) => p.month === month);
+  items.forEach((p) => openPlannedCats.add(p.category)); // Adiciona todas as categorias na memória
+  renderPlannedItemsList(month);
+});
+
+btnCollapsePlanned.addEventListener('click', () => {
+  openPlannedCats.clear(); // Limpa a memória
+  renderPlannedItemsList(getCurrentMonth());
+});
+
+btnExpandReceipts.addEventListener('click', () => {
+  const month = getCurrentMonth();
+  if (!month) return;
+  const list = receipts.filter((r) => r.date.startsWith(month));
+  list.forEach((r) => openReceiptCats.add(r.category)); // Adiciona todas as categorias na memória
+  updateReceiptsView();
+});
+
+btnCollapseReceipts.addEventListener('click', () => {
+  openReceiptCats.clear(); // Limpa a memória
+  updateReceiptsView();
+});
+
 function renderPlannedItemsList(month) {
-  plannedItemsTbody.innerHTML = '';
+  plannedItemsList.innerHTML = '';
   const items = plannedItems.filter((p) => p.month === month);
 
   if (!items.length) {
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    td.colSpan = 6;
-    td.textContent = 'Nenhum item de orçamento cadastrado para este mês.';
-    td.className = 'hint small';
-    tr.appendChild(td);
-    plannedItemsTbody.appendChild(tr);
+    plannedItemsList.innerHTML = "<p class='hint'>Nenhum item de orçamento cadastrado para este mês.</p>";
     return;
   }
 
+  // Agrupar por categoria
+  const grouped = {};
   items.forEach((p) => {
-    const tr = document.createElement('tr');
-
-    const tdCat = document.createElement('td');
-    tdCat.textContent = p.category;
-
-    const tdDesc = document.createElement('td');
-    tdDesc.textContent = p.description;
-
-    const tdVal = document.createElement('td');
-    tdVal.textContent = formatCurrency(p.amount);
-    tdVal.classList.add('numeric');
-
-    const tdOwner = document.createElement('td');
-    tdOwner.textContent = p.owner;
-
-    const tdFixed = document.createElement('td');
-    tdFixed.textContent = p.fixed ? 'Sim' : 'Não';
-
-    const tdActions = document.createElement('td');
-    tdActions.classList.add('actions-col');
-    const actions = document.createElement('div');
-    actions.className = 'planned-actions';
-
-    const editBtn = document.createElement('button');
-    editBtn.className = 'action-btn';
-    editBtn.textContent = 'Editar';
-    editBtn.onclick = () => startEditPlanned(p.id);
-
-    const delBtn = document.createElement('button');
-    delBtn.className = 'action-btn danger';
-    delBtn.textContent = 'Excluir';
-    delBtn.onclick = () => deletePlanned(p.id);
-
-    actions.appendChild(editBtn);
-    actions.appendChild(delBtn);
-    tdActions.appendChild(actions);
-
-    tr.appendChild(tdCat);
-    tr.appendChild(tdDesc);
-    tr.appendChild(tdVal);
-    tr.appendChild(tdOwner);
-    tr.appendChild(tdFixed);
-    tr.appendChild(tdActions);
-
-    plannedItemsTbody.appendChild(tr);
+    if (!grouped[p.category]) grouped[p.category] = [];
+    grouped[p.category].push(p);
   });
+
+  // Renderizar cada grupo
+  Object.keys(grouped)
+    .sort()
+    .forEach((cat) => {
+      const groupItems = grouped[cat];
+      const isOpen = openPlannedCats.has(cat);
+
+      // Total do grupo
+      const catTotal = groupItems.reduce((acc, curr) => acc + curr.amount, 0);
+
+      // Div de Cabeçalho (Clicável) - Padrão novo
+      const headerDiv = document.createElement('div');
+      headerDiv.className = 'group-header-div';
+      headerDiv.innerHTML = `
+      <span>${isOpen ? '▼' : '▶'} ${cat}</span>
+      <span style="color:#a6a6c0; font-size:0.85rem; font-weight:normal;">${formatCurrency(catTotal)}</span>
+    `;
+
+      headerDiv.onclick = () => {
+        if (openPlannedCats.has(cat)) openPlannedCats.delete(cat);
+        else openPlannedCats.add(cat);
+        renderPlannedItemsList(month); // Recarrega só a lista
+      };
+
+      plannedItemsList.appendChild(headerDiv);
+
+      // Linhas dos itens
+      if (isOpen) {
+        groupItems.forEach((p) => {
+          const item = document.createElement('div');
+          item.className = 'receipt-item';
+
+          const main = document.createElement('div');
+          main.className = 'receipt-main';
+
+          const line = document.createElement('div');
+          line.className = 'receipt-line';
+          line.textContent = p.description;
+
+          const meta = document.createElement('div');
+          meta.className = 'receipt-meta';
+          meta.textContent = `Resp: ${p.owner}${p.fixed ? ' • Fixo' : ''}`;
+
+          main.appendChild(line);
+          main.appendChild(meta);
+
+          const right = document.createElement('div');
+          right.className = 'receipt-right';
+
+          const amountDiv = document.createElement('div');
+          amountDiv.className = 'receipt-amount';
+          amountDiv.textContent = formatCurrency(p.amount);
+
+          const actionsDiv = document.createElement('div');
+          actionsDiv.className = 'receipt-actions';
+
+          const editBtn = document.createElement('button');
+          editBtn.className = 'action-btn';
+          editBtn.textContent = 'Editar';
+          editBtn.onclick = () => startEditPlanned(p.id);
+
+          const delBtn = document.createElement('button');
+          delBtn.className = 'action-btn danger';
+          delBtn.textContent = 'Excluir';
+          delBtn.onclick = () => deletePlanned(p.id);
+
+          actionsDiv.appendChild(editBtn);
+          actionsDiv.appendChild(delBtn);
+
+          right.appendChild(amountDiv);
+          right.appendChild(actionsDiv);
+
+          item.appendChild(main);
+          item.appendChild(right);
+
+          plannedItemsList.appendChild(item);
+        });
+      }
+    });
 }
 
 // ===== Lançamento de notas fiscais =====
@@ -384,6 +450,7 @@ formActual.addEventListener('submit', (e) => {
   const date = actualDateInput.value;
   const category = actualCategoryInput.value.trim();
   const merchant = actualMerchantInput.value.trim();
+  autoRegisterCompany(category, merchant);
   const amount = parseAmount(actualAmountInput.value);
   const owner = actualOwnerSelect.value;
   const fixed = actualFixedCheckbox.checked;
@@ -464,57 +531,91 @@ function updateReceiptsView() {
     return;
   }
 
-  list
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .forEach((r) => {
-      const item = document.createElement('div');
-      item.className = 'receipt-item';
+  // Agrupar por categoria
+  const grouped = {};
+  list.forEach((r) => {
+    if (!grouped[r.category]) grouped[r.category] = [];
+    grouped[r.category].push(r);
+  });
 
-      const main = document.createElement('div');
-      main.className = 'receipt-main';
+  Object.keys(grouped)
+    .sort()
+    .forEach((cat) => {
+      const groupItems = grouped[cat].sort((a, b) => a.date.localeCompare(b.date));
+      const isOpen = openReceiptCats.has(cat);
 
-      const line = document.createElement('div');
-      line.className = 'receipt-line';
-      line.textContent = `${r.merchant} • ${r.category}`;
+      // Total gasto na categoria
+      const catTotal = groupItems.reduce((acc, curr) => acc + curr.amount, 0);
 
-      const meta = document.createElement('div');
-      meta.className = 'receipt-meta';
-      const dateStr = r.date.split('-').reverse().join('/');
-      meta.textContent = `${dateStr} • ${r.owner}${r.fixed ? ' • Fixo' : ''}`;
+      // Div de Cabeçalho (Clicável)
+      const headerDiv = document.createElement('div');
+      headerDiv.className = 'group-header-div';
+      headerDiv.innerHTML = `
+      <span>${isOpen ? '▼' : '▶'} ${cat}</span>
+      <span style="color:#a6a6c0; font-size:0.85rem; font-weight:normal;">${formatCurrency(catTotal)}</span>
+    `;
 
-      main.appendChild(line);
-      main.appendChild(meta);
+      headerDiv.onclick = () => {
+        if (openReceiptCats.has(cat)) openReceiptCats.delete(cat);
+        else openReceiptCats.add(cat);
+        updateReceiptsView(); // Recarrega só a lista
+      };
 
-      const right = document.createElement('div');
-      right.className = 'receipt-right';
+      receiptsList.appendChild(headerDiv);
 
-      const amountDiv = document.createElement('div');
-      amountDiv.className = 'receipt-amount';
-      amountDiv.textContent = formatCurrency(r.amount);
+      // Renderiza itens se estiver aberto
+      if (isOpen) {
+        groupItems.forEach((r) => {
+          const item = document.createElement('div');
+          item.className = 'receipt-item';
 
-      const actionsDiv = document.createElement('div');
-      actionsDiv.className = 'receipt-actions';
+          const main = document.createElement('div');
+          main.className = 'receipt-main';
 
-      const editBtn = document.createElement('button');
-      editBtn.className = 'action-btn';
-      editBtn.textContent = 'Editar';
-      editBtn.onclick = () => startEditReceipt(r.id);
+          const line = document.createElement('div');
+          line.className = 'receipt-line';
+          line.textContent = `${r.merchant} • ${r.category}`;
 
-      const delBtn = document.createElement('button');
-      delBtn.className = 'action-btn danger';
-      delBtn.textContent = 'Excluir';
-      delBtn.onclick = () => deleteReceipt(r.id);
+          const meta = document.createElement('div');
+          meta.className = 'receipt-meta';
+          const dateStr = r.date.split('-').reverse().join('/');
+          meta.textContent = `${dateStr} • ${r.owner}${r.fixed ? ' • Fixo' : ''}`;
 
-      actionsDiv.appendChild(editBtn);
-      actionsDiv.appendChild(delBtn);
+          main.appendChild(line);
+          main.appendChild(meta);
 
-      right.appendChild(amountDiv);
-      right.appendChild(actionsDiv);
+          const right = document.createElement('div');
+          right.className = 'receipt-right';
 
-      item.appendChild(main);
-      item.appendChild(right);
+          const amountDiv = document.createElement('div');
+          amountDiv.className = 'receipt-amount';
+          amountDiv.textContent = formatCurrency(r.amount);
 
-      receiptsList.appendChild(item);
+          const actionsDiv = document.createElement('div');
+          actionsDiv.className = 'receipt-actions';
+
+          const editBtn = document.createElement('button');
+          editBtn.className = 'action-btn';
+          editBtn.textContent = 'Editar';
+          editBtn.onclick = () => startEditReceipt(r.id);
+
+          const delBtn = document.createElement('button');
+          delBtn.className = 'action-btn danger';
+          delBtn.textContent = 'Excluir';
+          delBtn.onclick = () => deleteReceipt(r.id);
+
+          actionsDiv.appendChild(editBtn);
+          actionsDiv.appendChild(delBtn);
+
+          right.appendChild(amountDiv);
+          right.appendChild(actionsDiv);
+
+          item.appendChild(main);
+          item.appendChild(right);
+
+          receiptsList.appendChild(item);
+        });
+      }
     });
 }
 
@@ -573,8 +674,13 @@ function updateComparisonTable() {
 
   rows.sort((a, b) => a.category.localeCompare(b.category) || a.description.localeCompare(b.description));
 
+  let sumPlanned = 0;
+  let sumActual = 0;
+
   rows.forEach((row) => {
     const diff = row.planned - row.actual;
+    sumPlanned += row.planned;
+    sumActual += row.actual;
 
     const tr = document.createElement('tr');
 
@@ -605,6 +711,15 @@ function updateComparisonTable() {
 
     comparisonTbody.appendChild(tr);
   });
+
+  // Atualiza os valores do rodapé
+  const totalDiff = sumPlanned - sumActual;
+  document.getElementById('comparison-total-planned').textContent = formatCurrency(sumPlanned);
+  document.getElementById('comparison-total-actual').textContent = formatCurrency(sumActual);
+
+  const tdDiffTotal = document.getElementById('comparison-total-diff');
+  tdDiffTotal.textContent = formatCurrency(totalDiff);
+  tdDiffTotal.className = 'numeric ' + (totalDiff >= 0 ? 'positive' : 'negative');
 }
 
 // ===== Resumo + tabela por categoria =====
@@ -622,35 +737,31 @@ function updateSummaryAndBudgetTables() {
   const actualForMonth = receipts.filter((r) => r.date.startsWith(month));
   const totalActual = actualForMonth.reduce((s, r) => s + r.amount, 0);
 
-  const diffExpenses = totalPlanned - totalActual; // previsto - real (se quiser usar depois)
   const saldoPrevisto = totalIncome - totalPlanned;
   const saldoReal = totalIncome - totalActual;
-  const diffSaldo = saldoReal - saldoPrevisto; // Economia / Estouro do mês
 
-  summaryIncomeInline.textContent = formatCurrency(totalIncome);
-  summaryTotalPlanned.textContent = formatCurrency(totalPlanned);
-  summaryTotalActual.textContent = formatCurrency(totalActual);
+  // Atualiza Painel Global (se os IDs existirem)
+  if (summaryIncomeInline) summaryIncomeInline.textContent = formatCurrency(totalIncome);
+  if (summaryExpenseInline) summaryExpenseInline.textContent = formatCurrency(totalActual);
+  if (summarySaldoLivre) {
+    summarySaldoLivre.textContent = formatCurrency(saldoReal);
+    summarySaldoLivre.className = 'summary-value ' + (saldoReal >= 0 ? 'positive' : 'negative');
+  }
 
-  summarySaldoPrevisto.textContent = formatCurrency(saldoPrevisto);
-  summarySaldoReal.textContent = formatCurrency(saldoReal);
+  // Atualiza Aba 3 - Saldos Detalhados (se os IDs existirem)
+  if (summarySaldoPrevisto) summarySaldoPrevisto.textContent = formatCurrency(saldoPrevisto);
+  if (summarySaldoReal) summarySaldoReal.textContent = formatCurrency(saldoReal);
 
-  summaryDiffSaldo.textContent = formatCurrency(diffSaldo);
-  summaryDiffSaldo.className = 'summary-value ' + (diffSaldo >= 0 ? 'positive' : 'negative');
-
-  // Tabela por categoria
+  // Tabela por categoria com barra de progresso
   const mapCat = {};
 
   plannedForMonth.forEach((p) => {
-    if (!mapCat[p.category]) {
-      mapCat[p.category] = { planned: 0, actual: 0 };
-    }
+    if (!mapCat[p.category]) mapCat[p.category] = { planned: 0, actual: 0 };
     mapCat[p.category].planned += p.amount;
   });
 
   actualForMonth.forEach((r) => {
-    if (!mapCat[r.category]) {
-      mapCat[r.category] = { planned: 0, actual: 0 };
-    }
+    if (!mapCat[r.category]) mapCat[r.category] = { planned: 0, actual: 0 };
     mapCat[r.category].actual += r.amount;
   });
 
@@ -659,12 +770,41 @@ function updateSummaryAndBudgetTables() {
   const cats = Object.keys(mapCat).sort((a, b) => a.localeCompare(b));
   cats.forEach((cat) => {
     const { planned, actual } = mapCat[cat];
-    const diff = planned - actual; // Previsto − Real
+    const diff = planned - actual;
 
     const tr = document.createElement('tr');
 
     const tdCat = document.createElement('td');
-    tdCat.textContent = cat;
+    const catContainer = document.createElement('div');
+    catContainer.className = 'cat-name-container';
+
+    const catName = document.createElement('span');
+    catName.textContent = cat;
+    catContainer.appendChild(catName);
+
+    if (planned > 0 || actual > 0) {
+      let percent = planned > 0 ? (actual / planned) * 100 : 100;
+
+      const progressContainer = document.createElement('div');
+      progressContainer.className = 'progress-bar-container';
+
+      const progressFill = document.createElement('div');
+      progressFill.className = 'progress-bar-fill';
+      progressFill.style.width = Math.min(percent, 100) + '%';
+
+      if (percent <= 75) {
+        progressFill.classList.add('progress-safe');
+      } else if (percent <= 95) {
+        progressFill.classList.add('progress-warning');
+      } else {
+        progressFill.classList.add('progress-danger');
+      }
+
+      progressContainer.appendChild(progressFill);
+      catContainer.appendChild(progressContainer);
+    }
+
+    tdCat.appendChild(catContainer);
 
     const tdPlanned = document.createElement('td');
     tdPlanned.textContent = formatCurrency(planned);
@@ -743,16 +883,29 @@ function updateChartsView() {
 function refreshAll() {
   const month = getCurrentMonth();
   if (!month) {
-    summaryIncomeInline.textContent = 'CAD 0,00';
-    summaryTotalPlanned.textContent = 'CAD 0,00';
-    summaryTotalActual.textContent = 'CAD 0,00';
-    summarySaldoPrevisto.textContent = 'CAD 0,00';
-    summarySaldoReal.textContent = 'CAD 0,00';
-    summaryDiffSaldo.textContent = 'CAD 0,00';
+    if (summaryIncomeInline) summaryIncomeInline.textContent = 'CAD 0,00';
+    if (summaryExpenseInline) summaryExpenseInline.textContent = 'CAD 0,00';
+    if (summarySaldoLivre) {
+      summarySaldoLivre.textContent = 'CAD 0,00';
+      summarySaldoLivre.className = 'summary-value';
+    }
+    if (summarySaldoPrevisto) summarySaldoPrevisto.textContent = 'CAD 0,00';
+    if (summarySaldoReal) summarySaldoReal.textContent = 'CAD 0,00';
+
     budgetTableBody.innerHTML = '';
-    plannedItemsTbody.innerHTML = '';
+    if (plannedItemsList) plannedItemsList.innerHTML = '';
     receiptsList.innerHTML = '';
     comparisonTbody.innerHTML = '';
+
+    const tPlanned = document.getElementById('comparison-total-planned');
+    if (tPlanned) tPlanned.textContent = 'CAD 0,00';
+    const tActual = document.getElementById('comparison-total-actual');
+    if (tActual) tActual.textContent = 'CAD 0,00';
+    const tDiff = document.getElementById('comparison-total-diff');
+    if (tDiff) {
+      tDiff.textContent = 'CAD 0,00';
+      tDiff.className = 'numeric';
+    }
     return;
   }
 

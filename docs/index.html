@@ -13,17 +13,14 @@
     </header>
 
     <nav class="top-nav">
-      <button class="nav-btn active" data-view="budget">Orçamento mensal</button>
-      <button class="nav-btn" data-view="receipts">Lançamento de notas fiscais</button>
-      <button class="nav-btn" data-view="charts">Gráficos</button>
+      <button class="nav-btn active" data-view="budget">1. Orçamento (Previsto)</button>
+      <button class="nav-btn" data-view="receipts">2. Notas Fiscais (Real)</button>
+      <button class="nav-btn" data-view="charts">3. Dashboard & Relatórios</button>
     </nav>
 
     <main class="container">
-      <!-- PAINEL GLOBAL: MÊS + RENDAS + RESUMO -->
       <section class="global-panel">
-        <!-- Card das rendas -->
         <div class="card">
-          <h2>Orçamento pessoal mensal</h2>
           <div class="field-row">
             <div class="field">
               <label>Mês de referência</label>
@@ -31,91 +28,54 @@
             </div>
             <div class="field">
               <label>Renda Luana (CAD)</label>
-              <input type="number" step="0.01" id="income-luana" />
+              <input type="number" step="0.01" id="income-luana" placeholder="0.00" />
             </div>
             <div class="field">
               <label>Renda Gabriel (CAD)</label>
-              <input type="number" step="0.01" id="income-gabriel" />
+              <input type="number" step="0.01" id="income-gabriel" placeholder="0.00" />
             </div>
-          </div>
-          <button id="btn-save-income" class="btn-primary small">Salvar rendas</button>
-
-          <!-- Renda mensal prevista fica aqui -->
-          <div class="income-inline">
-            <span class="summary-label">Renda mensal prevista</span>
-            <span id="summary-income-inline" class="summary-value">CAD 0,00</span>
+            <div class="field" style="justify-content: flex-end">
+              <button id="btn-save-income" class="btn-primary">Salvar Rendas</button>
+            </div>
           </div>
         </div>
 
-        <!-- Card Resumo do mês -->
-        <div class="card">
-          <h3>Resumo do mês</h3>
-
-          <!-- Linha 1: despesas -->
+        <div class="card summary-highlight">
           <div class="summary-row">
             <div class="summary-box">
-              <span class="summary-label">Previsão de despesa total</span>
-              <span id="summary-total-planned" class="summary-value">CAD 0,00</span>
+              <span class="summary-label">Renda Total</span>
+              <span id="summary-income-inline" class="summary-value">CAD 0,00</span>
             </div>
             <div class="summary-box">
-              <span class="summary-label">Despesa total real</span>
-              <span id="summary-total-actual" class="summary-value">CAD 0,00</span>
-            </div>
-          </div>
-
-          <!-- Linha 2: saldos -->
-          <div class="summary-row">
-            <div class="summary-box">
-              <span class="summary-label">Saldo previsto</span>
-              <span id="summary-saldo-previsto" class="summary-value">CAD 0,00</span>
+              <span class="summary-label">Gasto Real Acumulado</span>
+              <span id="summary-expense-inline" class="summary-value">CAD 0,00</span>
             </div>
             <div class="summary-box">
-              <span class="summary-label">Saldo real</span>
-              <span id="summary-saldo-real" class="summary-value">CAD 0,00</span>
-            </div>
-            <div class="summary-box">
-              <span class="summary-label">Economia / Estouro do mês (Saldo real − Saldo previsto)</span>
-              <span id="summary-diff-saldo" class="summary-value">CAD 0,00</span>
+              <span class="summary-label">Saldo Livre (Renda - Real)</span>
+              <span id="summary-saldo-livre" class="summary-value">CAD 0,00</span>
             </div>
           </div>
         </div>
       </section>
 
-      <!-- ===== TELA 1: ORÇAMENTO MENSAL ===== -->
       <section id="view-budget" class="view active">
         <div class="card">
           <h3>Cadastrar custo previsto</h3>
-
+          <span class="hint small" style="display: block; margin-bottom: 4px">1. Selecione a Categoria:</span>
           <div class="chips-row" id="planned-type-chips"></div>
-          <p class="hint small">Toque em um tipo (Moradia, Contas, Lojas, etc.) para preencher a categoria automaticamente.</p>
 
-          <div class="chips-row companies-row" id="planned-company-chips"></div>
-          <p class="hint small">Toque em uma empresa para preencher a descrição (ex: HIPOTECA, LUZ, VIDEOTRON, IGA...).</p>
+          <span class="hint small" style="display: block; margin: 8px 0 4px 0">2. Empresa (Clique para preencher o formulário):</span>
+          <div class="chips-row companies-row" id="planned-company-chips" style="margin-top: 0; padding-top: 0; border-top: none"></div>
 
-          <!-- Cadastro de empresa -->
-          <form id="form-company" class="inline-form">
-            <div class="field-row">
-              <div class="field">
-                <label>Nova empresa para o tipo selecionado</label>
-                <input type="text" id="company-name" placeholder="Ex: HIPOTECA, IGA, NETFLIX" />
-              </div>
-              <div class="field field-narrow">
-                <label>&nbsp;</label>
-                <button type="submit" class="btn-secondary full-width">Adicionar empresa</button>
-              </div>
-            </div>
-          </form>
-
-          <!-- Form de custo previsto -->
           <form id="form-planned">
             <div class="field-row">
               <div class="field">
                 <label>Categoria</label>
-                <input type="text" id="planned-category" placeholder="Moradia, Contas, Lojas..." required />
+                <input type="text" id="planned-category" placeholder="Moradia, Contas..." required />
               </div>
               <div class="field">
-                <label>Descrição</label>
-                <input type="text" id="planned-description" placeholder="Hipoteca, Luz, Mercado..." required />
+                <label>Descrição / Empresa</label>
+                <input type="text" id="planned-description" placeholder="Ex: Hipoteca, IGA... (Novas são salvas auto)" required />
               </div>
             </div>
             <div class="field-row">
@@ -138,65 +98,31 @@
                 </label>
               </div>
             </div>
-            <button type="submit" class="btn-primary" id="planned-submit-btn">Adicionar ao orçamento do mês</button>
+            <button type="submit" class="btn-primary" id="planned-submit-btn">Adicionar ao Orçamento</button>
           </form>
         </div>
 
         <div class="card">
-          <h3>Previsto x Real por categoria</h3>
-          <table class="table">
-            <thead>
-              <tr>
-                <th>Categoria</th>
-                <th class="numeric">Previsto</th>
-                <th class="numeric">Real</th>
-                <th class="numeric">
-                  Diferença
-                  <br />
-                  <span class="hint tiny">(Previsto − Real)</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody id="budget-table-body"></tbody>
-          </table>
-        </div>
-
-        <div class="card">
-          <h3>Itens do orçamento deste mês</h3>
-          <table class="table">
-            <thead>
-              <tr>
-                <th>Categoria</th>
-                <th>Descrição / Empresa</th>
-                <th class="numeric">Valor</th>
-                <th>Resp.</th>
-                <th>Fixo</th>
-                <th class="actions-col">Ações</th>
-              </tr>
-            </thead>
-            <tbody id="planned-items-tbody"></tbody>
-          </table>
-          <p class="hint small">
-            Toque em
-            <strong>Editar</strong>
-            para carregar o item no formulário de orçamento acima.
-          </p>
+          <div class="list-header-row">
+            <h3>Lista do Orçamento (Previsto)</h3>
+            <div class="header-actions">
+              <button class="action-btn" id="btn-expand-planned">Abrir tudo</button>
+              <button class="action-btn" id="btn-collapse-planned">Fechar tudo</button>
+            </div>
+          </div>
+          <div id="planned-items-list" class="receipts-list"></div>
         </div>
       </section>
 
-      <!-- ===== TELA 2: LANÇAMENTO DE NOTAS FISCAIS ===== -->
       <section id="view-receipts" class="view">
-        <h2>Lançamento de notas fiscais</h2>
-
         <div class="card">
-          <h3>Tipos de gasto</h3>
+          <h3>Novo Lançamento (Real)</h3>
+          <span class="hint small" style="display: block; margin-bottom: 4px">1. Selecione a Categoria:</span>
           <div class="chips-row" id="receipt-type-chips"></div>
-          <div class="chips-row companies-row" id="receipt-company-chips"></div>
-          <p class="hint small">Selecione um tipo e uma empresa para preencher o lançamento mais rápido.</p>
-        </div>
 
-        <div class="card">
-          <h3>Novo lançamento</h3>
+          <span class="hint small" style="display: block; margin: 8px 0 4px 0">2. Empresa (Clique para preencher o formulário):</span>
+          <div class="chips-row companies-row" id="receipt-company-chips" style="margin-top: 0; padding-top: 0; border-top: none"></div>
+
           <form id="form-actual">
             <div class="field-row">
               <div class="field">
@@ -204,14 +130,14 @@
                 <input type="date" id="actual-date" required />
               </div>
               <div class="field">
-                <label>Tipo / Categoria</label>
-                <input type="text" id="actual-category" placeholder="Supermercado, Contas, Eventos..." required />
+                <label>Categoria</label>
+                <input type="text" id="actual-category" placeholder="Supermercado, Contas..." required />
               </div>
             </div>
             <div class="field-row">
               <div class="field">
-                <label>Nome / Razão social</label>
-                <input type="text" id="actual-merchant" placeholder="IGA, HIPOTECA, Netflix, Videotron..." required />
+                <label>Nome / Empresa</label>
+                <input type="text" id="actual-merchant" placeholder="IGA, Videotron... (Novas são salvas auto)" required />
               </div>
               <div class="field">
                 <label>Valor (CAD)</label>
@@ -230,56 +156,88 @@
               <div class="field checkbox-field">
                 <label>
                   <input type="checkbox" id="actual-fixed" />
-                  Gasto fixo (repetir próximo mês)
+                  Gasto fixo
                 </label>
               </div>
             </div>
-            <button type="submit" class="btn-primary" id="actual-submit-btn">Salvar nota fiscal</button>
+            <button type="submit" class="btn-primary" id="actual-submit-btn">Salvar Nota Fiscal</button>
           </form>
         </div>
 
         <div class="card">
-          <h3>Notas fiscais do mês</h3>
+          <div class="list-header-row">
+            <h3>Histórico de Notas do Mês</h3>
+            <div class="header-actions">
+              <button class="action-btn" id="btn-expand-receipts">Abrir tudo</button>
+              <button class="action-btn" id="btn-collapse-receipts">Fechar tudo</button>
+            </div>
+          </div>
           <div id="receipts-list" class="receipts-list"></div>
+        </div>
+      </section>
+
+      <section id="view-charts" class="view">
+        <div class="card">
+          <h3>Saldos Detalhados</h3>
+          <div class="summary-row">
+            <div class="summary-box">
+              <span class="summary-label">Saldo previsto (Renda - Previsto)</span>
+              <span id="summary-saldo-previsto" class="summary-value">CAD 0,00</span>
+            </div>
+            <div class="summary-box">
+              <span class="summary-label">Saldo real (Renda - Real)</span>
+              <span id="summary-saldo-real" class="summary-value">CAD 0,00</span>
+            </div>
+          </div>
         </div>
 
         <div class="card">
-          <h3>Comparativo por item (Orçamento x Notas fiscais)</h3>
+          <h3>Comparativo Geral por Categoria</h3>
           <table class="table">
             <thead>
               <tr>
                 <th>Categoria</th>
-                <th>Descrição / Empresa</th>
                 <th class="numeric">Previsto</th>
                 <th class="numeric">Real</th>
-                <th class="numeric">
-                  Diferença
-                  <br />
-                  <span class="hint tiny">(Previsto − Real)</span>
-                </th>
+                <th class="numeric">Diferença</th>
+              </tr>
+            </thead>
+            <tbody id="budget-table-body"></tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <h3>Comparativo Detalhado por Item</h3>
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Categoria</th>
+                <th>Empresa</th>
+                <th class="numeric">Previsto</th>
+                <th class="numeric">Real</th>
+                <th class="numeric">Diferença</th>
               </tr>
             </thead>
             <tbody id="comparison-tbody"></tbody>
+            <tfoot style="font-weight: 600; background: #141423; border-top: 2px solid #35354a">
+              <tr>
+                <td colspan="2">TOTAIS DE DESPESA</td>
+                <td class="numeric" id="comparison-total-planned">CAD 0,00</td>
+                <td class="numeric" id="comparison-total-actual">CAD 0,00</td>
+                <td class="numeric" id="comparison-total-diff">CAD 0,00</td>
+              </tr>
+            </tfoot>
           </table>
         </div>
-      </section>
 
-      <!-- ===== TELA 3: GRÁFICOS ===== -->
-      <section id="view-charts" class="view">
-        <h2>Gráficos – Previsto x Real por categoria</h2>
         <div class="card">
-          <p class="hint">
-            O gráfico usa o
-            <strong>mesmo mês de referência</strong>
-            escolhido lá no topo.
-          </p>
           <canvas id="chart-categories" height="220"></canvas>
         </div>
       </section>
     </main>
 
     <footer class="app-footer">
-      <p>Frontend estático pronto pra conversar com backend em Java depois 🚀</p>
+      <p>Frontend estático pronto pra conversar com Firebase 🚀</p>
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>

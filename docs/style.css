@@ -441,3 +441,117 @@ button:active {
   font-size: 0.8rem;
   color: #999;
 }
+
+/* Estilos para diferenciar os Chips de Empresa */
+.chip-company {
+  background: transparent;
+  border: 1px solid #4a4a6a;
+  color: #c3c3d5;
+  font-style: normal;
+  border-radius: 6px; /* Formato quadrado arredondado para contrastar com a categoria */
+  padding: 4px 10px;
+}
+
+.chip-company.active,
+.chip-company:hover {
+  border-color: #f7c84a;
+  background: rgba(247, 200, 74, 0.1);
+  color: #fddf7b;
+}
+
+.companies-row {
+  display: flex;
+}
+
+/* Barras de Progresso de Orçamento */
+.progress-bar-container {
+  width: 100%;
+  background-color: #27273a;
+  border-radius: 4px;
+  height: 6px;
+  margin-top: 6px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.progress-safe {
+  background-color: #7cff7c;
+} /* Verde: Até 75% */
+.progress-warning {
+  background-color: #f7c84a;
+} /* Amarelo: 76% a 95% */
+.progress-danger {
+  background-color: #ff7b7b;
+} /* Vermelho: Acima de 95% ou estourado */
+
+.cat-name-container {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Agrupamentos (Accordion) */
+.group-header-row td {
+  background: #1a1a2e;
+  cursor: pointer;
+  font-weight: 600;
+  color: #fddf7b;
+  padding: 8px 10px;
+  border-bottom: 2px solid #0b0b10;
+  user-select: none;
+}
+
+.group-header-row td:hover {
+  background: #252540;
+}
+
+.group-header-div {
+  background: #1a1a2e;
+  cursor: pointer;
+  font-weight: 600;
+  color: #fddf7b;
+  padding: 8px 10px;
+  border-radius: 6px;
+  margin-top: 8px;
+  margin-bottom: 2px;
+  user-select: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.group-header-div:hover {
+  background: #252540;
+}
+
+/* Cabeçalho de listas com botões */
+.list-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.list-header-row h3 {
+  margin: 0;
+}
+
+.header-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.header-actions .action-btn {
+  background: #27273a;
+  color: #c3c3d5;
+  padding: 4px 10px;
+}
+
+.header-actions .action-btn:hover {
+  background: #35354a;
+  color: #fff;
+}

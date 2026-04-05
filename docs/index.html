@@ -8,6 +8,8 @@
     <link rel="manifest" href="manifest.json" />
     <meta name="theme-color" content="#0b0b10" />
     <link rel="apple-touch-icon" href="icons/icon-192.png" />
+    <link rel="icon" type="image/png" href="icons/icon-192.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   </head>
@@ -207,6 +209,7 @@
           <div class="list-header-row">
             <h3>Histórico de Notas do Mês</h3>
             <div class="header-actions">
+              <button class="action-btn" id="btn-mirror-fixed" style="color: #fddf7b; border: 1px solid #fddf7b; background: transparent">Espelhar Fixos</button>
               <button class="action-btn" id="btn-expand-receipts">Abrir tudo</button>
               <button class="action-btn" id="btn-collapse-receipts">Fechar tudo</button>
             </div>
@@ -279,7 +282,7 @@
     </main>
 
     <footer class="app-footer">
-      <p>Conectando ao Firebase... 🚀</p>
+      <!-- <p>Conectando ao Firebase... 🚀</p> -->
     </footer>
 
     <script src="https://www.gstatic.com/firebasejs/10.11.0/firebase-app-compat.js"></script>
@@ -300,8 +303,8 @@
       firebase.initializeApp(firebaseConfig);
       window.db = firebase.firestore();
 
-      // Ativa o cache local para uso offline
-      window.db.enablePersistence().catch((err) => {
+      // Ativa o cache local para uso offline (Sintaxe correta para versão Compat)
+      window.db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
         console.error('Erro ao ativar persistência offline:', err);
       });
 

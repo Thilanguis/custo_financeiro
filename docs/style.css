@@ -175,13 +175,14 @@ body {
 }
 
 .card {
-  background: rgba(18, 18, 30, 0.98);
+  background: linear-gradient(145deg, #161624, #12121c);
   border-radius: 16px;
-  padding: 14px;
-  margin-bottom: 14px;
+  padding: 16px;
+  margin-bottom: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.05),
-    0 10px 20px rgba(0, 0, 0, 0.6);
+    0 8px 24px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .card h2 {
@@ -222,19 +223,21 @@ h2 {
 
 .field input,
 .field select {
-  padding: 7px 10px;
+  padding: 10px 12px;
   border-radius: 10px;
-  border: 1px solid #35354a;
-  background: #151524;
+  border: 1px solid #27273a;
+  background: #0f0f18;
   color: #f5f5f5;
-  font-size: 0.9rem;
+  font-size: 0.95rem;
+  transition: all 0.2s ease;
 }
 
 .field input:focus,
 .field select:focus {
   outline: none;
   border-color: #fddf7b;
-  box-shadow: 0 0 0 1px rgba(253, 223, 123, 0.4);
+  background: #151524;
+  box-shadow: 0 0 0 3px rgba(253, 223, 123, 0.15);
 }
 
 .checkbox-field {
@@ -265,11 +268,23 @@ button {
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, #fddf7b, #f7c84a);
-  color: #2b220f;
-  font-weight: 600;
+  background: linear-gradient(135deg, #fddf7b 0%, #f7c84a 100%);
+  color: #12121c;
+  font-weight: 700;
+  font-size: 0.95rem;
   width: 100%;
-  margin-top: 4px;
+  margin-top: 8px;
+  padding: 12px 16px;
+  box-shadow: 0 4px 12px rgba(247, 200, 74, 0.2);
+  border-radius: 12px;
+  transition:
+    transform 0.1s,
+    box-shadow 0.1s;
+}
+
+.btn-primary:active {
+  transform: translateY(2px) scale(0.98);
+  box-shadow: 0 2px 6px rgba(247, 200, 74, 0.3);
 }
 
 .btn-primary.small {
@@ -392,6 +407,10 @@ button:active {
   color: #ff7b7b;
 }
 
+.neutral {
+  color: #f7c84a;
+}
+
 .chips-row {
   display: flex;
   flex-wrap: wrap;
@@ -400,12 +419,14 @@ button:active {
 }
 
 .chip {
-  padding: 5px 10px;
-  border-radius: 999px;
-  background: #202034;
+  padding: 6px 12px;
+  border-radius: 20px;
+  background: #18182a;
+  color: #c3c3d5;
   font-size: 0.8rem;
   cursor: pointer;
-  border: 1px solid transparent;
+  border: 1px solid #27273a;
+  transition: all 0.2s;
 }
 
 .chip.edit-mode {
@@ -415,7 +436,9 @@ button:active {
 
 .chip.active {
   border-color: #fddf7b;
-  background: #2b2b40;
+  background: rgba(253, 223, 123, 0.1);
+  color: #fddf7b;
+  font-weight: 600;
 }
 
 .inline-form {

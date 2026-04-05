@@ -1,82 +1,28 @@
 // firebase-api.js
+
 const db = window.db;
 const auth = window.auth;
 
 window.FinanceAPI = {
   uid: null,
-  unsubscribers: [], // Guarda as conexões abertas
+  familyId: 'familia-gabriel-luana', // ID compartilhado para unificar os dados
+  unsubscribers: [],
 
   clearListeners() {
-    // Limpa as conexões quando você troca de mês
     this.unsubscribers.forEach((unsub) => unsub());
     this.unsubscribers = [];
   },
 
-  // ===== OUVINTES EM TEMPO REAL =====
-  listenCompanies(callback) {
-    if (!this.uid) return;
-    const unsub = db
-      .collection('familias')
-      .doc(this.uid)
-      .collection('configuracoes')
-      .doc('empresas')
-      .onSnapshot((doc) => callback(doc.exists ? doc.data() : {}));
-    this.unsubscribers.push(unsub);
-  },
-
-  listenIncome(month, callback) {
-    if (!this.uid) return;
-    const unsub = db
-      .collection('familias')
-      .doc(this.uid)
-      .collection('meses')
-      .doc(month)
-      .onSnapshot((doc) => callback(doc.exists ? doc.data() : null));
-    this.unsubscribers.push(unsub);
-  },
-
-  listenPlanned(month, callback) {
-    if (!this.uid) return;
-    const unsub = db
-      .collection('familias')
-      .doc(this.uid)
-      .collection('meses')
-      .doc(month)
-      .collection('orcamento_previsto')
-      .onSnapshot((snapshot) => {
-        callback(snapshot.docs.map((doc) => ({ id: doc.id, month, ...doc.data() })));
-      });
-    this.unsubscribers.push(unsub);
-  },
-
-  listenReceipts(month, callback) {
-    if (!this.uid) return;
-    const unsub = db
-      .collection('familias')
-      .doc(this.uid)
-      .collection('meses')
-      .doc(month)
-      .collection('notas_fiscais')
-      .onSnapshot((snapshot) => {
-        callback(snapshot.docs.map((doc) => ({ id: doc.id, date: doc.data().date, ...doc.data() })));
-      });
-    this.unsubscribers.push(unsub);
-  },
-
-  // Escuta mudanças de status (logado/deslogado)
   onAuthStateChanged(callback) {
     auth.onAuthStateChanged((user) => {
-      if (user) {
-        this.uid = user.uid;
-        callback(user);
-      } else {
-        this.uid = null;
-        callback(null);
-      }
+      this.uid = user ? user.uid : null;
+      callback(user);
     });
   },
 
   async login(email, password) {
+    // Força a sessão a ficar salva no celular até que se clique em "Sair"
+    await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
     return auth.signInWithEmailAndPassword(email, password);
   },
 
@@ -85,82 +31,94 @@ window.FinanceAPI = {
   },
 
   // ===== EMPRESAS =====
-  async loadCompanies() {
-    if (!this.uid) return {};
-    const docRef = db.collection('familias').doc(this.uid).collection('configuracoes').doc('empresas');
-    const doc = await docRef.get();
-    return doc.exists ? doc.data() : {};
+  listenCompanies(callback) {
+    const unsub = db
+      .collection('familias')
+      .doc(this.familyId)
+      .collection('configuracoes')
+      .doc('empresas')
+      .onSnapshot((doc) => callback(doc.exists ? doc.data() : {}));
+    this.unsubscribers.push(unsub);
   },
 
   async saveCompanies(companyDirectory) {
-    if (!this.uid) return;
-    const docRef = db.collection('familias').doc(this.uid).collection('configuracoes').doc('empresas');
-    await docRef.set(companyDirectory);
+    await db.collection('familias').doc(this.familyId).collection('configuracoes').doc('empresas').set(companyDirectory);
   },
 
   // ===== RENDAS =====
-  async loadIncome(month) {
-    if (!this.uid) return null;
-    const docRef = db.collection('familias').doc(this.uid).collection('meses').doc(month);
-    const doc = await docRef.get();
-    return doc.exists ? doc.data() : null;
+  listenIncome(month, callback) {
+    const unsub = db
+      .collection('familias')
+      .doc(this.familyId)
+      .collection('meses')
+      .doc(month)
+      .onSnapshot((doc) => callback(doc.exists ? doc.data() : null));
+    this.unsubscribers.push(unsub);
   },
 
   async saveIncome(month, luana, gabriel) {
-    if (!this.uid) return;
-    const docRef = db.collection('familias').doc(this.uid).collection('meses').doc(month);
-    await docRef.set({ luana, gabriel }, { merge: true });
+    await db.collection('familias').doc(this.familyId).collection('meses').doc(month).set({ luana, gabriel }, { merge: true });
   },
 
   // ===== ORÇAMENTO (PREVISTO) =====
-  async loadPlanned(month) {
-    if (!this.uid) return [];
-    const snapshot = await db.collection('familias').doc(this.uid).collection('meses').doc(month).collection('orcamento_previsto').get();
-    return snapshot.docs.map((doc) => ({ id: doc.id, month, ...doc.data() }));
+  listenPlanned(month, callback) {
+    const unsub = db
+      .collection('familias')
+      .doc(this.familyId)
+      .collection('meses')
+      .doc(month)
+      .collection('orcamento_previsto')
+      .onSnapshot((snap) => callback(snap.docs.map((d) => ({ id: d.id, month, ...d.data() }))));
+    this.unsubscribers.push(unsub);
   },
 
   async savePlanned(month, item) {
-    if (!this.uid) return null;
-    const collRef = db.collection('familias').doc(this.uid).collection('meses').doc(month).collection('orcamento_previsto');
-
+    const coll = db.collection('familias').doc(this.familyId).collection('meses').doc(month).collection('orcamento_previsto');
     if (item.id && typeof item.id === 'string') {
-      await collRef.doc(item.id).set(item);
+      await coll.doc(item.id).set(item);
       return item.id;
     } else {
-      delete item.id; // Remove ID local provisório
-      const docRef = await collRef.add(item);
+      delete item.id;
+      const docRef = await coll.add(item);
       return docRef.id;
     }
   },
 
+  // Adicione logo abaixo de savePlanned(...) e antes de deletePlanned(...)
+  async getPlannedOnce(month) {
+    const snap = await db.collection('familias').doc(this.familyId).collection('meses').doc(month).collection('orcamento_previsto').get();
+    return snap.docs.map((d) => ({ id: d.id, month, ...d.data() }));
+  },
+
   async deletePlanned(month, id) {
-    if (!this.uid) return;
-    await db.collection('familias').doc(this.uid).collection('meses').doc(month).collection('orcamento_previsto').doc(id).delete();
+    await db.collection('familias').doc(this.familyId).collection('meses').doc(month).collection('orcamento_previsto').doc(id).delete();
   },
 
   // ===== NOTAS FISCAIS (REAL) =====
-  async loadReceipts(month) {
-    if (!this.uid) return [];
-    const snapshot = await db.collection('familias').doc(this.uid).collection('meses').doc(month).collection('notas_fiscais').get();
-    return snapshot.docs.map((doc) => ({ id: doc.id, date: doc.data().date, ...doc.data() }));
+  listenReceipts(month, callback) {
+    const unsub = db
+      .collection('familias')
+      .doc(this.familyId)
+      .collection('meses')
+      .doc(month)
+      .collection('notas_fiscais')
+      .onSnapshot((snap) => callback(snap.docs.map((d) => ({ id: d.id, date: d.data().date, ...d.data() }))));
+    this.unsubscribers.push(unsub);
   },
 
   async saveReceipt(month, item) {
-    if (!this.uid) return null;
-    const collRef = db.collection('familias').doc(this.uid).collection('meses').doc(month).collection('notas_fiscais');
-
+    const coll = db.collection('familias').doc(this.familyId).collection('meses').doc(month).collection('notas_fiscais');
     if (item.id && typeof item.id === 'string') {
-      await collRef.doc(item.id).set(item);
+      await coll.doc(item.id).set(item);
       return item.id;
     } else {
       delete item.id;
-      const docRef = await collRef.add(item);
+      const docRef = await coll.add(item);
       return docRef.id;
     }
   },
 
   async deleteReceipt(month, id) {
-    if (!this.uid) return;
-    await db.collection('familias').doc(this.uid).collection('meses').doc(month).collection('notas_fiscais').doc(id).delete();
+    await db.collection('familias').doc(this.familyId).collection('meses').doc(month).collection('notas_fiscais').doc(id).delete();
   },
 };

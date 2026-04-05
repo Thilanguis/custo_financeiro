@@ -119,7 +119,7 @@ function loadIncomeToInputs(month) {
   incomeGabrielInput.value = income ? income.gabriel || 0 : 0;
 }
 
-// 2. Evento do botão Carregar (Clona do Firebase)
+// 2. Evento do botão Carregar (Clona contas fixas do mês anterior)
 btnLoadMonth.addEventListener('click', async () => {
   const targetMonth = getCurrentMonth();
   if (!targetMonth) return alert('Selecione um mês primeiro.');
@@ -131,32 +131,33 @@ btnLoadMonth.addEventListener('click', async () => {
   try {
     const hasItems = plannedItems.some((p) => p.month === targetMonth);
 
+    // Só clona se o mês atual estiver vazio
     if (!hasItems) {
-      // Calcula o mês anterior matematicamente (Ex: 2026-04 vira 2026-03)
+      // Calcula qual foi o mês passado (Ex: 2026-04 -> 2026-03)
       const [year, month] = targetMonth.split('-');
       let prevDate = new Date(year, parseInt(month) - 2, 1);
       const prevMonthStr = prevDate.getFullYear() + '-' + String(prevDate.getMonth() + 1).padStart(2, '0');
 
-      // Busca os itens do mês anterior direto do Firebase
-      const prevItems = await FinanceAPI.loadPlanned(prevMonthStr);
+      // Busca os itens do mês anterior usando a nova função
+      const prevItems = await FinanceAPI.getPlannedOnce(prevMonthStr);
       const fixedItemsToClone = prevItems.filter((p) => p.fixed);
 
       for (const item of fixedItemsToClone) {
         const newItem = { ...item, month: targetMonth };
-        delete newItem.id; // Remove ID antigo para o Firebase gerar um novo
-        const savedId = await FinanceAPI.savePlanned(targetMonth, newItem);
-        newItem.id = savedId;
-        plannedItems.push(newItem);
+        delete newItem.id;
+        await FinanceAPI.savePlanned(targetMonth, newItem); // O Firebase atualiza a tela sozinho
       }
 
       if (fixedItemsToClone.length > 0) {
-        console.log(`${fixedItemsToClone.length} itens fixos clonados de ${prevMonthStr}.`);
+        alert(`${fixedItemsToClone.length} contas fixas copiadas de ${prevMonthStr}!`);
+      } else {
+        alert(`Nenhuma conta marcada como "Fixo" encontrada em ${prevMonthStr}.`);
       }
+    } else {
+      alert('Este mês já possui itens. A cópia automática só funciona em meses vazios.');
     }
 
     loadIncomeToInputs(targetMonth);
-    refreshAll();
-    alert(`Dados de ${targetMonth} processados com sucesso!`);
   } catch (error) {
     console.error('Erro ao clonar:', error);
     alert('Erro ao carregar mês.');
@@ -311,11 +312,10 @@ async function handleEditCompany(category, oldName) {
 }
 
 function updatePlannedChips() {
-  if (!getCategories().includes(selectedPlannedType)) selectedPlannedType = getCategories()[0] || '';
-
   renderTypeChips(plannedTypeChips, selectedPlannedType, (type) => {
     selectedPlannedType = type;
     plannedCategoryInput.value = type;
+    plannedDescriptionInput.value = ''; // Limpa a empresa ao trocar de categoria
     updatePlannedChips();
   });
 
@@ -325,11 +325,10 @@ function updatePlannedChips() {
 }
 
 function updateReceiptChips() {
-  if (!getCategories().includes(selectedReceiptType)) selectedReceiptType = getCategories()[0] || '';
-
   renderTypeChips(receiptTypeChips, selectedReceiptType, (type) => {
     selectedReceiptType = type;
     actualCategoryInput.value = type;
+    actualMerchantInput.value = ''; // Limpa a empresa ao trocar de categoria
     updateReceiptChips();
   });
 
@@ -396,26 +395,23 @@ formPlanned.addEventListener('submit', async (e) => {
   const itemData = { category, description, amount, owner, fixed, month };
   if (editingPlannedId !== null) itemData.id = editingPlannedId;
 
-  const savedId = await FinanceAPI.savePlanned(month, itemData);
-  itemData.id = savedId;
-
-  if (editingPlannedId === null) {
-    plannedItems.push(itemData);
-  } else {
-    const idx = plannedItems.findIndex((p) => p.id === editingPlannedId);
-    if (idx !== -1) plannedItems[idx] = itemData;
-  }
+  await FinanceAPI.savePlanned(month, itemData);
 
   plannedSubmitBtn.textContent = 'Adicionar ao Orçamento';
   plannedSubmitBtn.disabled = false;
   resetPlannedForm();
-  refreshAll();
+  // Não precisa mais do refreshAll() aqui, o Firebase atualiza a tela sozinho
 });
 
 function resetPlannedForm() {
   formPlanned.reset();
   editingPlannedId = null;
   plannedSubmitBtn.textContent = 'Adicionar ao Orçamento';
+
+  // Reseta a tag e o input para o padrão
+  selectedPlannedType = getCategories()[0] || '';
+  plannedCategoryInput.value = selectedPlannedType;
+  updatePlannedChips();
 }
 
 function startEditPlanned(id) {
@@ -444,10 +440,7 @@ async function deletePlanned(id) {
   const month = getCurrentMonth();
   await FinanceAPI.deletePlanned(month, id);
 
-  const idx = plannedItems.findIndex((p) => p.id === id);
-  if (idx >= 0) plannedItems.splice(idx, 1);
   if (editingPlannedId === id) resetPlannedForm();
-  refreshAll();
 }
 
 // ===== Lógica Abrir/Fechar Tudo =====
@@ -566,6 +559,59 @@ function renderPlannedItemsList(month) {
   plannedItemsList.appendChild(footerDiv);
 }
 
+// ===== Espelhar Contas Fixas (Em lote) =====
+const btnMirrorFixed = document.getElementById('btn-mirror-fixed');
+if (btnMirrorFixed) {
+  btnMirrorFixed.addEventListener('click', async () => {
+    const month = getCurrentMonth();
+    if (!month) return alert('Selecione um mês.');
+
+    const fixedPlanned = plannedItems.filter((p) => p.month === month && p.fixed);
+    if (fixedPlanned.length === 0) {
+      return alert('Nenhum item fixo encontrado no orçamento deste mês.');
+    }
+
+    if (!confirm(`Espelhar ${fixedPlanned.length} contas fixas do orçamento para as Notas Fiscais reais?`)) return;
+
+    const originalText = btnMirrorFixed.textContent;
+    btnMirrorFixed.textContent = 'Copiando...';
+    btnMirrorFixed.disabled = true;
+
+    // Define a data de lançamento como hoje (ou dia 01 se estiver visualizando outro mês)
+    const today = new Date().toISOString().split('T')[0];
+    const launchDate = today.startsWith(month) ? today : `${month}-01`;
+
+    let count = 0;
+    for (const p of fixedPlanned) {
+      // Trava: Ignora se a categoria e empresa já existirem nas Notas Fiscais deste mês
+      const alreadyExists = receipts.some((r) => r.date.startsWith(month) && r.category === p.category && r.merchant === p.description);
+
+      if (!alreadyExists) {
+        const itemData = {
+          date: launchDate,
+          category: p.category,
+          merchant: p.description,
+          amount: p.amount,
+          owner: p.owner,
+          fixed: true,
+        };
+        await autoRegisterCompany(p.category, p.description);
+        await FinanceAPI.saveReceipt(month, itemData);
+        count++;
+      }
+    }
+
+    btnMirrorFixed.textContent = originalText;
+    btnMirrorFixed.disabled = false;
+
+    if (count > 0) {
+      alert(`${count} itens fixos foram espelhados com sucesso!`);
+    } else {
+      alert('Todos os itens fixos já foram lançados nas Notas Fiscais (ignorados para evitar duplicidade).');
+    }
+  });
+}
+
 // ===== Lançamento de notas fiscais =====
 
 const formActual = document.getElementById('form-actual');
@@ -579,6 +625,17 @@ const actualFixedCheckbox = document.getElementById('actual-fixed');
 const receiptsList = document.getElementById('receipts-list');
 
 let editingReceiptId = null;
+
+// Sincroniza a tag ativa com o que for digitado no campo Categoria
+plannedCategoryInput.addEventListener('input', (e) => {
+  selectedPlannedType = e.target.value.trim();
+  updatePlannedChips();
+});
+
+actualCategoryInput.addEventListener('input', (e) => {
+  selectedReceiptType = e.target.value.trim();
+  updateReceiptChips();
+});
 
 formActual.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -600,26 +657,28 @@ formActual.addEventListener('submit', async (e) => {
   const itemData = { date, category, merchant, amount, owner, fixed };
   if (editingReceiptId !== null) itemData.id = editingReceiptId;
 
-  const savedId = await FinanceAPI.saveReceipt(month, itemData);
-  itemData.id = savedId;
-
-  if (editingReceiptId === null) {
-    receipts.push(itemData);
-  } else {
-    const rIdx = receipts.findIndex((x) => x.id === editingReceiptId);
-    if (rIdx !== -1) receipts[rIdx] = itemData;
-  }
+  await FinanceAPI.saveReceipt(month, itemData);
 
   actualSubmitBtn.textContent = 'Salvar Nota Fiscal';
   actualSubmitBtn.disabled = false;
   resetReceiptForm();
-  refreshAll();
 });
 
 function resetReceiptForm() {
   formActual.reset();
   editingReceiptId = null;
   actualSubmitBtn.textContent = 'Salvar Nota Fiscal';
+
+  // Reseta a tag e o input para o padrão
+  selectedReceiptType = getCategories()[0] || '';
+  actualCategoryInput.value = selectedReceiptType;
+  actualMerchantInput.value = ''; // Limpa a empresa ao trocar de categoria
+
+  // Mantém a data preenchida com o dia de hoje após salvar
+  const today = new Date().toISOString().split('T')[0];
+  actualDateInput.value = today;
+
+  updateReceiptChips();
 }
 
 function startEditReceipt(id) {
@@ -650,10 +709,7 @@ async function deleteReceipt(id) {
 
   await FinanceAPI.deleteReceipt(month, id);
 
-  const idx = receipts.findIndex((x) => x.id === id);
-  if (idx >= 0) receipts.splice(idx, 1);
   if (editingReceiptId === id) resetReceiptForm();
-  refreshAll();
 }
 
 function updateReceiptsView() {
@@ -826,7 +882,9 @@ function updateDashboardView() {
     const data = mapCat[cat];
     sumPlanned += data.planned;
     sumActual += data.actual;
-    const diffCat = data.planned - data.actual;
+
+    // CORREÇÃO: Arredondamento para forçar o zero absoluto e ativar a cor amarela
+    const diffCat = Math.round((data.planned - data.actual) * 100) / 100;
     const isOpen = openDashboardCats.has(cat);
 
     // Header da Categoria
@@ -846,21 +904,31 @@ function updateDashboardView() {
     catTitle.innerHTML = `<span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}`;
     catContainer.appendChild(catTitle);
 
-    if (data.planned > 0 || data.actual > 0) {
-      let percent = data.planned > 0 ? (data.actual / data.planned) * 100 : 100;
-      const progressContainer = document.createElement('div');
-      progressContainer.className = 'progress-bar-container';
-      const progressFill = document.createElement('div');
-      progressFill.className = 'progress-bar-fill';
-      progressFill.style.width = Math.min(percent, 100) + '%';
-
-      if (percent <= 75) progressFill.classList.add('progress-safe');
-      else if (percent <= 95) progressFill.classList.add('progress-warning');
-      else progressFill.classList.add('progress-danger');
-
-      progressContainer.appendChild(progressFill);
-      catContainer.appendChild(progressContainer);
+    // CORREÇÃO: A barra agora sempre existe no fundo, mesmo se os valores forem zero
+    let percent = 0;
+    if (data.planned > 0) {
+      percent = (data.actual / data.planned) * 100;
+    } else if (data.actual > 0) {
+      percent = 100;
     }
+
+    const progressContainer = document.createElement('div');
+    progressContainer.className = 'progress-bar-container';
+    const progressFill = document.createElement('div');
+    progressFill.className = 'progress-bar-fill';
+    progressFill.style.width = Math.min(percent, 100) + '%';
+
+    // Arredondamento seguro para evitar bugs decimais do JavaScript
+    const roundedPercent = Math.round(percent * 100) / 100;
+
+    // Verde se não estourou, Amarelo se bateu exato, Vermelho se passou
+    if (roundedPercent < 100) progressFill.classList.add('progress-safe');
+    else if (roundedPercent === 100) progressFill.classList.add('progress-warning');
+    else progressFill.classList.add('progress-danger');
+
+    progressContainer.appendChild(progressFill);
+    catContainer.appendChild(progressContainer);
+
     tdCatName.appendChild(catContainer);
 
     const tdCatPrev = document.createElement('td');
@@ -872,7 +940,8 @@ function updateDashboardView() {
     tdCatReal.textContent = formatCurrency(data.actual);
 
     const tdCatDiff = document.createElement('td');
-    tdCatDiff.className = 'numeric ' + (diffCat >= 0 ? 'positive' : 'negative');
+    // Aplica a cor da Diferença (Amarelo = neutral quando for exatamente zero)
+    tdCatDiff.className = 'numeric ' + (diffCat > 0 ? 'positive' : diffCat === 0 ? 'neutral' : 'negative');
     tdCatDiff.textContent = formatCurrency(diffCat);
 
     trCat.appendChild(tdCatName);
@@ -885,7 +954,9 @@ function updateDashboardView() {
     if (isOpen) {
       const items = Array.from(data.items.values()).sort((a, b) => a.name.localeCompare(b.name));
       items.forEach((item) => {
-        const diffItem = item.planned - item.actual;
+        // CORREÇÃO: Arredondamento nos itens filhos também
+        const diffItem = Math.round((item.planned - item.actual) * 100) / 100;
+
         const trItem = document.createElement('tr');
         trItem.className = 'dashboard-detail-row';
 
@@ -901,7 +972,7 @@ function updateDashboardView() {
         tdItemReal.textContent = formatCurrency(item.actual);
 
         const tdItemDiff = document.createElement('td');
-        tdItemDiff.className = 'numeric ' + (diffItem >= 0 ? 'positive' : 'negative');
+        tdItemDiff.className = 'numeric ' + (diffItem > 0 ? 'positive' : diffItem === 0 ? 'neutral' : 'negative');
         tdItemDiff.textContent = formatCurrency(diffItem);
 
         trItem.appendChild(tdItemName);
@@ -914,12 +985,13 @@ function updateDashboardView() {
   });
 
   // Totais do Rodapé
-  const totalDiff = sumPlanned - sumActual;
+  const totalDiff = Math.round((sumPlanned - sumActual) * 100) / 100;
   document.getElementById('dashboard-total-planned').textContent = formatCurrency(sumPlanned);
   document.getElementById('dashboard-total-actual').textContent = formatCurrency(sumActual);
+
   const tdDiffTotal = document.getElementById('dashboard-total-diff');
   tdDiffTotal.textContent = formatCurrency(totalDiff);
-  tdDiffTotal.className = 'numeric ' + (totalDiff >= 0 ? 'positive' : 'negative');
+  tdDiffTotal.className = 'numeric ' + (totalDiff > 0 ? 'positive' : totalDiff === 0 ? 'neutral' : 'negative');
 }
 
 // ===== Gráficos (Chart.js) =====
@@ -1240,6 +1312,14 @@ function initAppUI() {
 
   selectedPlannedType = getCategories()[0] || '';
   selectedReceiptType = getCategories()[0] || '';
+
+  // Força os inputs a começarem preenchidos com a tag ativa inicial
+  plannedCategoryInput.value = selectedPlannedType;
+  actualCategoryInput.value = selectedReceiptType;
+
+  // Define a data de hoje como padrão no formulário de Notas Fiscais
+  const today = new Date().toISOString().split('T')[0];
+  actualDateInput.value = today;
 
   updatePlannedChips();
   updateReceiptChips();

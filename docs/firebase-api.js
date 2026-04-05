@@ -4,6 +4,64 @@ const auth = window.auth;
 
 window.FinanceAPI = {
   uid: null,
+  unsubscribers: [], // Guarda as conexões abertas
+
+  clearListeners() {
+    // Limpa as conexões quando você troca de mês
+    this.unsubscribers.forEach((unsub) => unsub());
+    this.unsubscribers = [];
+  },
+
+  // ===== OUVINTES EM TEMPO REAL =====
+  listenCompanies(callback) {
+    if (!this.uid) return;
+    const unsub = db
+      .collection('familias')
+      .doc(this.uid)
+      .collection('configuracoes')
+      .doc('empresas')
+      .onSnapshot((doc) => callback(doc.exists ? doc.data() : {}));
+    this.unsubscribers.push(unsub);
+  },
+
+  listenIncome(month, callback) {
+    if (!this.uid) return;
+    const unsub = db
+      .collection('familias')
+      .doc(this.uid)
+      .collection('meses')
+      .doc(month)
+      .onSnapshot((doc) => callback(doc.exists ? doc.data() : null));
+    this.unsubscribers.push(unsub);
+  },
+
+  listenPlanned(month, callback) {
+    if (!this.uid) return;
+    const unsub = db
+      .collection('familias')
+      .doc(this.uid)
+      .collection('meses')
+      .doc(month)
+      .collection('orcamento_previsto')
+      .onSnapshot((snapshot) => {
+        callback(snapshot.docs.map((doc) => ({ id: doc.id, month, ...doc.data() })));
+      });
+    this.unsubscribers.push(unsub);
+  },
+
+  listenReceipts(month, callback) {
+    if (!this.uid) return;
+    const unsub = db
+      .collection('familias')
+      .doc(this.uid)
+      .collection('meses')
+      .doc(month)
+      .collection('notas_fiscais')
+      .onSnapshot((snapshot) => {
+        callback(snapshot.docs.map((doc) => ({ id: doc.id, date: doc.data().date, ...doc.data() })));
+      });
+    this.unsubscribers.push(unsub);
+  },
 
   // Escuta mudanças de status (logado/deslogado)
   onAuthStateChanged(callback) {

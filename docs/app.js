@@ -1182,50 +1182,56 @@ const formLogin = document.getElementById('form-login');
 const btnLogout = document.getElementById('btn-logout');
 const btnDoLogin = document.getElementById('btn-do-login');
 
-async function syncData(month) {
+function syncData(month) {
   if (!month) return;
 
-  const originalText = btnLoadMonth.textContent;
-  btnLoadMonth.textContent = 'Carregando banco...';
+  FinanceAPI.clearListeners(); // Limpa as conexões abertas do mês anterior
+
+  btnLoadMonth.textContent = 'Sincronizando...';
   btnLoadMonth.disabled = true;
 
-  try {
-    const comps = await FinanceAPI.loadCompanies();
-    if (Object.keys(comps).length > 0) {
-      // Limpa e recarrega diretório de empresas
-      for (const k in companyDirectory) delete companyDirectory[k];
+  // 1. Escuta Empresas em tempo real
+  FinanceAPI.listenCompanies((comps) => {
+    if (comps && Object.keys(comps).length > 0) {
+      Object.keys(companyDirectory).forEach((key) => delete companyDirectory[key]);
       Object.assign(companyDirectory, comps);
       updatePlannedChips();
       updateReceiptChips();
     }
+  });
 
-    const inc = await FinanceAPI.loadIncome(month);
+  // 2. Escuta Rendas em tempo real
+  FinanceAPI.listenIncome(month, (inc) => {
     const idx = incomes.findIndex((i) => i.month === month);
     if (inc) {
       if (idx >= 0) incomes[idx] = { month, ...inc };
       else incomes.push({ month, ...inc });
     }
+    loadIncomeToInputs(month);
+    refreshAll();
+  });
 
-    const pItems = await FinanceAPI.loadPlanned(month);
+  // 3. Escuta Orçamento Previsto em tempo real
+  FinanceAPI.listenPlanned(month, (pItems) => {
     for (let i = plannedItems.length - 1; i >= 0; i--) {
       if (plannedItems[i].month === month) plannedItems.splice(i, 1);
     }
     plannedItems.push(...pItems);
+    refreshAll();
+  });
 
-    const rItems = await FinanceAPI.loadReceipts(month);
+  // 4. Escuta Notas Fiscais em tempo real
+  FinanceAPI.listenReceipts(month, (rItems) => {
     for (let i = receipts.length - 1; i >= 0; i--) {
       if (receipts[i].date.startsWith(month)) receipts.splice(i, 1);
     }
     receipts.push(...rItems);
-
-    loadIncomeToInputs(month);
     refreshAll();
-  } catch (error) {
-    console.error('Erro na sincronização:', error);
-  } finally {
-    btnLoadMonth.textContent = originalText;
+
+    // Libera o botão após o primeiro carregamento
+    btnLoadMonth.textContent = 'Carregar';
     btnLoadMonth.disabled = false;
-  }
+  });
 }
 
 function initAppUI() {

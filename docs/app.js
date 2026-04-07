@@ -213,7 +213,14 @@ function getIncomeTotalForMonth(month) {
 }
 
 monthInput.addEventListener('change', () => {
-  syncData(getCurrentMonth());
+  const newMonth = getCurrentMonth();
+  syncData(newMonth);
+
+  // Atualiza a data do form de notas fiscais ao trocar o mês
+  if (actualDateInput && !editingReceiptId) {
+    const today = new Date().toISOString().split('T')[0];
+    actualDateInput.value = today.startsWith(newMonth) ? today : `${newMonth}-01`;
+  }
 });
 
 // ===== Chips de tipos & empresas (uso em 2 telas) =====
@@ -694,7 +701,14 @@ actualCategoryInput.addEventListener('input', (e) => {
 formActual.addEventListener('submit', async (e) => {
   e.preventDefault();
   const date = actualDateInput.value;
-  const month = date.substring(0, 7);
+  const inputMonth = date.substring(0, 7);
+  const currentViewMonth = getCurrentMonth();
+
+  if (inputMonth !== currentViewMonth) {
+    return alert(`A data da nota fiscal não pertence ao mês selecionado no topo (${currentViewMonth}).`);
+  }
+
+  const month = inputMonth;
   const category = actualCategoryInput.value.trim();
   const merchant = actualMerchantInput.value.trim();
   const amount = parseAmount(actualAmountInput.value);
@@ -727,9 +741,10 @@ function resetReceiptForm() {
   actualCategoryInput.value = selectedReceiptType;
   actualMerchantInput.value = ''; // Limpa a empresa ao trocar de categoria
 
-  // Mantém a data preenchida com o dia de hoje após salvar
+  // Ajusta a data padrão com base no mês selecionado no topo
+  const selectedMonth = getCurrentMonth();
   const today = new Date().toISOString().split('T')[0];
-  actualDateInput.value = today;
+  actualDateInput.value = today.startsWith(selectedMonth) ? today : `${selectedMonth}-01`;
 
   updateReceiptChips();
 }

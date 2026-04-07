@@ -131,21 +131,32 @@ btnLoadMonth.addEventListener('click', async () => {
   try {
     const hasItems = plannedItems.some((p) => p.month === targetMonth);
 
-    // Só clona se o mês atual estiver vazio
     if (!hasItems) {
-      // Calcula qual foi o mês passado (Ex: 2026-04 -> 2026-03)
       const [year, month] = targetMonth.split('-');
       let prevDate = new Date(year, parseInt(month) - 2, 1);
       const prevMonthStr = prevDate.getFullYear() + '-' + String(prevDate.getMonth() + 1).padStart(2, '0');
 
-      // Busca os itens do mês anterior usando a nova função
       const prevItems = await FinanceAPI.getPlannedOnce(prevMonthStr);
       const fixedItemsToClone = prevItems.filter((p) => p.fixed);
 
       for (const item of fixedItemsToClone) {
         const newItem = { ...item, month: targetMonth };
         delete newItem.id;
-        await FinanceAPI.savePlanned(targetMonth, newItem); // O Firebase atualiza a tela sozinho
+        await FinanceAPI.savePlanned(targetMonth, newItem);
+
+        if (item.isStatic) {
+          const today = new Date().toISOString().split('T')[0];
+          const launchDate = today.startsWith(targetMonth) ? today : `${targetMonth}-01`;
+          const receiptData = {
+            date: launchDate,
+            category: item.category,
+            merchant: item.description,
+            amount: item.amount,
+            owner: item.owner,
+            isStatic: true, // ADICIONADO "isStatic: true" ABAIXO
+          };
+          await FinanceAPI.saveReceipt(targetMonth, receiptData);
+        }
       }
 
       if (fixedItemsToClone.length > 0) {
@@ -345,7 +356,21 @@ const plannedDescriptionInput = document.getElementById('planned-description');
 const plannedAmountInput = document.getElementById('planned-amount');
 const plannedOwnerSelect = document.getElementById('planned-owner');
 const plannedFixedCheckbox = document.getElementById('planned-fixed');
+const plannedStaticCheckbox = document.getElementById('planned-static');
+const labelPlannedStatic = document.getElementById('label-planned-static');
 const plannedSubmitBtn = document.getElementById('planned-submit-btn');
+
+// Regra: Estático só liga se Fixo estiver marcado
+plannedFixedCheckbox.addEventListener('change', (e) => {
+  if (e.target.checked) {
+    plannedStaticCheckbox.disabled = false;
+    labelPlannedStatic.style.opacity = '1';
+  } else {
+    plannedStaticCheckbox.disabled = true;
+    plannedStaticCheckbox.checked = false;
+    labelPlannedStatic.style.opacity = '0.5';
+  }
+});
 
 const budgetTableBody = document.getElementById('budget-table-body');
 const plannedItemsList = document.getElementById('planned-items-list');
@@ -384,6 +409,7 @@ formPlanned.addEventListener('submit', async (e) => {
   const amount = parseAmount(plannedAmountInput.value);
   const owner = plannedOwnerSelect.value;
   const fixed = plannedFixedCheckbox.checked;
+  const isStatic = plannedStaticCheckbox.checked;
 
   if (!category || !description || isNaN(amount)) return alert('Preencha categoria, descrição e valor.');
 
@@ -392,15 +418,53 @@ formPlanned.addEventListener('submit', async (e) => {
 
   await autoRegisterCompany(category, description);
 
-  const itemData = { category, description, amount, owner, fixed, month };
+  // Pega os dados antigos ANTES de salvar, para podermos achar a nota fiscal correspondente
+  let oldItem = null;
+  if (editingPlannedId !== null) {
+    oldItem = plannedItems.find((p) => p.id === editingPlannedId);
+  }
+
+  const itemData = { category, description, amount, owner, fixed, isStatic, month };
   if (editingPlannedId !== null) itemData.id = editingPlannedId;
 
   await FinanceAPI.savePlanned(month, itemData);
 
+  if (editingPlannedId === null) {
+    // Lança nota fiscal automática se for um item NOVO e ESTÁTICO
+    if (isStatic) {
+      const today = new Date().toISOString().split('T')[0];
+      const launchDate = today.startsWith(month) ? today : `${month}-01`;
+      const receiptData = { date: launchDate, category, merchant: description, amount, owner, isStatic: true };
+      await FinanceAPI.saveReceipt(month, receiptData);
+    }
+  } else if (oldItem) {
+    // Se for uma EDIÇÃO, tenta achar a nota fiscal usando o nome/categoria antigos
+    const linkedReceipt = receipts.find((r) => r.date.startsWith(month) && r.category === oldItem.category && r.merchant === oldItem.description);
+
+    if (linkedReceipt) {
+      // Atualiza a nota fiscal existente com os novos dados (valor, nome e a flag estática)
+      const updatedReceipt = {
+        id: linkedReceipt.id,
+        date: linkedReceipt.date,
+        category: category,
+        merchant: description,
+        amount: amount,
+        owner: owner,
+        isStatic: isStatic,
+      };
+      await FinanceAPI.saveReceipt(month, updatedReceipt);
+    } else if (isStatic) {
+      // Se a nota fiscal não existia, mas na edição você marcou "Estático" agora, ele cria
+      const today = new Date().toISOString().split('T')[0];
+      const launchDate = today.startsWith(month) ? today : `${month}-01`;
+      const receiptData = { date: launchDate, category, merchant: description, amount, owner, isStatic: true };
+      await FinanceAPI.saveReceipt(month, receiptData);
+    }
+  }
+
   plannedSubmitBtn.textContent = 'Adicionar ao Orçamento';
   plannedSubmitBtn.disabled = false;
   resetPlannedForm();
-  // Não precisa mais do refreshAll() aqui, o Firebase atualiza a tela sozinho
 });
 
 function resetPlannedForm() {
@@ -408,7 +472,9 @@ function resetPlannedForm() {
   editingPlannedId = null;
   plannedSubmitBtn.textContent = 'Adicionar ao Orçamento';
 
-  // Reseta a tag e o input para o padrão
+  plannedStaticCheckbox.disabled = true;
+  labelPlannedStatic.style.opacity = '0.5';
+
   selectedPlannedType = getCategories()[0] || '';
   plannedCategoryInput.value = selectedPlannedType;
   updatePlannedChips();
@@ -424,7 +490,11 @@ function startEditPlanned(id) {
   plannedDescriptionInput.value = item.description;
   plannedAmountInput.value = item.amount;
   plannedOwnerSelect.value = item.owner;
+
   plannedFixedCheckbox.checked = item.fixed;
+  plannedStaticCheckbox.disabled = !item.fixed;
+  labelPlannedStatic.style.opacity = item.fixed ? '1' : '0.5';
+  plannedStaticCheckbox.checked = item.isStatic || false;
 
   if (getCategories().includes(item.category)) {
     selectedPlannedType = item.category;
@@ -436,11 +506,47 @@ function startEditPlanned(id) {
 }
 
 async function deletePlanned(id) {
-  if (!confirm('Excluir este item?')) return;
+  const p = plannedItems.find((x) => x.id === id);
+  if (!p) return;
+
+  const msg = p.isStatic ? 'Este item é ESTÁTICO. Excluí-lo aqui também apagará a Nota Fiscal vinculada. Deseja continuar?' : 'Excluir este item do Orçamento?';
+
+  if (!confirm(msg)) return;
+
   const month = getCurrentMonth();
   await FinanceAPI.deletePlanned(month, id);
 
+  // Exclusão em cadeia nas Notas Fiscais
+  if (p.isStatic) {
+    const receiptToDelete = receipts.find((r) => r.date.startsWith(month) && r.category === p.category && r.merchant === p.description && r.isStatic);
+    if (receiptToDelete) {
+      await FinanceAPI.deleteReceipt(month, receiptToDelete.id);
+    }
+  }
+
   if (editingPlannedId === id) resetPlannedForm();
+}
+
+async function deleteReceipt(id) {
+  const r = receipts.find((x) => x.id === id);
+  if (!r) return;
+
+  const msg = r.isStatic ? 'Esta nota fiscal é ESTÁTICA. Excluí-la aqui também apagará a previsão no Orçamento. Deseja continuar?' : 'Excluir esta nota fiscal?';
+
+  if (!confirm(msg)) return;
+
+  const month = r.date.substring(0, 7);
+  await FinanceAPI.deleteReceipt(month, id);
+
+  // Exclusão em cadeia no Orçamento
+  if (r.isStatic) {
+    const plannedToDelete = plannedItems.find((p) => p.month === month && p.category === r.category && p.description === r.merchant && p.isStatic);
+    if (plannedToDelete) {
+      await FinanceAPI.deletePlanned(month, plannedToDelete.id);
+    }
+  }
+
+  if (editingReceiptId === id) resetReceiptForm();
 }
 
 // ===== Lógica Abrir/Fechar Tudo =====
@@ -512,7 +618,8 @@ function renderPlannedItemsList(month) {
   Object.keys(grouped)
     .sort()
     .forEach((cat) => {
-      const groupItems = grouped[cat];
+      // Ordena do valor mais alto para o mais baixo
+      const groupItems = grouped[cat].sort((a, b) => b.amount - a.amount);
       const isOpen = openPlannedCats.has(cat);
       const catTotal = groupItems.reduce((acc, curr) => acc + curr.amount, 0);
 
@@ -538,7 +645,7 @@ function renderPlannedItemsList(month) {
           item.innerHTML = `
           <div class="receipt-main">
             <div class="receipt-line">${p.description}</div>
-            <div class="receipt-meta">Resp: ${p.owner}${p.fixed ? ' • Fixo' : ''}</div>
+            <div class="receipt-meta">Resp: ${p.owner}${p.fixed ? (p.isStatic ? ' • Fixo & Estático' : ' • Fixo') : ''}</div>
           </div>
           <div class="receipt-right">
             <div class="receipt-amount">${formatCurrency(p.amount)}</div>
@@ -553,63 +660,11 @@ function renderPlannedItemsList(month) {
       }
     });
 
+  // Calcula o subtotal apenas dos itens marcados como fixos
   const footerDiv = document.createElement('div');
   footerDiv.className = 'list-footer-total';
   footerDiv.innerHTML = `<span>TOTAL PREVISTO</span><span>${formatCurrency(grandTotal)}</span>`;
   plannedItemsList.appendChild(footerDiv);
-}
-
-// ===== Espelhar Contas Fixas (Em lote) =====
-const btnMirrorFixed = document.getElementById('btn-mirror-fixed');
-if (btnMirrorFixed) {
-  btnMirrorFixed.addEventListener('click', async () => {
-    const month = getCurrentMonth();
-    if (!month) return alert('Selecione um mês.');
-
-    const fixedPlanned = plannedItems.filter((p) => p.month === month && p.fixed);
-    if (fixedPlanned.length === 0) {
-      return alert('Nenhum item fixo encontrado no orçamento deste mês.');
-    }
-
-    if (!confirm(`Espelhar ${fixedPlanned.length} contas fixas do orçamento para as Notas Fiscais reais?`)) return;
-
-    const originalText = btnMirrorFixed.textContent;
-    btnMirrorFixed.textContent = 'Copiando...';
-    btnMirrorFixed.disabled = true;
-
-    // Define a data de lançamento como hoje (ou dia 01 se estiver visualizando outro mês)
-    const today = new Date().toISOString().split('T')[0];
-    const launchDate = today.startsWith(month) ? today : `${month}-01`;
-
-    let count = 0;
-    for (const p of fixedPlanned) {
-      // Trava: Ignora se a categoria e empresa já existirem nas Notas Fiscais deste mês
-      const alreadyExists = receipts.some((r) => r.date.startsWith(month) && r.category === p.category && r.merchant === p.description);
-
-      if (!alreadyExists) {
-        const itemData = {
-          date: launchDate,
-          category: p.category,
-          merchant: p.description,
-          amount: p.amount,
-          owner: p.owner,
-          fixed: true,
-        };
-        await autoRegisterCompany(p.category, p.description);
-        await FinanceAPI.saveReceipt(month, itemData);
-        count++;
-      }
-    }
-
-    btnMirrorFixed.textContent = originalText;
-    btnMirrorFixed.disabled = false;
-
-    if (count > 0) {
-      alert(`${count} itens fixos foram espelhados com sucesso!`);
-    } else {
-      alert('Todos os itens fixos já foram lançados nas Notas Fiscais (ignorados para evitar duplicidade).');
-    }
-  });
 }
 
 // ===== Lançamento de notas fiscais =====
@@ -621,7 +676,6 @@ const actualCategoryInput = document.getElementById('actual-category');
 const actualMerchantInput = document.getElementById('actual-merchant');
 const actualAmountInput = document.getElementById('actual-amount');
 const actualOwnerSelect = document.getElementById('actual-owner');
-const actualFixedCheckbox = document.getElementById('actual-fixed');
 const receiptsList = document.getElementById('receipts-list');
 
 let editingReceiptId = null;
@@ -640,12 +694,11 @@ actualCategoryInput.addEventListener('input', (e) => {
 formActual.addEventListener('submit', async (e) => {
   e.preventDefault();
   const date = actualDateInput.value;
-  const month = date.substring(0, 7); // Extrai o AAAA-MM da data selecionada
+  const month = date.substring(0, 7);
   const category = actualCategoryInput.value.trim();
   const merchant = actualMerchantInput.value.trim();
   const amount = parseAmount(actualAmountInput.value);
   const owner = actualOwnerSelect.value;
-  const fixed = actualFixedCheckbox.checked;
 
   if (!date || !category || !merchant || isNaN(amount)) return alert('Preencha data, categoria, nome e valor.');
 
@@ -654,7 +707,7 @@ formActual.addEventListener('submit', async (e) => {
 
   await autoRegisterCompany(category, merchant);
 
-  const itemData = { date, category, merchant, amount, owner, fixed };
+  const itemData = { date, category, merchant, amount, owner };
   if (editingReceiptId !== null) itemData.id = editingReceiptId;
 
   await FinanceAPI.saveReceipt(month, itemData);
@@ -691,7 +744,6 @@ function startEditReceipt(id) {
   actualMerchantInput.value = r.merchant;
   actualAmountInput.value = r.amount;
   actualOwnerSelect.value = r.owner;
-  actualFixedCheckbox.checked = r.fixed;
 
   if (getCategories().includes(r.category)) {
     selectedReceiptType = r.category;
@@ -699,17 +751,6 @@ function startEditReceipt(id) {
   }
 
   actualSubmitBtn.textContent = 'Salvar alterações';
-}
-
-async function deleteReceipt(id) {
-  if (!confirm('Excluir esta nota fiscal?')) return;
-  const r = receipts.find((x) => x.id === id);
-  if (!r) return;
-  const month = r.date.substring(0, 7);
-
-  await FinanceAPI.deleteReceipt(month, id);
-
-  if (editingReceiptId === id) resetReceiptForm();
 }
 
 function updateReceiptsView() {
@@ -735,7 +776,8 @@ function updateReceiptsView() {
   Object.keys(grouped)
     .sort()
     .forEach((cat) => {
-      const groupItems = grouped[cat].sort((a, b) => a.date.localeCompare(b.date));
+      // Ordena do valor mais alto para o mais baixo (ignorando a data)
+      const groupItems = grouped[cat].sort((a, b) => b.amount - a.amount);
       const isOpen = openReceiptCats.has(cat);
       const catTotal = groupItems.reduce((acc, curr) => acc + curr.amount, 0);
 
@@ -761,7 +803,7 @@ function updateReceiptsView() {
           item.innerHTML = `
           <div class="receipt-main">
             <div class="receipt-line">${r.merchant} • ${r.category}</div>
-            <div class="receipt-meta">${r.date.split('-').reverse().join('/')} • ${r.owner}${r.fixed ? ' • Fixo' : ''}</div>
+            <div class="receipt-meta">${r.date.split('-').reverse().join('/')} • ${r.owner}${r.isStatic ? ' • Estático' : ''}</div>
           </div>
           <div class="receipt-right">
             <div class="receipt-amount">${formatCurrency(r.amount)}</div>
@@ -775,6 +817,20 @@ function updateReceiptsView() {
         });
       }
     });
+
+  // Define o que é custo de vida base (O resto entra como lazer/supérfluo automaticamente)
+  const categoriasEssenciais = ['Contas', 'Supermercado', 'Transporte', 'Combustível', 'Saúde', 'Educação', 'Cuidados pessoais'];
+
+  let totalEssencial = 0;
+  let totalLazer = 0;
+
+  list.forEach((r) => {
+    if (categoriasEssenciais.includes(r.category)) {
+      totalEssencial += r.amount;
+    } else {
+      totalLazer += r.amount;
+    }
+  });
 
   const footerDiv = document.createElement('div');
   footerDiv.className = 'list-footer-total';
@@ -841,6 +897,25 @@ function updateDashboardView() {
 
   const plannedForMonth = plannedItems.filter((p) => p.month === month);
   const receiptsForMonth = receipts.filter((r) => r.date.startsWith(month));
+
+  // --- NOVO: Cálculo do Essencial vs Lazer ---
+  const categoriasEssenciais = ['Contas', 'Supermercado', 'Transporte', 'Combustível', 'Saúde', 'Casa', 'Pets', 'Educação', 'Cuidados pessoais'];
+  let totalEssencialReal = 0;
+  let totalLazerReal = 0;
+
+  receiptsForMonth.forEach((r) => {
+    if (categoriasEssenciais.includes(r.category)) {
+      totalEssencialReal += r.amount;
+    } else {
+      totalLazerReal += r.amount;
+    }
+  });
+
+  const elEssencial = document.getElementById('dash-essencial-real');
+  const elLazer = document.getElementById('dash-lazer-real');
+  if (elEssencial) elEssencial.textContent = formatCurrency(totalEssencialReal);
+  if (elLazer) elLazer.textContent = formatCurrency(totalLazerReal);
+  // -------------------------------------------
 
   const mapCat = {};
 

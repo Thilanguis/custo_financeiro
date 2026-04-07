@@ -10,8 +10,8 @@
     <link rel="apple-touch-icon" href="icons/icon-192.png" />
     <link rel="icon" type="image/png" href="icons/icon-192.png" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="icon" href="data:," />
   </head>
   <body>
     <div id="login-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #0b0b10; z-index: 9999; display: flex; align-items: center; justify-content: center">
@@ -132,10 +132,14 @@
                   <option value="Ambos">Ambos</option>
                 </select>
               </div>
-              <div class="field checkbox-field">
+              <div class="field checkbox-field" style="display: flex; flex-direction: column; gap: 8px; justify-content: center">
                 <label>
                   <input type="checkbox" id="planned-fixed" />
                   Fixo todo mês
+                </label>
+                <label style="opacity: 0.5; transition: 0.2s" id="label-planned-static">
+                  <input type="checkbox" id="planned-static" disabled />
+                  Estático (Auto-lançar)
                 </label>
               </div>
             </div>
@@ -194,12 +198,6 @@
                   <option value="Ambos">Ambos</option>
                 </select>
               </div>
-              <div class="field checkbox-field">
-                <label>
-                  <input type="checkbox" id="actual-fixed" />
-                  Gasto fixo
-                </label>
-              </div>
             </div>
             <button type="submit" class="btn-primary" id="actual-submit-btn">Salvar Nota Fiscal</button>
           </form>
@@ -209,7 +207,6 @@
           <div class="list-header-row">
             <h3>Histórico de Notas do Mês</h3>
             <div class="header-actions">
-              <button class="action-btn" id="btn-mirror-fixed" style="color: #fddf7b; border: 1px solid #fddf7b; background: transparent">Espelhar Fixos</button>
               <button class="action-btn" id="btn-expand-receipts">Abrir tudo</button>
               <button class="action-btn" id="btn-collapse-receipts">Fechar tudo</button>
             </div>
@@ -219,6 +216,18 @@
       </section>
 
       <section id="view-charts" class="view">
+        <div class="card" style="display: flex; justify-content: space-around; align-items: center; padding: 12px 16px">
+          <div style="text-align: center">
+            <span style="display: block; font-size: 0.78rem; color: #c3c3d5; margin-bottom: 4px">Gastos Essenciais (Real)</span>
+            <strong id="dash-essencial-real" style="font-size: 1.15rem; color: #f5f5f5">CAD 0,00</strong>
+          </div>
+          <div style="width: 1px; background: #27273a; height: 35px"></div>
+          <div style="text-align: center">
+            <span style="display: block; font-size: 0.78rem; color: #c3c3d5; margin-bottom: 4px">Lazer e Outros (Real)</span>
+            <strong id="dash-lazer-real" style="font-size: 1.15rem; color: #f7c84a">CAD 0,00</strong>
+          </div>
+        </div>
+
         <div class="card">
           <div class="list-header-row">
             <h3>Comparativo Orçamento x Real</h3>
@@ -303,9 +312,11 @@
       firebase.initializeApp(firebaseConfig);
       window.db = firebase.firestore();
 
-      // Ativa o cache local para uso offline (Sintaxe correta para versão Compat)
+      // Volta a sintaxe original, mas captura o erro de abas duplicadas silenciosamente
       window.db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
-        console.error('Erro ao ativar persistência offline:', err);
+        if (err.code === 'failed-precondition') {
+          console.warn('Aviso: Múltiplas abas detectadas no Live Server. Cache offline operando em modo restrito.');
+        }
       });
 
       window.auth = firebase.auth();

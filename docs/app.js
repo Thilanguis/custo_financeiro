@@ -684,6 +684,7 @@ const actualCategoryInput = document.getElementById('actual-category');
 const actualMerchantInput = document.getElementById('actual-merchant');
 const actualAmountInput = document.getElementById('actual-amount');
 const actualOwnerSelect = document.getElementById('actual-owner');
+const actualObservationInput = document.getElementById('actual-observation'); // NOVO INPUT
 const receiptsList = document.getElementById('receipts-list');
 
 let editingReceiptId = null;
@@ -714,6 +715,7 @@ formActual.addEventListener('submit', async (e) => {
   const merchant = actualMerchantInput.value.trim();
   const amount = parseAmount(actualAmountInput.value);
   const owner = actualOwnerSelect.value;
+  const observation = actualObservationInput.value.trim(); // PEGA A OBSERVAÇÃO
 
   if (!date || !category || !merchant || isNaN(amount)) return alert('Preencha data, categoria, nome e valor.');
 
@@ -722,7 +724,8 @@ formActual.addEventListener('submit', async (e) => {
 
   await autoRegisterCompany(category, merchant);
 
-  const itemData = { date, category, merchant, amount, owner };
+  // ADICIONA A OBSERVAÇÃO NO OBJETO QUE VAI PRO BANCO
+  const itemData = { date, category, merchant, amount, owner, observation };
   if (editingReceiptId !== null) itemData.id = editingReceiptId;
 
   await FinanceAPI.saveReceipt(month, itemData);
@@ -737,12 +740,11 @@ function resetReceiptForm() {
   editingReceiptId = null;
   actualSubmitBtn.textContent = 'Salvar Nota Fiscal';
 
-  // Reseta a tag e o input para o padrão
   selectedReceiptType = getCategories()[0] || '';
   actualCategoryInput.value = selectedReceiptType;
-  actualMerchantInput.value = ''; // Limpa a empresa ao trocar de categoria
+  actualMerchantInput.value = '';
+  actualObservationInput.value = ''; // RESETA A OBSERVAÇÃO
 
-  // Ajusta a data padrão com base no mês selecionado no topo
   const selectedMonth = getCurrentMonth();
   const today = new Date().toISOString().split('T')[0];
   actualDateInput.value = today.startsWith(selectedMonth) ? today : `${selectedMonth}-01`;
@@ -760,6 +762,7 @@ function startEditReceipt(id) {
   actualMerchantInput.value = r.merchant;
   actualAmountInput.value = r.amount;
   actualOwnerSelect.value = r.owner;
+  actualObservationInput.value = r.observation || ''; // CARREGA A OBSERVAÇÃO
 
   if (getCategories().includes(r.category)) {
     selectedReceiptType = r.category;
@@ -816,10 +819,15 @@ function updateReceiptsView() {
         groupItems.forEach((r) => {
           const item = document.createElement('div');
           item.className = 'receipt-item';
+
+          // Prepara o HTML da observação se ela existir
+          const obsHtml = r.observation ? `<div style="font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">↳ ${r.observation}</div>` : '';
+
           item.innerHTML = `
           <div class="receipt-main">
             <div class="receipt-line">${r.merchant} • ${r.category}</div>
-            <div class="receipt-meta">${r.date.split('-').reverse().join('/')} • ${r.owner}${r.isStatic ? ' • Estático' : ''}</div>
+            ${obsHtml}
+            <div class="receipt-meta" style="margin-top: 2px;">${r.date.split('-').reverse().join('/')} • ${r.owner}${r.isStatic ? ' • Estático' : ''}</div>
           </div>
           <div class="receipt-right">
             <div class="receipt-amount">${formatCurrency(r.amount)}</div>
@@ -1029,9 +1037,19 @@ function updateDashboardView() {
 
     const key = makeKey(r.category, r.merchant);
     if (!mapCat[r.category].items.has(key)) {
-      mapCat[r.category].items.set(key, { name: r.merchant, planned: 0, actual: 0 });
+      mapCat[r.category].items.set(key, { name: r.merchant, planned: 0, actual: 0, obsList: [] });
     }
     mapCat[r.category].items.get(key).actual += r.amount;
+
+    // Se tiver observação, salva na lista com o respectivo valor
+    if (r.observation) {
+      const existingObs = mapCat[r.category].items.get(key).obsList.find((o) => o.text.toLowerCase() === r.observation.toLowerCase());
+      if (existingObs) {
+        existingObs.amount += r.amount; // Soma se a observação for idêntica (ex: duas rações no mês)
+      } else {
+        mapCat[r.category].items.get(key).obsList.push({ text: r.observation, amount: r.amount });
+      }
+    }
   });
 
   let sumPlanned = 0;
@@ -1127,7 +1145,17 @@ function updateDashboardView() {
         trItem.className = 'dashboard-detail-row';
 
         const tdItemName = document.createElement('td');
-        tdItemName.textContent = item.name;
+
+        // Gera a lista de observações uma abaixo da outra com seus valores
+        const obsArray = item.obsList || [];
+        let obsHtml = '';
+
+        if (obsArray.length > 0) {
+          const obsLines = obsArray.map((o) => `<div style="margin-top: 2px;">↳ ${o.text} <span style="opacity:0.6; font-size:0.65rem;">(${formatCurrency(o.amount)})</span></div>`).join('');
+          obsHtml = `<div style="font-size: 0.72rem; color: #a6a6c0; margin-top: 4px; font-weight: normal;">${obsLines}</div>`;
+        }
+
+        tdItemName.innerHTML = `${item.name}${obsHtml}`;
 
         const tdItemPrev = document.createElement('td');
         tdItemPrev.className = 'numeric';
@@ -1252,111 +1280,131 @@ if (historyMonthsSelect) {
   historyMonthsSelect.addEventListener('change', updateHistoricalChart);
 }
 
+let historyDebounceTimer = null;
+
 function updateHistoricalChart() {
   if (!chartHistoryCanvas) return;
 
-  const allMonthsSet = new Set();
-  incomes.forEach((i) => allMonthsSet.add(i.month));
-  receipts.forEach((r) => allMonthsSet.add(r.date.substring(0, 7)));
-  plannedItems.forEach((p) => allMonthsSet.add(p.month));
+  // Debounce para não travar o banco de dados se a função for chamada seguidamente
+  clearTimeout(historyDebounceTimer);
+  historyDebounceTimer = setTimeout(async () => {
+    try {
+      const db = window.db;
+      const familyId = window.FinanceAPI.familyId;
 
-  let allMonths = Array.from(allMonthsSet).sort();
+      // 1. Busca todos os meses na raiz da família (direto no banco)
+      const mesesSnap = await db.collection('familias').doc(familyId).collection('meses').get();
+      let allMonthsData = [];
 
-  if (allMonths.length === 0) {
-    if (historyChart) historyChart.destroy();
-    return;
-  }
+      // 2. Itera para extrair a renda e puxar as notas fiscais
+      for (const doc of mesesSnap.docs) {
+        const monthStr = doc.id;
+        if (!/^\d{4}-\d{2}$/.test(monthStr)) continue; // Pula docs de configuração
 
-  const limit = historyMonthsSelect.value;
-  if (limit !== 'all') {
-    allMonths = allMonths.slice(-parseInt(limit));
-  }
+        const incData = doc.data();
+        const income = (incData.luana || 0) + (incData.gabriel || 0);
 
-  const labels = [];
-  const monthlyBalances = [];
-  let selectedPeriodTotal = 0; // Somador para o período filtrado
-
-  allMonths.forEach((m) => {
-    const inc = getIncomeTotalForMonth(m);
-    const exp = receipts.filter((r) => r.date.startsWith(m)).reduce((sum, r) => sum + r.amount, 0);
-    const bal = inc - exp;
-
-    labels.push(m);
-    monthlyBalances.push(bal);
-    selectedPeriodTotal += bal;
-  });
-
-  // Atualiza o texto de Total Acumulado na tela
-  const totalEl = document.getElementById('history-total-accumulated');
-  if (totalEl) {
-    totalEl.textContent = 'Total: ' + formatCurrency(selectedPeriodTotal);
-    totalEl.className = selectedPeriodTotal >= 0 ? 'positive' : 'negative';
-  }
-
-  if (historyChart) {
-    historyChart.destroy();
-  }
-
-  // Plugin customizado para desenhar os valores diretamente nas barras
-  const valueLabelsPlugin = {
-    id: 'valueLabels',
-    afterDatasetsDraw(chart) {
-      const { ctx } = chart;
-      chart.data.datasets.forEach((dataset, i) => {
-        const meta = chart.getDatasetMeta(i);
-        meta.data.forEach((bar, index) => {
-          const value = dataset.data[index];
-          if (value === 0) return; // Não desenha nada se for zero absoluto
-
-          ctx.save();
-          ctx.fillStyle = '#c3c3d5'; // Cor discreta para o texto
-          ctx.font = '11px system-ui, sans-serif';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = value >= 0 ? 'bottom' : 'top';
-
-          // Posiciona o texto levemente acima (se positivo) ou abaixo (se negativo)
-          const yPos = value >= 0 ? bar.y - 5 : bar.y + 5;
-
-          // Formata o número arredondado e com separador de milhar (Ex: 4.098)
-          const text = Math.round(value).toLocaleString('pt-BR');
-
-          ctx.fillText(text, bar.x, yPos);
-          ctx.restore();
+        // Busca as despesas atreladas exclusivamente a esse mês
+        const notasSnap = await doc.ref.collection('notas_fiscais').get();
+        let expense = 0;
+        notasSnap.forEach((n) => {
+          expense += n.data().amount || 0;
         });
-      });
-    },
-  };
 
-  historyChart = new Chart(chartHistoryCanvas, {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [
-        {
-          label: 'Saldo Livre do Mês',
-          data: monthlyBalances,
-          backgroundColor: monthlyBalances.map((v) => (v >= 0 ? '#62c462' : '#d9534f')),
-          borderRadius: 4,
+        allMonthsData.push({ month: monthStr, income, expense });
+      }
+
+      if (allMonthsData.length === 0) {
+        if (historyChart) historyChart.destroy();
+        return;
+      }
+
+      // Ordena de forma cronológica (do mais antigo pro mais novo)
+      allMonthsData.sort((a, b) => a.month.localeCompare(b.month));
+
+      // Aplica o filtro de período do select
+      let displayData = allMonthsData;
+      const limit = historyMonthsSelect.value;
+      if (limit !== 'all') {
+        displayData = displayData.slice(-parseInt(limit));
+      }
+
+      const labels = [];
+      const monthlyBalances = [];
+      let selectedPeriodTotal = 0;
+
+      displayData.forEach((d) => {
+        const bal = d.income - d.expense;
+        labels.push(d.month);
+        monthlyBalances.push(bal);
+        selectedPeriodTotal += bal;
+      });
+
+      // Atualiza UI de Total
+      const totalEl = document.getElementById('history-total-accumulated');
+      if (totalEl) {
+        totalEl.textContent = 'Total: ' + formatCurrency(selectedPeriodTotal);
+        totalEl.className = selectedPeriodTotal >= 0 ? 'positive' : 'negative';
+      }
+
+      if (historyChart) {
+        historyChart.destroy();
+      }
+
+      // Plugin do Chart.js para desenhar valores em cima da barra
+      const valueLabelsPlugin = {
+        id: 'valueLabels',
+        afterDatasetsDraw(chart) {
+          const { ctx } = chart;
+          chart.data.datasets.forEach((dataset, i) => {
+            const meta = chart.getDatasetMeta(i);
+            meta.data.forEach((bar, index) => {
+              const value = dataset.data[index];
+              if (value === 0) return;
+
+              ctx.save();
+              ctx.fillStyle = '#c3c3d5';
+              ctx.font = '11px system-ui, sans-serif';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = value >= 0 ? 'bottom' : 'top';
+
+              const yPos = value >= 0 ? bar.y - 5 : bar.y + 5;
+              const text = Math.round(value).toLocaleString('pt-BR');
+
+              ctx.fillText(text, bar.x, yPos);
+              ctx.restore();
+            });
+          });
         },
-      ],
-    },
-    plugins: [valueLabelsPlugin],
-    options: {
-      responsive: true,
-      layout: {
-        padding: {
-          top: 25, // Dá espaço extra no topo para o número não cortar
-          bottom: 10,
+      };
+
+      historyChart = new Chart(chartHistoryCanvas, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: 'Saldo Livre do Mês',
+              data: monthlyBalances,
+              backgroundColor: monthlyBalances.map((v) => (v >= 0 ? '#62c462' : '#d9534f')),
+              borderRadius: 4,
+            },
+          ],
         },
-      },
-      plugins: {
-        legend: { display: false },
-      },
-      scales: {
-        y: { beginAtZero: true },
-      },
-    },
-  });
+        plugins: [valueLabelsPlugin],
+        options: {
+          responsive: true,
+          layout: {
+            padding: { top: 25, bottom: 10 },
+          },
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true } },
+        },
+      });
+    } catch (error) {
+      console.error('Erro ao buscar histórico do banco:', error);
+    }
+  }, 400);
 }
 
 // ===== Refresh geral =====

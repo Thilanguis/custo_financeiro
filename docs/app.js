@@ -8,6 +8,7 @@ const incomes = []; // {month, owner, amount}
 const openPlannedCats = new Set();
 const openReceiptCats = new Set();
 const openDashboardCats = new Set();
+const openOwnerCats = new Set();
 
 let nextId = 1;
 const getNextId = () => nextId++;
@@ -492,7 +493,7 @@ function startEditPlanned(id) {
   if (!item) return;
   editingPlannedId = id;
 
-  monthInput.value = item.month;
+  // Removido o monthInput.value que estava puxando sua tela pro mês atual sozinho
   plannedCategoryInput.value = item.category;
   plannedDescriptionInput.value = item.description;
   plannedAmountInput.value = item.amount;
@@ -509,7 +510,7 @@ function startEditPlanned(id) {
   }
 
   plannedSubmitBtn.textContent = 'Salvar alterações';
-  refreshAll();
+  // Removido o refreshAll() que fazia a tela piscar desnecessariamente
 }
 
 async function deletePlanned(id) {
@@ -906,14 +907,16 @@ function updateGlobalSummaries() {
 function updateDashboardView() {
   const month = getCurrentMonth();
   const tbody = document.getElementById('dashboard-tbody');
-  if (!tbody) return;
-  tbody.innerHTML = '';
+  const ownerContainer = document.getElementById('owner-breakdown-list');
+
+  if (tbody) tbody.innerHTML = '';
+  if (ownerContainer) ownerContainer.innerHTML = '';
+
   if (!month) return;
 
   const plannedForMonth = plannedItems.filter((p) => p.month === month);
   const receiptsForMonth = receipts.filter((r) => r.date.startsWith(month));
 
-  // --- NOVO: Cálculo do Essencial vs Lazer ---
   const categoriasEssenciais = ['Contas', 'Supermercado', 'Transporte', 'Combustível', 'Saúde', 'Casa', 'Pets', 'Educação', 'Cuidados pessoais'];
   let totalEssencialReal = 0;
   let totalLazerReal = 0;
@@ -930,7 +933,80 @@ function updateDashboardView() {
   const elLazer = document.getElementById('dash-lazer-real');
   if (elEssencial) elEssencial.textContent = formatCurrency(totalEssencialReal);
   if (elLazer) elLazer.textContent = formatCurrency(totalLazerReal);
-  // -------------------------------------------
+
+  // === RENDERIZAÇÃO DOS GASTOS POR RESPONSÁVEL ===
+  if (ownerContainer) {
+    const ownerMap = {
+      Gabriel: { total: 0, essencial: 0, lazer: 0 },
+      Luana: { total: 0, essencial: 0, lazer: 0 },
+      Ambos: { total: 0, essencial: 0, lazer: 0 },
+    };
+
+    receiptsForMonth.forEach((r) => {
+      const owner = r.owner || 'Ambos';
+      if (!ownerMap[owner]) ownerMap[owner] = { total: 0, essencial: 0, lazer: 0 };
+
+      ownerMap[owner].total += r.amount;
+      if (categoriasEssenciais.includes(r.category)) {
+        ownerMap[owner].essencial += r.amount;
+      } else {
+        ownerMap[owner].lazer += r.amount;
+      }
+    });
+
+    const ownersArray = ['Gabriel', 'Luana', 'Ambos'];
+    let hasOwnerData = false;
+
+    ownersArray.forEach((owner) => {
+      const data = ownerMap[owner];
+      if (data.total === 0) return;
+      hasOwnerData = true;
+
+      const isOpen = openOwnerCats.has(owner);
+
+      const headerDiv = document.createElement('div');
+      headerDiv.className = 'group-header-div';
+      headerDiv.innerHTML = `
+        <span>${isOpen ? '▼' : '▶'} ${owner}</span>
+        <span style="color:#a6a6c0; font-size:0.85rem; font-weight:normal;">${formatCurrency(data.total)}</span>
+      `;
+
+      headerDiv.onclick = () => {
+        if (isOpen) openOwnerCats.delete(owner);
+        else openOwnerCats.add(owner);
+        updateDashboardView();
+      };
+
+      ownerContainer.appendChild(headerDiv);
+
+      if (isOpen) {
+        const detailDiv = document.createElement('div');
+        detailDiv.style.background = '#141423';
+        detailDiv.style.padding = '8px 12px';
+        detailDiv.style.borderRadius = '0 0 6px 6px';
+        detailDiv.style.marginBottom = '6px';
+        detailDiv.style.marginTop = '-2px';
+        detailDiv.style.fontSize = '0.85rem';
+
+        detailDiv.innerHTML = `
+          <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+            <span style="color: #c3c3d5;">↳ Essenciais</span>
+            <span style="color: #f5f5f5; font-weight: 500;">${formatCurrency(data.essencial)}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between;">
+            <span style="color: #c3c3d5;">↳ Lazer e Outros</span>
+            <span style="color: #f7c84a; font-weight: 500;">${formatCurrency(data.lazer)}</span>
+          </div>
+        `;
+        ownerContainer.appendChild(detailDiv);
+      }
+    });
+
+    if (!hasOwnerData) {
+      ownerContainer.innerHTML = "<p class='hint small' style='margin-top: 8px;'>Nenhum lançamento para este mês.</p>";
+    }
+  }
+  // ==============================================
 
   const mapCat = {};
 

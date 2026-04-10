@@ -869,45 +869,49 @@ function updateGlobalSummaries() {
   if (!month) return;
 
   const totalIncome = getIncomeTotalForMonth(month);
-
-  const plannedForMonth = plannedItems.filter((p) => p.month === month);
-  const totalPlanned = plannedForMonth.reduce((s, p) => s + p.amount, 0);
-
-  const actualForMonth = receipts.filter((r) => r.date.startsWith(month));
-  const totalActual = actualForMonth.reduce((s, r) => s + r.amount, 0);
+  const totalPlanned = plannedItems.filter((p) => p.month === month).reduce((s, p) => s + p.amount, 0);
+  const totalActual = receipts.filter((r) => r.date.startsWith(month)).reduce((s, r) => s + r.amount, 0);
 
   const saldoPrevisto = totalIncome - totalPlanned;
   const saldoReal = totalIncome - totalActual;
 
-  if (summaryIncomeInline) {
-    summaryIncomeInline.textContent = formatCurrency(totalIncome);
-    summaryIncomeInline.className = 'positive'; // Renda sempre verde
-  }
-  if (summaryExpenseInline) {
-    summaryExpenseInline.textContent = formatCurrency(totalActual);
-    summaryExpenseInline.className = saldoReal < 0 ? 'negative' : ''; // Gasto fica vermelho se estourar
-  }
-  if (summarySaldoLivre) {
-    summarySaldoLivre.textContent = formatCurrency(saldoReal);
-    summarySaldoLivre.className = saldoReal >= 0 ? 'positive' : 'negative';
-  }
+  // 1. Renda: Fica positiva (verde) sem comparação
+  document.getElementById('summary-income-inline').textContent = formatCurrency(totalIncome);
 
-  const summaryPlannedExpense = document.getElementById('summary-planned-expense');
-  if (summaryPlannedExpense) {
-    summaryPlannedExpense.textContent = formatCurrency(totalPlanned);
-  }
+  // 2. Gasto: > Previsto = Vermelho | Senão = Amarelo
+  const elExpense = document.getElementById('summary-expense-inline');
+  elExpense.textContent = formatCurrency(totalActual);
+  document.getElementById('summary-planned-expense').textContent = formatCurrency(totalPlanned).replace('CAD ', '');
+  elExpense.className = totalActual > totalPlanned ? 'status-danger' : 'status-warning';
 
-  if (summarySaldoPrevisto) {
-    summarySaldoPrevisto.textContent = formatCurrency(saldoPrevisto);
-    summarySaldoPrevisto.className = saldoPrevisto >= 0 ? 'positive-planned' : 'negative-planned';
-  }
-
-  if (summarySaldoReal) {
-    summarySaldoReal.textContent = formatCurrency(saldoReal);
-    summarySaldoReal.className = saldoReal >= 0 ? 'positive' : 'negative';
-  }
+  // 3. Livre: >= Previsto = Verde | Senão = Vermelho
+  const elLivre = document.getElementById('summary-saldo-livre');
+  elLivre.textContent = formatCurrency(saldoReal);
+  document.getElementById('summary-saldo-previsto').textContent = formatCurrency(saldoPrevisto).replace('CAD ', '');
+  elLivre.className = saldoReal >= saldoPrevisto ? 'status-success' : 'status-danger';
 
   renderPlannedItemsList(month);
+}
+
+// No final do arquivo, ajuste o initAppUI
+function initAppUI() {
+  const m = getCurrentMonthISO();
+  monthInput.value = m;
+
+  selectedPlannedType = getCategories()[0] || '';
+  selectedReceiptType = getCategories()[0] || '';
+
+  plannedCategoryInput.value = selectedPlannedType;
+  actualCategoryInput.value = selectedReceiptType;
+
+  const today = new Date().toISOString().split('T')[0];
+  actualDateInput.value = today.startsWith(m) ? today : `${m}-01`;
+
+  updatePlannedChips();
+  updateReceiptChips();
+
+  // Sincroniza e força o refresh da aba 2
+  syncData(m);
 }
 
 // ===== Dashboard Unificado (Sanfona) =====

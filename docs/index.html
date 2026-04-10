@@ -31,41 +31,47 @@
       </div>
     </div>
 
-    <header class="app-header" style="position: relative">
-      <h1>Controle Financeiro</h1>
-      <button id="btn-logout" class="action-btn" style="position: absolute; top: 14px; right: 16px; display: none">Sair</button>
-      <div class="header-summary">
-        <span>
-          Renda:
-          <strong id="summary-income-inline">CAD 0,00</strong>
-        </span>
-        •
-        <span>
-          Gasto:
-          <strong id="summary-expense-inline">CAD 0,00</strong>
-        </span>
-        •
-        <span>
-          Livre:
-          <strong id="summary-saldo-livre">CAD 0,00</strong>
-        </span>
+    <header class="app-header">
+      <div class="header-top">
+        <h1>Controle Financeiro</h1>
+        <button id="btn-logout" class="action-btn" style="display: none">Sair</button>
       </div>
-      <div class="header-sub-summary">
-        <span>
-          Gasto Previsto:
-          <strong id="summary-planned-expense" class="neutral-planned">CAD 0,00</strong>
-        </span>
-        |
-        <span>
-          Livre Previsto:
-          <strong id="summary-saldo-previsto">CAD 0,00</strong>
-        </span>
+
+      <div class="main-dashboard-grid">
+        <div class="dash-item">
+          <span class="dash-label">RENDA</span>
+          <strong id="summary-income-inline" class="positive">CAD 0,00</strong>
+        </div>
+
+        <div class="dash-item">
+          <span class="dash-label">
+            GASTO
+            <small>
+              (Prev:
+              <span id="summary-planned-expense">0</span>
+              )
+            </small>
+          </span>
+          <strong id="summary-expense-inline">CAD 0,00</strong>
+        </div>
+
+        <div class="dash-item">
+          <span class="dash-label">
+            LIVRE
+            <small>
+              (Prev:
+              <span id="summary-saldo-previsto">0</span>
+              )
+            </small>
+          </span>
+          <strong id="summary-saldo-livre">CAD 0,00</strong>
+        </div>
       </div>
     </header>
 
     <nav class="top-nav">
-      <button class="nav-btn active" data-view="budget">1. Orçamento (Previsto)</button>
-      <button class="nav-btn" data-view="receipts">2. Notas Fiscais (Real)</button>
+      <button class="nav-btn" data-view="budget">1. Orçamento (Previsto)</button>
+      <button class="nav-btn active" data-view="receipts">2. Notas Fiscais (Real)</button>
       <button class="nav-btn" data-view="charts">3. Dashboard & Relatórios</button>
     </nav>
 

@@ -925,93 +925,164 @@ function updateDashboardView() {
   const plannedForMonth = plannedItems.filter((p) => p.month === month);
   const receiptsForMonth = receipts.filter((r) => r.date.startsWith(month));
 
-  const categoriasEssenciais = ['Contas', 'Supermercado', 'Transporte', 'Combustível', 'Saúde', 'Casa', 'Pets', 'Educação', 'Cuidados pessoais'];
-  let totalEssencialReal = 0;
-  let totalLazerReal = 0;
+  const totalIncome = getIncomeTotalForMonth(month);
 
-  receiptsForMonth.forEach((r) => {
-    if (categoriasEssenciais.includes(r.category)) {
-      totalEssencialReal += r.amount;
-    } else {
-      totalLazerReal += r.amount;
-    }
-  });
-
-  const elEssencial = document.getElementById('dash-essencial-real');
-  const elLazer = document.getElementById('dash-lazer-real');
-  if (elEssencial) elEssencial.textContent = formatCurrency(totalEssencialReal);
-  if (elLazer) elLazer.textContent = formatCurrency(totalLazerReal);
-
-  // === RENDERIZAÇÃO DOS GASTOS POR RESPONSÁVEL ===
+  // === RENDERIZAÇÃO DO CONSUMO DA RENDA E DETALHAMENTO ===
   if (ownerContainer) {
-    const ownerMap = {
-      Gabriel: { total: 0, essencial: 0, lazer: 0 },
-      Luana: { total: 0, essencial: 0, lazer: 0 },
-      Ambos: { total: 0, essencial: 0, lazer: 0 },
-    };
+    const categoriasEssenciais = ['Contas', 'Supermercado', 'Transporte', 'Combustível', 'Saúde', 'Casa', 'Pets', 'Educação', 'Cuidados pessoais'];
+
+    let totalReal = 0;
+    let totEss = 0,
+      gabEss = 0,
+      luaEss = 0,
+      ambEss = 0;
+    let totLaz = 0,
+      gabLaz = 0,
+      luaLaz = 0,
+      ambLaz = 0;
+    let gabTotal = 0,
+      luaTotal = 0,
+      ambTotal = 0;
 
     receiptsForMonth.forEach((r) => {
       const owner = r.owner || 'Ambos';
-      if (!ownerMap[owner]) ownerMap[owner] = { total: 0, essencial: 0, lazer: 0 };
+      totalReal += r.amount;
 
-      ownerMap[owner].total += r.amount;
+      // Acumula os totais de cada pessoa
+      if (owner === 'Gabriel') gabTotal += r.amount;
+      else if (owner === 'Luana') luaTotal += r.amount;
+      else ambTotal += r.amount;
+
+      // Acumula por categoria
       if (categoriasEssenciais.includes(r.category)) {
-        ownerMap[owner].essencial += r.amount;
+        totEss += r.amount;
+        if (owner === 'Gabriel') gabEss += r.amount;
+        else if (owner === 'Luana') luaEss += r.amount;
+        else ambEss += r.amount;
       } else {
-        ownerMap[owner].lazer += r.amount;
+        totLaz += r.amount;
+        if (owner === 'Gabriel') gabLaz += r.amount;
+        else if (owner === 'Luana') luaLaz += r.amount;
+        else ambLaz += r.amount;
       }
     });
 
-    const ownersArray = ['Gabriel', 'Luana', 'Ambos'];
-    let hasOwnerData = false;
+    if (totalIncome === 0 && totalReal === 0) {
+      ownerContainer.innerHTML = "<p class='hint small' style='margin-top: 8px;'>Nenhum dado para este mês.</p>";
+    } else {
+      const baseBarWidth = Math.max(totalIncome, totalReal);
+      const freeReal = totalIncome - totalReal;
 
-    ownersArray.forEach((owner) => {
-      const data = ownerMap[owner];
-      if (data.total === 0) return;
-      hasOwnerData = true;
+      // Variáveis da Primeira Barra (Macro)
+      const pEss = baseBarWidth > 0 ? (totEss / baseBarWidth) * 100 : 0;
+      const pLaz = baseBarWidth > 0 ? (totLaz / baseBarWidth) * 100 : 0;
 
-      const isOpen = openOwnerCats.has(owner);
+      const tEss = totalIncome > 0 ? ((totEss / totalIncome) * 100).toFixed(0) : 0;
+      const tLaz = totalIncome > 0 ? ((totLaz / totalIncome) * 100).toFixed(0) : 0;
 
-      const headerDiv = document.createElement('div');
-      headerDiv.className = 'group-header-div';
-      headerDiv.innerHTML = `
-        <span>${isOpen ? '▼' : '▶'} ${owner}</span>
-        <span style="color:#a6a6c0; font-size:0.85rem; font-weight:normal;">${formatCurrency(data.total)}</span>
-      `;
+      const pGastoTotal = baseBarWidth > 0 ? (totalReal / baseBarWidth) * 100 : 0;
+      const pLivreTotal = baseBarWidth > 0 ? Math.max((freeReal / baseBarWidth) * 100, 0) : 0;
 
-      headerDiv.onclick = () => {
-        if (isOpen) openOwnerCats.delete(owner);
+      // Controle de Estado da Sanfona Macro
+      const isDetailsOpen = window.isConsumptionDetailsOpen || false;
+
+      // Função global auxiliar para o toggle das sanfonas internas (por pessoa)
+      window.toggleOwnerCat = function (owner) {
+        if (openOwnerCats.has(owner)) openOwnerCats.delete(owner);
         else openOwnerCats.add(owner);
         updateDashboardView();
       };
 
-      ownerContainer.appendChild(headerDiv);
+      let html = `
+        <div style="margin-bottom: 20px; padding: 4px;">
+          
+          <div style="cursor: pointer; padding-bottom: ${isDetailsOpen ? '16px' : '0'}; border-bottom: ${isDetailsOpen ? '1px solid rgba(255,255,255,0.05)' : 'none'}; transition: all 0.2s ease;" onclick="window.isConsumptionDetailsOpen = !${isDetailsOpen}; updateDashboardView();">
+            <div style="margin-bottom: 6px; text-align: center;">
+              <span style="font-weight: 600; font-size: 0.95rem; color: #62c462;">
+                <span style="font-size: 0.75rem; vertical-align: middle; display: inline-block; width: 14px; text-align: left;">${isDetailsOpen ? '▼' : '▶'}</span> Renda Total: ${formatCurrency(totalIncome)}
+              </span>
+            </div>
+            
+            <div style="display: flex; height: 14px; border-radius: 7px; overflow: hidden; margin-bottom: 4px; background: #27273a; border: 1px solid #35354a;">
+              ${pEss > 0 ? `<div style="width: ${pEss}%; background: #f7c84a;" title="Essenciais: ${formatCurrency(totEss)}"></div>` : ''}
+              ${pLaz > 0 ? `<div style="width: ${pLaz}%; background: #ff7b7b;" title="Lazer e Outros: ${formatCurrency(totLaz)}"></div>` : ''}
+            </div>
 
-      if (isOpen) {
-        const detailDiv = document.createElement('div');
-        detailDiv.style.background = '#141423';
-        detailDiv.style.padding = '8px 12px';
-        detailDiv.style.borderRadius = '0 0 6px 6px';
-        detailDiv.style.marginBottom = '6px';
-        detailDiv.style.marginTop = '-2px';
-        detailDiv.style.fontSize = '0.85rem';
+            <div style="display: flex; width: 100%; margin-bottom: 8px; font-size: 0.8rem;">
+              <div style="width: ${pGastoTotal}%; border-top: 2px dashed #ff7b7b; padding-top: 4px;">
+                <span style="color: #ff7b7b; font-weight: 600; white-space: nowrap;">Gasto: ${formatCurrency(totalReal)}</span>
+              </div>
+              ${
+                freeReal > 0
+                  ? `
+              <div style="width: ${pLivreTotal}%; border-top: 2px solid #62c462; padding-top: 4px; text-align: right;">
+                <span style="color: #62c462; font-weight: 600; white-space: nowrap;">Livre: ${formatCurrency(freeReal)}</span>
+              </div>
+              `
+                  : freeReal < 0
+                    ? `
+              <div style="width: ${pLivreTotal}%; padding-top: 4px; text-align: right; margin-left: auto;">
+                <span style="color: #ff7b7b; font-weight: 600; white-space: nowrap;">Estouro: ${formatCurrency(freeReal)}</span>
+              </div>
+              `
+                    : ''
+              }
+            </div>
 
-        detailDiv.innerHTML = `
-          <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-            <span style="color: #c3c3d5;">↳ Essenciais</span>
-            <span style="color: #f5f5f5; font-weight: 500;">${formatCurrency(data.essencial)}</span>
+            <div style="display: flex; gap: 16px; font-size: 0.75rem; color: #a6a6c0; flex-wrap: wrap; align-items: center; justify-content: center; margin-bottom: ${isDetailsOpen ? '0' : '8px'};">
+              ${totEss > 0 ? `<span><strong style="color: #f7c84a;">■</strong> Essenciais: <span style="color:#f5f5f5">${formatCurrency(totEss)}</span> <span style="opacity:0.6; font-size:0.65rem">(${tEss}%)</span></span>` : ''}
+              ${totLaz > 0 ? `<span><strong style="color: #ff7b7b;">■</strong> Lazer: <span style="color:#f5f5f5">${formatCurrency(totLaz)}</span> <span style="opacity:0.6; font-size:0.65rem">(${tLaz}%)</span></span>` : ''}
+            </div>
           </div>
-          <div style="display: flex; justify-content: space-between;">
-            <span style="color: #c3c3d5;">↳ Lazer e Outros</span>
-            <span style="color: #f7c84a; font-weight: 500;">${formatCurrency(data.lazer)}</span>
+
+          <div style="display: ${isDetailsOpen ? 'block' : 'none'}; margin-top: 16px; margin-bottom: 12px; padding-left: 12px; border-left: 2px solid #35354a; animation: fadeIn 0.15s ease-out;">
+            <div style="margin-bottom: 16px;">
+              <span style="font-weight: 500; font-size: 0.85rem; color: #c3c3d5;">↳ Detalhamento de Responsáveis</span>
+            </div>
+      `;
+
+      // Estrutura clássica de números/texto para cada responsável
+      const ownersArray = [
+        { name: 'Gabriel', total: gabTotal, ess: gabEss, laz: gabLaz },
+        { name: 'Luana', total: luaTotal, ess: luaEss, laz: luaLaz },
+        { name: 'Ambos', total: ambTotal, ess: ambEss, laz: ambLaz },
+      ];
+
+      ownersArray.forEach((owner) => {
+        if (owner.total === 0) return;
+        const isOpen = openOwnerCats.has(owner.name);
+
+        html += `
+          <div class="group-header-div" style="display: block; padding: 12px; margin-top: 8px;" onclick="window.toggleOwnerCat('${owner.name}')">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-weight: 600; color: #fddf7b;">${isOpen ? '▼' : '▶'} ${owner.name}</span>
+              <span style="font-size: 0.95rem; color: #f5f5f5;">${formatCurrency(owner.total)}</span>
+            </div>
           </div>
         `;
-        ownerContainer.appendChild(detailDiv);
-      }
-    });
 
-    if (!hasOwnerData) {
-      ownerContainer.innerHTML = "<p class='hint small' style='margin-top: 8px;'>Nenhum lançamento para este mês.</p>";
+        if (isOpen) {
+          html += `
+            <div style="background: #141423; padding: 8px 12px; border-radius: 0 0 6px 6px; margin-bottom: 6px; margin-top: -2px; font-size: 0.85rem;">
+              <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                <span style="color: #c3c3d5;">↳ Essenciais</span>
+                <span style="color: #f5f5f5; font-weight: 500;">${formatCurrency(owner.ess)}</span>
+              </div>
+              <div style="display: flex; justify-content: space-between;">
+                <span style="color: #c3c3d5;">↳ Lazer e Outros</span>
+                <span style="color: #f7c84a; font-weight: 500;">${formatCurrency(owner.laz)}</span>
+              </div>
+            </div>
+          `;
+        }
+      });
+
+      html += `
+          </div>
+        </div>
+      `;
+
+      ownerContainer.innerHTML = html;
     }
   }
   // ==============================================

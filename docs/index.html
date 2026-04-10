@@ -198,7 +198,7 @@
                   <option value="Ambos">Ambos</option>
                 </select>
               </div>
-              <div class="field" style="flex: 2;">
+              <div class="field" style="flex: 2">
                 <label>Observação (Opcional)</label>
                 <input type="text" id="actual-observation" />
               </div>
@@ -220,24 +220,11 @@
       </section>
 
       <section id="view-charts" class="view">
-        <div class="card" style="display: flex; justify-content: space-around; align-items: center; padding: 12px 16px">
-          <div style="text-align: center">
-            <span style="display: block; font-size: 0.78rem; color: #c3c3d5; margin-bottom: 4px">Gastos Essenciais (Real)</span>
-            <strong id="dash-essencial-real" style="font-size: 1.15rem; color: #f5f5f5">CAD 0,00</strong>
-          </div>
-          <div style="width: 1px; background: #27273a; height: 35px"></div>
-          <div style="text-align: center">
-            <span style="display: block; font-size: 0.78rem; color: #c3c3d5; margin-bottom: 4px">Lazer e Outros (Real)</span>
-            <strong id="dash-lazer-real" style="font-size: 1.15rem; color: #f7c84a">CAD 0,00</strong>
-          </div>
-        </div>
-
-        <section id="view-charts" class="view">
         <div class="card">
-          <div class="list-header-row" style="margin-bottom: 2px;">
-            <h3>Gastos por Responsável (Real)</h3>
+          <div class="list-header-row" style="margin-bottom: 2px">
+            <h3>Consumo da Renda (Real)</h3>
           </div>
-          <div id="owner-breakdown-list" class="receipts-list" style="margin-top: 0; max-height: none;"></div>
+          <div id="owner-breakdown-list" class="receipts-list" style="margin-top: 0; max-height: none"></div>
         </div>
 
         <div class="card">
@@ -270,7 +257,11 @@
         </div>
 
         <div class="card">
-          <canvas id="chart-categories" height="220"></canvas>
+          <div style="width: 100%; overflow-x: auto; padding-bottom: 10px">
+            <div style="min-width: 700px">
+              <canvas id="chart-categories" height="220"></canvas>
+            </div>
+          </div>
         </div>
 
         <div class="card">
@@ -286,7 +277,11 @@
               <option value="all">Todos</option>
             </select>
           </div>
-          <canvas id="chart-history" height="220"></canvas>
+          <div style="width: 100%; overflow-x: auto; padding-bottom: 10px">
+            <div style="min-width: 600px">
+              <canvas id="chart-history" height="220"></canvas>
+            </div>
+          </div>
         </div>
       </section>
 

@@ -1100,9 +1100,12 @@ function updateDashboardView() {
 
     const key = makeKey(p.category, p.description);
     if (!mapCat[p.category].items.has(key)) {
-      mapCat[p.category].items.set(key, { name: p.description, planned: 0, actual: 0 });
+      // A CORREÇÃO ESTÁ AQUI: Adicionei o obsList: [] na criação do item previsto também
+      mapCat[p.category].items.set(key, { name: p.description, planned: 0, actual: 0, obsList: [], owners: new Set() });
     }
-    mapCat[p.category].items.get(key).planned += p.amount;
+    const item = mapCat[p.category].items.get(key);
+    item.planned += p.amount;
+    if (p.owner) item.owners.add(p.owner);
   });
 
   // Agrupa os reais
@@ -1112,18 +1115,25 @@ function updateDashboardView() {
 
     const key = makeKey(r.category, r.merchant);
     if (!mapCat[r.category].items.has(key)) {
-      mapCat[r.category].items.set(key, { name: r.merchant, planned: 0, actual: 0, obsList: [] });
+      mapCat[r.category].items.set(key, { name: r.merchant, planned: 0, actual: 0, obsList: [], owners: new Set() });
     }
-    mapCat[r.category].items.get(key).actual += r.amount;
+    const item = mapCat[r.category].items.get(key);
+    item.actual += r.amount;
+    if (r.owner) item.owners.add(r.owner);
 
-    // Se tiver observação, salva na lista com o respectivo valor
-    if (r.observation) {
-      const existingObs = mapCat[r.category].items.get(key).obsList.find((o) => o.text.toLowerCase() === r.observation.toLowerCase());
-      if (existingObs) {
-        existingObs.amount += r.amount; // Soma se a observação for idêntica (ex: duas rações no mês)
-      } else {
-        mapCat[r.category].items.get(key).obsList.push({ text: r.observation, amount: r.amount });
-      }
+    // Salva na lista de observações SEPARANDO POR RESPONSÁVEL
+    const obsText = r.observation ? r.observation.trim() : 'Sem observação';
+    const ownerName = r.owner || 'Ambos';
+
+    // Procura se já existe a MESMA observação para a MESMA pessoa
+    const existingObs = item.obsList.find((o) => o.text.toLowerCase() === obsText.toLowerCase() && o.owner === ownerName);
+
+    if (existingObs) {
+      existingObs.amount += r.amount;
+      existingObs.owners.add(ownerName);
+      existingObs.transactions.push(r); // Guarda a transação para a sanfona
+    } else {
+      item.obsList.push({ text: obsText, amount: r.amount, owner: ownerName, owners: new Set([ownerName]), transactions: [r] });
     }
   });
 
@@ -1221,16 +1231,64 @@ function updateDashboardView() {
 
         const tdItemName = document.createElement('td');
 
-        // Gera a lista de observações uma abaixo da outra com seus valores
         const obsArray = item.obsList || [];
         let obsHtml = '';
 
-        if (obsArray.length > 0) {
-          const obsLines = obsArray.map((o) => `<div style="margin-top: 2px;">↳ ${o.text} <span style="opacity:0.6; font-size:0.65rem;">(${formatCurrency(o.amount)})</span></div>`).join('');
+        // 1. Considera inválidas observações genéricas se estiverem sozinhas
+        const isGenericObs = (text) => {
+          const t = text.trim().toLowerCase();
+          return t === 'sem observação' || t === '-' || t === '';
+        };
+
+        // Verifica se há alguma observação que agrupou mais de uma transação
+        const hasGroupedTransactions = obsArray.some((o) => o.transactions && o.transactions.length > 1);
+
+        // Só renderiza se tiver mais de um subitem, ou se tiver um mas ele for uma observação real, OU se tiver transações agrupadas
+        const shouldRenderObs = obsArray.length > 1 || (obsArray.length === 1 && !isGenericObs(obsArray[0].text)) || hasGroupedTransactions;
+
+        // 2. Formata os responsáveis do item principal SOMENTE se NÃO houver subitens
+        const ownersArray = Array.from(item.owners || []);
+        let ownerHtml = '';
+        if (ownersArray.length > 0 && !shouldRenderObs) {
+          ownerHtml = ` <span style="font-size: 0.72rem; color: #8e8eab; margin-left: 4px;">(${ownersArray.join(', ')})</span>`;
+        }
+
+        // 3. Gera a lista de observações incluindo os responsáveis e a sanfona
+        if (shouldRenderObs) {
+          const obsLines = obsArray
+            .map((o) => {
+              const textToDisplay = isGenericObs(o.text) ? 'Sem observação' : o.text;
+              const obsOwners = Array.from(o.owners || []);
+              const obsOwnerHtml = obsOwners.length > 0 ? ` <span style="color: #8e8eab;">(${obsOwners.join(', ')})</span>` : '';
+
+              // Cria a mini-sanfona nativa (<details>) se houver mais de uma nota somada
+              if (o.transactions && o.transactions.length > 1) {
+                const detailsHtml = o.transactions
+                  .map((t) => {
+                    const dateStr = t.date.split('-').reverse().join('/').substring(0, 5); // Exibe DD/MM
+                    return `<div style="font-size: 0.68rem; color: #8e8eab; margin-top: 4px; padding-left: 12px; border-left: 1px solid #35354a;">• ${dateStr} <span style="opacity:0.8; margin-left: 4px;">${formatCurrency(t.amount)}</span></div>`;
+                  })
+                  .join('');
+
+                return `
+                 <details style="margin-top: 4px; margin-bottom: 2px; cursor: pointer;">
+                   <summary style="outline: none; user-select: none; color: #fddf7b;">
+                     <span style="color: #a6a6c0;">↳ ${textToDisplay}${obsOwnerHtml} <span style="opacity:0.6; font-size:0.65rem;">(${formatCurrency(o.amount)})</span> <span style="font-size: 0.6rem; background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; margin-left: 6px; border: 1px solid rgba(253, 223, 123, 0.3);">📄 ${o.transactions.length} itens</span></span>
+                   </summary>
+                   <div style="margin-top: 4px; margin-bottom: 6px; padding-left: 16px;">
+                     ${detailsHtml}
+                   </div>
+                 </details>
+               `;
+              }
+
+              return `<div style="margin-top: 2px;">↳ ${textToDisplay}${obsOwnerHtml} <span style="opacity:0.6; font-size:0.65rem;">(${formatCurrency(o.amount)})</span></div>`;
+            })
+            .join('');
           obsHtml = `<div style="font-size: 0.72rem; color: #a6a6c0; margin-top: 4px; font-weight: normal;">${obsLines}</div>`;
         }
 
-        tdItemName.innerHTML = `${item.name}${obsHtml}`;
+        tdItemName.innerHTML = `${item.name}${ownerHtml}${obsHtml}`;
 
         const tdItemPrev = document.createElement('td');
         tdItemPrev.className = 'numeric';

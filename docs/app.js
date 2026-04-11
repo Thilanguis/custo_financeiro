@@ -141,20 +141,22 @@ btnLoadMonth.addEventListener('click', async () => {
       const fixedItemsToClone = prevItems.filter((p) => p.fixed);
 
       for (const item of fixedItemsToClone) {
-        const newItem = { ...item, month: targetMonth };
+        const oldDateParts = item.date ? item.date.split('-') : [];
+        const day = oldDateParts.length === 3 ? oldDateParts[2] : '01';
+        const newDate = `${targetMonth}-${day}`;
+
+        const newItem = { ...item, month: targetMonth, date: newDate };
         delete newItem.id;
         await FinanceAPI.savePlanned(targetMonth, newItem);
 
         if (item.isStatic) {
-          const today = new Date().toISOString().split('T')[0];
-          const launchDate = today.startsWith(targetMonth) ? today : `${targetMonth}-01`;
           const receiptData = {
-            date: launchDate,
+            date: newDate,
             category: item.category,
             merchant: item.description,
             amount: item.amount,
             owner: item.owner,
-            isStatic: true, // ADICIONADO "isStatic: true" ABAIXO
+            isStatic: true,
           };
           await FinanceAPI.saveReceipt(targetMonth, receiptData);
         }
@@ -217,10 +219,15 @@ monthInput.addEventListener('change', () => {
   const newMonth = getCurrentMonth();
   syncData(newMonth);
 
-  // Atualiza a data do form de notas fiscais ao trocar o mês
+  const today = new Date().toISOString().split('T')[0];
+  const newDefaultDate = today.startsWith(newMonth) ? today : `${newMonth}-01`;
+
   if (actualDateInput && !editingReceiptId) {
-    const today = new Date().toISOString().split('T')[0];
-    actualDateInput.value = today.startsWith(newMonth) ? today : `${newMonth}-01`;
+    actualDateInput.value = newDefaultDate;
+  }
+
+  if (plannedDateInput && !editingPlannedId) {
+    plannedDateInput.value = newDefaultDate;
   }
 });
 
@@ -359,6 +366,7 @@ function updateReceiptChips() {
 // ===== Orçamento mensal (custos previstos) =====
 
 const formPlanned = document.getElementById('form-planned');
+const plannedDateInput = document.getElementById('planned-date');
 const plannedCategoryInput = document.getElementById('planned-category');
 const plannedDescriptionInput = document.getElementById('planned-description');
 const plannedAmountInput = document.getElementById('planned-amount');
@@ -409,9 +417,15 @@ async function autoRegisterCompany(type, name) {
 
 formPlanned.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const month = getCurrentMonth();
-  if (!month) return alert('Escolha o mês de referência no topo primeiro.');
+  const date = plannedDateInput.value;
+  const inputMonth = date.substring(0, 7);
+  const currentViewMonth = getCurrentMonth();
 
+  if (inputMonth !== currentViewMonth) {
+    return alert(`A data do orçamento não pertence ao mês selecionado no topo (${currentViewMonth}).`);
+  }
+
+  const month = inputMonth;
   const category = plannedCategoryInput.value.trim();
   const description = plannedDescriptionInput.value.trim();
   const amount = parseAmount(plannedAmountInput.value);
@@ -419,41 +433,35 @@ formPlanned.addEventListener('submit', async (e) => {
   const fixed = plannedFixedCheckbox.checked;
   const isStatic = plannedStaticCheckbox.checked;
 
-  if (!category || !description || isNaN(amount)) return alert('Preencha categoria, descrição e valor.');
+  if (!date || !category || !description || isNaN(amount)) return alert('Preencha data, categoria, descrição e valor.');
 
   plannedSubmitBtn.textContent = 'Salvando...';
   plannedSubmitBtn.disabled = true;
 
   await autoRegisterCompany(category, description);
 
-  // Pega os dados antigos ANTES de salvar, para podermos achar a nota fiscal correspondente
   let oldItem = null;
   if (editingPlannedId !== null) {
     oldItem = plannedItems.find((p) => p.id === editingPlannedId);
   }
 
-  const itemData = { category, description, amount, owner, fixed, isStatic, month };
+  const itemData = { date, category, description, amount, owner, fixed, isStatic, month };
   if (editingPlannedId !== null) itemData.id = editingPlannedId;
 
   await FinanceAPI.savePlanned(month, itemData);
 
   if (editingPlannedId === null) {
-    // Lança nota fiscal automática se for um item NOVO e ESTÁTICO
     if (isStatic) {
-      const today = new Date().toISOString().split('T')[0];
-      const launchDate = today.startsWith(month) ? today : `${month}-01`;
-      const receiptData = { date: launchDate, category, merchant: description, amount, owner, isStatic: true };
+      const receiptData = { date: date, category, merchant: description, amount, owner, isStatic: true };
       await FinanceAPI.saveReceipt(month, receiptData);
     }
   } else if (oldItem) {
-    // Se for uma EDIÇÃO, tenta achar a nota fiscal usando o nome/categoria antigos
     const linkedReceipt = receipts.find((r) => r.date.startsWith(month) && r.category === oldItem.category && r.merchant === oldItem.description);
 
     if (linkedReceipt) {
-      // Atualiza a nota fiscal existente com os novos dados (valor, nome e a flag estática)
       const updatedReceipt = {
         id: linkedReceipt.id,
-        date: linkedReceipt.date,
+        date: date,
         category: category,
         merchant: description,
         amount: amount,
@@ -462,10 +470,7 @@ formPlanned.addEventListener('submit', async (e) => {
       };
       await FinanceAPI.saveReceipt(month, updatedReceipt);
     } else if (isStatic) {
-      // Se a nota fiscal não existia, mas na edição você marcou "Estático" agora, ele cria
-      const today = new Date().toISOString().split('T')[0];
-      const launchDate = today.startsWith(month) ? today : `${month}-01`;
-      const receiptData = { date: launchDate, category, merchant: description, amount, owner, isStatic: true };
+      const receiptData = { date: date, category, merchant: description, amount, owner, isStatic: true };
       await FinanceAPI.saveReceipt(month, receiptData);
     }
   }
@@ -485,6 +490,13 @@ function resetPlannedForm() {
 
   selectedPlannedType = getCategories()[0] || '';
   plannedCategoryInput.value = selectedPlannedType;
+
+  const selectedMonth = getCurrentMonth();
+  const today = new Date().toISOString().split('T')[0];
+  if (plannedDateInput) {
+    plannedDateInput.value = today.startsWith(selectedMonth) ? today : `${selectedMonth}-01`;
+  }
+
   updatePlannedChips();
 }
 
@@ -493,7 +505,7 @@ function startEditPlanned(id) {
   if (!item) return;
   editingPlannedId = id;
 
-  // Removido o monthInput.value que estava puxando sua tela pro mês atual sozinho
+  plannedDateInput.value = item.date || '';
   plannedCategoryInput.value = item.category;
   plannedDescriptionInput.value = item.description;
   plannedAmountInput.value = item.amount;
@@ -510,7 +522,6 @@ function startEditPlanned(id) {
   }
 
   plannedSubmitBtn.textContent = 'Salvar alterações';
-  // Removido o refreshAll() que fazia a tela piscar desnecessariamente
 }
 
 async function deletePlanned(id) {
@@ -650,10 +661,13 @@ function renderPlannedItemsList(month) {
         groupItems.forEach((p) => {
           const item = document.createElement('div');
           item.className = 'receipt-item';
+
+          const dateStr = p.date ? `${p.date.split('-').reverse().join('/').substring(0, 5)} • ` : '';
+
           item.innerHTML = `
           <div class="receipt-main">
             <div class="receipt-line">${p.description}</div>
-            <div class="receipt-meta">Resp: ${p.owner}${p.fixed ? (p.isStatic ? ' • Fixo & Estático' : ' • Fixo') : ''}</div>
+            <div class="receipt-meta">${dateStr}Resp: ${p.owner}${p.fixed ? (p.isStatic ? ' • Fixo & Estático' : ' • Fixo') : ''}</div>
           </div>
           <div class="receipt-right">
             <div class="receipt-amount">${formatCurrency(p.amount)}</div>
@@ -1243,52 +1257,84 @@ function updateDashboardView() {
         // Verifica se há alguma observação que agrupou mais de uma transação
         const hasGroupedTransactions = obsArray.some((o) => o.transactions && o.transactions.length > 1);
 
-        // Só renderiza se tiver mais de um subitem, ou se tiver um mas ele for uma observação real, OU se tiver transações agrupadas
+        // Só renderiza subitens se tiver mais de um, ou se tiver um válido, ou transações agrupadas
         const shouldRenderObs = obsArray.length > 1 || (obsArray.length === 1 && !isGenericObs(obsArray[0].text)) || hasGroupedTransactions;
 
-        // 2. Formata os responsáveis do item principal SOMENTE se NÃO houver subitens
+        // 1.1 Extrai e formata todas as datas das transações dessa loja/empresa
+        let datesArray = [];
+        (item.obsList || []).forEach((obs) => {
+          (obs.transactions || []).forEach((t) => {
+            if (t.date) {
+              // Converte "2026-04-15" para "15/04"
+              const shortDate = t.date.split('-').reverse().join('/').substring(0, 5);
+              if (!datesArray.includes(shortDate)) {
+                datesArray.push(shortDate);
+              }
+            }
+          });
+        });
+
+        // Ordena as datas decrescente (opcional) e junta em uma string
+        datesArray.sort((a, b) => b.localeCompare(a));
+        const datesText = datesArray.length > 0 ? ` • ${datesArray.join(', ')}` : '';
+
+        // 2. Formata os responsáveis e as datas para o HTML
         const ownersArray = Array.from(item.owners || []);
         let ownerHtml = '';
-        if (ownersArray.length > 0 && !shouldRenderObs) {
-          ownerHtml = ` <span style="font-size: 0.72rem; color: #8e8eab; margin-left: 4px;">(${ownersArray.join(', ')})</span>`;
+
+        if (ownersArray.length > 0 || datesText !== '') {
+          const ownersText = ownersArray.length > 0 ? `(${ownersArray.join(', ')})` : '';
+          ownerHtml = ` <span style="font-size: 0.72rem; color: #8e8eab; margin-left: 4px;">${ownersText}${datesText}</span>`;
         }
-
-        // 3. Gera a lista de observações incluindo os responsáveis e a sanfona
+        // 3. Montagem da Sanfona na LOJA (Padrão 100% consistente)
         if (shouldRenderObs) {
-          const obsLines = obsArray
-            .map((o) => {
-              const textToDisplay = isGenericObs(o.text) ? 'Sem observação' : o.text;
-              const obsOwners = Array.from(o.owners || []);
-              const obsOwnerHtml = obsOwners.length > 0 ? ` <span style="color: #8e8eab;">(${obsOwners.join(', ')})</span>` : '';
+          let allTransactions = [];
 
-              // Cria a mini-sanfona nativa (<details>) se houver mais de uma nota somada
-              if (o.transactions && o.transactions.length > 1) {
-                const detailsHtml = o.transactions
-                  .map((t) => {
-                    const dateStr = t.date.split('-').reverse().join('/').substring(0, 5); // Exibe DD/MM
-                    return `<div style="font-size: 0.68rem; color: #8e8eab; margin-top: 4px; padding-left: 12px; border-left: 1px solid #35354a;">• ${dateStr} <span style="opacity:0.8; margin-left: 4px;">${formatCurrency(t.amount)}</span></div>`;
-                  })
-                  .join('');
+          // Extrai todas as transações individualmente para padronizar o layout
+          obsArray.forEach((o) => {
+            const textToDisplay = isGenericObs(o.text) ? 'Sem observação' : o.text;
+            if (o.transactions && o.transactions.length > 0) {
+              o.transactions.forEach((t) => {
+                allTransactions.push({
+                  date: t.date,
+                  amount: t.amount,
+                  text: textToDisplay,
+                  owner: t.owner || 'Ambos',
+                });
+              });
+            }
+          });
 
-                return `
-                 <details style="margin-top: 4px; margin-bottom: 2px; cursor: pointer;">
-                   <summary style="outline: none; user-select: none; color: #fddf7b;">
-                     <span style="color: #a6a6c0;">↳ ${textToDisplay}${obsOwnerHtml} <span style="opacity:0.6; font-size:0.65rem;">(${formatCurrency(o.amount)})</span> <span style="font-size: 0.6rem; background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; margin-left: 6px; border: 1px solid rgba(253, 223, 123, 0.3);">📄 ${o.transactions.length} itens</span></span>
-                   </summary>
-                   <div style="margin-top: 4px; margin-bottom: 6px; padding-left: 16px;">
-                     ${detailsHtml}
-                   </div>
-                 </details>
-               `;
-              }
+          // Ordena por data (mais recente primeiro)
+          allTransactions.sort((a, b) => b.date.localeCompare(a.date));
 
-              return `<div style="margin-top: 2px;">↳ ${textToDisplay}${obsOwnerHtml} <span style="opacity:0.6; font-size:0.65rem;">(${formatCurrency(o.amount)})</span></div>`;
+          const obsLines = allTransactions
+            .map((t) => {
+              const dateStr = t.date ? `<span style="color: #8e8eab; font-size: 0.68rem; margin-right: 4px;"> • ${t.date.split('-').reverse().join('/').substring(0, 5)} </span> ` : '';
+              const ownerHtml = ` <span style="color: #8e8eab;">(${t.owner})</span>`;
+
+              return `<div style="margin-top: 6px; margin-bottom: 6px;"><span style="color: #c3c3d5;">↳ ${t.text}</span>${ownerHtml} <span style="opacity:0.6; font-size:0.65rem;">(${formatCurrency(t.amount)}) ${dateStr}</span></div>`;
             })
             .join('');
-          obsHtml = `<div style="font-size: 0.72rem; color: #a6a6c0; margin-top: 4px; font-weight: normal;">${obsLines}</div>`;
-        }
 
-        tdItemName.innerHTML = `${item.name}${ownerHtml}${obsHtml}`;
+          const totalItems = allTransactions.length;
+
+          // A sanfona AGORA É A LOJA!
+          tdItemName.innerHTML = `
+            <details style="cursor: pointer; margin: 2px 0;">
+              <summary style="outline: none; user-select: none; color: #fddf7b;">
+                <span style="color: #f5f5f5;">${item.name}</span>${ownerHtml}
+                <span style="font-size: 0.6rem; background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; margin-left: 6px; border: 1px solid rgba(253, 223, 123, 0.3); vertical-align: middle;">${totalItems} itens</span>
+              </summary>
+              <div style="font-size: 0.72rem; color: #a6a6c0; margin-top: 6px; padding-left: 16px; font-weight: normal; margin-bottom: 4px;">
+                ${obsLines}
+              </div>
+            </details>
+          `;
+        } else {
+          // Se for só uma nota sem observação, exibe direto sem setinha (Ex: CARRO)
+          tdItemName.innerHTML = `${item.name}${ownerHtml}`;
+        }
 
         const tdItemPrev = document.createElement('td');
         tdItemPrev.className = 'numeric';
@@ -1664,9 +1710,12 @@ function initAppUI() {
   plannedCategoryInput.value = selectedPlannedType;
   actualCategoryInput.value = selectedReceiptType;
 
-  // Define a data de hoje como padrão no formulário de Notas Fiscais
+  // Define a data de hoje como padrão nos formulários
   const today = new Date().toISOString().split('T')[0];
-  actualDateInput.value = today;
+  const defaultDate = today.startsWith(m) ? today : `${m}-01`;
+
+  if (plannedDateInput) plannedDateInput.value = defaultDate;
+  if (actualDateInput) actualDateInput.value = defaultDate;
 
   updatePlannedChips();
   updateReceiptChips();

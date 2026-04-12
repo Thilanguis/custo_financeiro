@@ -417,6 +417,27 @@ btnLoadMonth.addEventListener('click', async () => {
           await FinanceAPI.saveReceipt(targetMonth, receiptData);
         }
       }
+      for (const item of fixedItemsToClone) {
+        const oldDateParts = item.date ? item.date.split('-') : [];
+        const day = oldDateParts.length === 3 ? oldDateParts[2] : '01';
+        const newDate = `${targetMonth}-${day}`;
+
+        const newItem = { ...item, month: targetMonth, date: newDate };
+        delete newItem.id;
+        await FinanceAPI.savePlanned(targetMonth, newItem);
+
+        if (item.isStatic) {
+          const receiptData = {
+            date: newDate,
+            category: item.category,
+            merchant: item.description,
+            amount: item.amount,
+            owner: item.owner,
+            isStatic: true,
+          };
+          await FinanceAPI.saveReceipt(targetMonth, receiptData);
+        }
+      }
 
       if (fixedItemsToClone.length > 0) {
         alert(`${fixedItemsToClone.length} contas fixas copiadas de ${prevMonthStr}!`);

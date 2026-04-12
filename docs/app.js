@@ -397,30 +397,17 @@ btnLoadMonth.addEventListener('click', async () => {
       const fixedItemsToClone = prevItems.filter((p) => p.fixed);
 
       for (const item of fixedItemsToClone) {
-        const oldDateParts = item.date ? item.date.split('-') : [];
-        const day = oldDateParts.length === 3 ? oldDateParts[2] : '01';
-        const newDate = `${targetMonth}-${day}`;
+        let newDate = '';
 
-        const newItem = { ...item, month: targetMonth, date: newDate };
-        delete newItem.id;
-        await FinanceAPI.savePlanned(targetMonth, newItem);
-
-        if (item.isStatic) {
-          const receiptData = {
-            date: newDate,
-            category: item.category,
-            merchant: item.description,
-            amount: item.amount,
-            owner: item.owner,
-            isStatic: true,
-          };
-          await FinanceAPI.saveReceipt(targetMonth, receiptData);
+        // Se o item tinha data, extrai o dia e junta com o novo mês
+        if (item.date) {
+          const oldDateParts = item.date.split('-');
+          const day = oldDateParts.length === 3 ? oldDateParts[2] : '01';
+          newDate = `${targetMonth}-${day}`;
+        } else if (item.isStatic) {
+          // Fallback de segurança: se for estático e estiver sem data por algum bug, força dia 01
+          newDate = `${targetMonth}-01`;
         }
-      }
-      for (const item of fixedItemsToClone) {
-        const oldDateParts = item.date ? item.date.split('-') : [];
-        const day = oldDateParts.length === 3 ? oldDateParts[2] : '01';
-        const newDate = `${targetMonth}-${day}`;
 
         const newItem = { ...item, month: targetMonth, date: newDate };
         delete newItem.id;
@@ -433,6 +420,7 @@ btnLoadMonth.addEventListener('click', async () => {
             merchant: item.description,
             amount: item.amount,
             owner: item.owner,
+            paymentMethodId: item.paymentMethodId || 'dinheiro', // Repassa o pagamento pro Real
             isStatic: true,
           };
           await FinanceAPI.saveReceipt(targetMonth, receiptData);
@@ -740,12 +728,11 @@ formPlanned.addEventListener('submit', async (e) => {
       await FinanceAPI.saveReceipt(month, receiptData);
     }
   } else if (oldItem) {
-    // Edição: Tenta achar uma Nota Fiscal vinculada que seja explicitamente Estática
-    const linkedReceipt = receipts.find((r) => r.date.startsWith(month) && r.category === oldItem.category && r.merchant === oldItem.description && r.isStatic);
+    // Edição: Acha a Nota usando Categoria, Loja, RESPONSÁVEL e VALOR para não misturar itens duplos (ex: 2 academias)
+    const linkedReceipt = receipts.find((r) => r.date.startsWith(month) && r.category === oldItem.category && r.merchant === oldItem.description && r.owner === oldItem.owner && r.amount === oldItem.amount && r.isStatic);
 
     if (linkedReceipt) {
       if (isStatic) {
-        // Atualiza a nota existente se continua sendo estático
         const updatedReceipt = {
           id: linkedReceipt.id,
           date: date || linkedReceipt.date,
@@ -755,14 +742,13 @@ formPlanned.addEventListener('submit', async (e) => {
           owner: owner,
           paymentMethodId: paymentMethodId,
           isStatic: true,
+          isReimbursement: linkedReceipt.isReimbursement || false,
         };
         await FinanceAPI.saveReceipt(month, updatedReceipt);
       } else {
-        // Se era estático e deixou de ser (apenas Fixo agora), DELETA a Nota Fiscal gerada automaticamente
         await FinanceAPI.deleteReceipt(month, linkedReceipt.id);
       }
     } else if (isStatic) {
-      // Caso não existia nota (era só Fixo) e você ativou o "Estático" na edição
       const receiptData = { date: date, category, merchant: description, amount, owner, paymentMethodId, isStatic: true };
       await FinanceAPI.saveReceipt(month, receiptData);
     }
@@ -822,16 +808,16 @@ async function deletePlanned(id) {
   const p = plannedItems.find((x) => x.id === id);
   if (!p) return;
 
-  const msg = p.isStatic ? 'Este item é ESTÁTICO. Excluí-lo aqui também apagará a Nota Fiscal vinculada. Deseja continuar?' : 'Excluir este item do Orçamento?';
+  const msg = p.isStatic ? `O item "${p.description}" é ESTÁTICO. Excluí-lo aqui também apagará a Nota Fiscal vinculada. Deseja continuar?` : `Excluir o item "${p.description}" do Orçamento?`;
 
   if (!confirm(msg)) return;
 
   const month = getCurrentMonth();
   await FinanceAPI.deletePlanned(month, id);
 
-  // Exclusão em cadeia nas Notas Fiscais
+  // Exclusão em cadeia nas Notas Fiscais (usando Responsável e Valor)
   if (p.isStatic) {
-    const receiptToDelete = receipts.find((r) => r.date.startsWith(month) && r.category === p.category && r.merchant === p.description && r.isStatic);
+    const receiptToDelete = receipts.find((r) => r.date.startsWith(month) && r.category === p.category && r.merchant === p.description && r.owner === p.owner && r.amount === p.amount && r.isStatic);
     if (receiptToDelete) {
       await FinanceAPI.deleteReceipt(month, receiptToDelete.id);
     }
@@ -844,16 +830,16 @@ async function deleteReceipt(id) {
   const r = receipts.find((x) => x.id === id);
   if (!r) return;
 
-  const msg = r.isStatic ? 'Esta nota fiscal é ESTÁTICA. Excluí-la aqui também apagará a previsão no Orçamento. Deseja continuar?' : 'Excluir esta nota fiscal?';
+  const msg = r.isStatic ? `A nota fiscal de "${r.merchant}" é ESTÁTICA. Excluí-la aqui também apagará a previsão no Orçamento. Deseja continuar?` : `Excluir a nota fiscal de "${r.merchant}"?`;
 
   if (!confirm(msg)) return;
 
   const month = r.date.substring(0, 7);
   await FinanceAPI.deleteReceipt(month, id);
 
-  // Exclusão em cadeia no Orçamento
+  // Exclusão em cadeia no Orçamento (usando Responsável e Valor)
   if (r.isStatic) {
-    const plannedToDelete = plannedItems.find((p) => p.month === month && p.category === r.category && p.description === r.merchant && p.isStatic);
+    const plannedToDelete = plannedItems.find((p) => p.month === month && p.category === r.category && p.description === r.merchant && p.owner === r.owner && p.amount === r.amount && p.isStatic);
     if (plannedToDelete) {
       await FinanceAPI.deletePlanned(month, plannedToDelete.id);
     }
@@ -1025,7 +1011,7 @@ formActual.addEventListener('submit', async (e) => {
   const amount = parseAmount(actualAmountInput.value);
   const owner = actualOwnerSelect.value;
   const paymentMethodId = document.getElementById('actual-payment').value;
-  const observation = actualObservationInput.value.trim(); // PEGA A OBSERVAÇÃO
+  const observation = actualObservationInput.value.trim();
 
   if (!date || !category || !merchant || isNaN(amount)) return alert('Preencha data, categoria, nome e valor.');
 
@@ -1034,11 +1020,56 @@ formActual.addEventListener('submit', async (e) => {
 
   await autoRegisterCompany(category, merchant);
 
-  // ADICIONA A OBSERVAÇÃO NO OBJETO QUE VAI PRO BANCO
-  const itemData = { date, category, merchant, amount, owner, paymentMethodId, observation };
+  // NOVO: Resgata a nota antiga para manter as flags essenciais
+  let oldReceipt = null;
+  if (editingReceiptId !== null) {
+    oldReceipt = receipts.find((r) => r.id === editingReceiptId);
+  }
+
+  // NOVO: Preserva as flags de Estático e Reembolso
+  const isStatic = oldReceipt ? oldReceipt.isStatic || false : false;
+  const isReimb = oldReceipt ? oldReceipt.isReimbursement || false : false;
+
+  // Proteção: Se for reembolso e a pessoa editar o valor sem o sinal de menos, força negativo
+  const finalAmount = isReimb ? -Math.abs(amount) : amount;
+
+  // Monta o objeto sem perder as propriedades de sistema
+  const itemData = {
+    date,
+    category,
+    merchant,
+    amount: finalAmount,
+    owner,
+    paymentMethodId,
+    observation,
+    isStatic: isStatic,
+    isReimbursement: isReimb,
+  };
+
   if (editingReceiptId !== null) itemData.id = editingReceiptId;
 
   await FinanceAPI.saveReceipt(month, itemData);
+
+  // ESPELHAMENTO INVERSO: Acha o Orçamento usando Categoria, Loja, RESPONSÁVEL e VALOR para não errar o item
+  if (oldReceipt && oldReceipt.isStatic) {
+    const linkedPlanned = plannedItems.find((p) => p.month === month && p.category === oldReceipt.category && p.description === oldReceipt.merchant && p.owner === oldReceipt.owner && p.amount === oldReceipt.amount && p.isStatic);
+
+    if (linkedPlanned) {
+      const updatedPlanned = {
+        id: linkedPlanned.id,
+        month: linkedPlanned.month,
+        fixed: linkedPlanned.fixed,
+        isStatic: true,
+        date: date,
+        category: category,
+        description: merchant,
+        amount: finalAmount,
+        owner: owner,
+        paymentMethodId: paymentMethodId,
+      };
+      await FinanceAPI.savePlanned(month, updatedPlanned);
+    }
+  }
 
   actualSubmitBtn.textContent = 'Salvar Nota Fiscal';
   actualSubmitBtn.disabled = false;
@@ -1566,13 +1597,14 @@ function updateDashboardView() {
 
         // Só renderiza subitens se tiver mais de um, ou se tiver um válido, ou transações agrupadas
         const shouldRenderObs = obsArray.length > 1 || (obsArray.length === 1 && !isGenericObs(obsArray[0].text)) || hasGroupedTransactions;
-
-        // 1.1 Extrai e formata todas as datas das transações dessa loja/empresa
+        // 1.1 Extrai e formata todas as datas das transações e CONTA o total de itens
         let datesArray = [];
+        let totalTxCount = 0; // Contador para sabermos se tem mais de 1 nota
+
         (item.obsList || []).forEach((obs) => {
           (obs.transactions || []).forEach((t) => {
+            totalTxCount++;
             if (t.date) {
-              // Converte "2026-04-15" para "15/04"
               const shortDate = t.date.split('-').reverse().join('/').substring(0, 5);
               if (!datesArray.includes(shortDate)) {
                 datesArray.push(shortDate);
@@ -1581,19 +1613,19 @@ function updateDashboardView() {
           });
         });
 
-        // Ordena as datas decrescente (opcional) e junta em uma string
         datesArray.sort((a, b) => b.localeCompare(a));
-        const datesText = datesArray.length > 0 ? ` • ${datesArray.join(', ')}` : '';
 
-        // 2. Formata os responsáveis e as datas para o HTML
+        // 2. Formata os responsáveis e as datas de forma limpa (Para o Subtítulo)
         const ownersArray = Array.from(item.owners || []);
-        let ownerHtml = '';
+        const ownersText = ownersArray.length > 0 ? `(${ownersArray.join(', ')})` : '';
 
-        if (ownersArray.length > 0 || datesText !== '') {
-          const ownersText = ownersArray.length > 0 ? `(${ownersArray.join(', ')})` : '';
-          ownerHtml = ` <span style="font-size: 0.72rem; color: #8e8eab; margin-left: 4px;">${ownersText}${datesText}</span>`;
-        }
-        // 3. Montagem da Sanfona na LOJA (Padrão 100% consistente)
+        // A MÁGICA AQUI: Só mostra a data no cabeçalho se houver EXATAMENTE 1 compra.
+        // Se for mais de 1, esconde e deixa o usuário abrir a sanfona para ver.
+        const datesText = totalTxCount > 1 ? '' : datesArray.join(', ');
+
+        const metaText = [ownersText, datesText].filter(Boolean).join(' • ');
+
+        // 3. Montagem da Sanfona na LOJA (Design Responsivo e Quebrado em Blocos)
         if (shouldRenderObs) {
           let allTransactions = [];
 
@@ -1607,8 +1639,8 @@ function updateDashboardView() {
                   amount: t.amount,
                   text: textToDisplay,
                   owner: t.owner || 'Ambos',
-                  paymentMethodId: t.paymentMethodId, // PUXANDO O CARTÃO
-                  isReimbursement: t.isReimbursement || t.amount < 0, // PUXANDO O REEMBOLSO
+                  paymentMethodId: t.paymentMethodId,
+                  isReimbursement: t.isReimbursement || t.amount < 0,
                 });
               });
             }
@@ -1619,34 +1651,48 @@ function updateDashboardView() {
 
           const obsLines = allTransactions
             .map((t) => {
-              const dateStr = t.date ? ` • ${t.date.split('-').reverse().join('/').substring(0, 5)}` : '';
-              const ownerHtml = ` <span style="color: #8e8eab;">(${t.owner})</span>`;
-              const payStr = ` <span style="color: #8e8eab;">• ${getPaymentName(t.paymentMethodId)}</span>`;
+              const dateStr = t.date ? `${t.date.split('-').reverse().join('/').substring(0, 5)}` : '';
+              const payStr = getPaymentName(t.paymentMethodId);
 
               const isReimb = t.isReimbursement;
               const amountColor = isReimb ? '#62c462' : '#c3c3d5';
-              const reimbBadge = isReimb ? ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Reembolso)</span>' : '';
+              const reimbBadge = isReimb ? ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Reemb.)</span>' : '';
 
-              return `<div style="margin-top: 6px; margin-bottom: 6px;"><span style="color: #c3c3d5;">↳ ${t.text}${reimbBadge}</span>${ownerHtml}<span style="font-size: 0.7rem;">${payStr} <span style="color: #8e8eab;">${dateStr}</span></span> <span style="color: ${amountColor}; font-size:0.75rem; font-weight:500; margin-left: 4px;">(${formatCurrency(t.amount)})</span></div>`;
+              // Cria um bloco individual para cada item da sanfona (perfeito pro mobile)
+              return `
+                <div style="margin-top: 8px; margin-bottom: 8px; border-left: 2px solid #27273a; padding-left: 8px;">
+                  <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 4px;">
+                    <span style="color: #c3c3d5; font-size: 0.8rem; line-height: 1.3;">${t.text}${reimbBadge}</span>
+                    <span style="color: ${amountColor}; font-size: 0.75rem; font-weight: 600; white-space: nowrap; margin-left: 4px;">${formatCurrency(t.amount)}</span>
+                  </div>
+                  <div style="font-size: 0.7rem; color: #8e8eab; margin-top: 3px; display: flex; flex-wrap: wrap; gap: 4px;">
+                    <span>(${t.owner})</span>
+                    <span>• ${payStr}</span>
+                    ${dateStr ? `<span>• ${dateStr}</span>` : ''}
+                  </div>
+                </div>`;
             })
             .join('');
 
           const totalItems = allTransactions.length;
 
-          // A sanfona AGORA É A LOJA!
+          // A sanfona AGORA É A LOJA (Com título quebrado em 2 linhas)
           tdItemName.innerHTML = `
             <details style="cursor: pointer; margin: 2px 0;">
               <summary style="outline: none; user-select: none; color: #fddf7b;">
-                <span style="color: #f5f5f5;">${item.name}</span>${ownerHtml}
-                <span style="font-size: 0.6rem; background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; margin-left: 6px; border: 1px solid rgba(253, 223, 123, 0.3); vertical-align: middle;">${totalItems} itens</span>
+                <div style="display: inline-block;">
+                  <span style="color: #f5f5f5;">${item.name}</span>
+                  <span style="font-size: 0.6rem; background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; margin-left: 4px; border: 1px solid rgba(253, 223, 123, 0.3); white-space: nowrap; vertical-align: middle;">${totalItems} itens</span>
+                </div>
+                <div style="font-size: 0.72rem; color: #8e8eab; margin-top: 2px; line-height: 1.3;">${metaText}</div>
               </summary>
-              <div style="font-size: 0.72rem; color: #a6a6c0; margin-top: 6px; padding-left: 16px; font-weight: normal; margin-bottom: 4px;">
+              <div style="margin-top: 6px; margin-bottom: 4px;">
                 ${obsLines}
               </div>
             </details>
           `;
         } else {
-          // Se for só uma nota sem observação, exibe direto sem setinha
+          // Se for só uma nota sem observação, exibe direto sem setinha, quebrado em 2 linhas
           let singleTx = null;
           if (obsArray.length > 0 && obsArray[0].transactions && obsArray[0].transactions.length > 0) {
             singleTx = obsArray[0].transactions[0];
@@ -1656,11 +1702,16 @@ function updateDashboardView() {
           let payStr = '';
           if (singleTx) {
             const isReimb = singleTx.isReimbursement || singleTx.amount < 0;
-            if (isReimb) reimbBadge = ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold; margin-left: 4px;">(Reembolso)</span>';
-            payStr = ` <span style="font-size: 0.72rem; color: #8e8eab; margin-left: 4px;">• ${getPaymentName(singleTx.paymentMethodId)}</span>`;
+            if (isReimb) reimbBadge = ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold; margin-left: 4px;">(Reemb.)</span>';
+            payStr = getPaymentName(singleTx.paymentMethodId);
           }
 
-          tdItemName.innerHTML = `${item.name}${reimbBadge}${ownerHtml}${payStr}`;
+          const singleMetaText = [ownersText, datesArray.join(', '), payStr].filter(Boolean).join(' • ');
+
+          tdItemName.innerHTML = `
+            <div style="color: #f5f5f5;">${item.name}${reimbBadge}</div>
+            <div style="font-size: 0.72rem; color: #8e8eab; margin-top: 2px; line-height: 1.3;">${singleMetaText}</div>
+          `;
         }
 
         const tdItemPrev = document.createElement('td');

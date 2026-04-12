@@ -1,5 +1,5 @@
 // docs/service-worker.js
-const CACHE_NAME = 'controle-financeiro-v26'; // Incrementei a versão
+const CACHE_NAME = 'controle-financeiro-v27'; // Incrementei a versão
 
 const urlsToCache = ['./', './index.html', './style.css', './app.js', './firebase-api.js', './manifest.json', './icons/icon-192.png', './icons/icon-512.png'];
 

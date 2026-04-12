@@ -3,6 +3,7 @@
 const plannedItems = []; // {id, month, category, description, amount, owner, fixed}
 const receipts = []; // {id, date, category, merchant, amount, owner, fixed}
 const incomes = []; // {month, owner, amount}
+let paymentMethods = []; // Puxado do Firebase
 
 // Memória para não resetar o agrupamento ao adicionar/excluir item (Padrão: tudo fechado)
 const openPlannedCats = new Set();
@@ -82,11 +83,266 @@ const btnSaveIncome = document.getElementById('btn-save-income');
 const btnLoadMonth = document.getElementById('btn-load-month');
 const btnToggleIncome = document.getElementById('btn-toggle-income');
 const incomePanel = document.getElementById('income-panel');
+const btnTogglePayments = document.getElementById('btn-toggle-payments');
+const paymentsPanel = document.getElementById('payments-panel');
+const btnToggleReimbursement = document.getElementById('btn-toggle-reimbursement');
+const reimbursementPanel = document.getElementById('reimbursement-panel');
 
 btnToggleIncome.addEventListener('click', () => {
+  paymentsPanel.style.display = 'none';
+  reimbursementPanel.style.display = 'none';
   const isHidden = incomePanel.style.display === 'none';
   incomePanel.style.display = isHidden ? 'block' : 'none';
 });
+
+btnTogglePayments.addEventListener('click', () => {
+  incomePanel.style.display = 'none';
+  reimbursementPanel.style.display = 'none';
+  const isHidden = paymentsPanel.style.display === 'none';
+  paymentsPanel.style.display = isHidden ? 'block' : 'none';
+});
+
+btnToggleReimbursement.addEventListener('click', () => {
+  incomePanel.style.display = 'none';
+  paymentsPanel.style.display = 'none';
+  const isHidden = reimbursementPanel.style.display === 'none';
+  reimbursementPanel.style.display = isHidden ? 'block' : 'none';
+});
+
+// === LÓGICA DE REEMBOLSO ===
+const formReimbursement = document.getElementById('form-reimbursement');
+formReimbursement.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const date = document.getElementById('reimb-date').value;
+  const inputMonth = date.substring(0, 7);
+  const currentViewMonth = getCurrentMonth();
+
+  if (inputMonth !== currentViewMonth) {
+    return alert(`A data do reembolso não pertence ao mês selecionado no topo (${currentViewMonth}).`);
+  }
+
+  const category = document.getElementById('reimb-category').value.trim();
+  const merchant = document.getElementById('reimb-merchant').value.trim();
+  const amount = parseAmount(document.getElementById('reimb-amount').value);
+  const owner = document.getElementById('reimb-owner').value;
+  const paymentMethodId = document.getElementById('reimb-payment').value;
+  const observation = document.getElementById('reimb-observation').value.trim();
+
+  if (!date || !category || !merchant || isNaN(amount)) return alert('Preencha data, categoria, origem e valor.');
+
+  const submitBtn = formReimbursement.querySelector('button[type="submit"]');
+  submitBtn.textContent = 'Salvando...';
+  submitBtn.disabled = true;
+
+  await autoRegisterCompany(category, merchant);
+
+  // SACADA DE MESTRE: Math.abs garante o número positivo, e o "-" na frente converte pra negativo!
+  const itemData = {
+    date,
+    category,
+    merchant,
+    amount: -Math.abs(amount),
+    owner,
+    paymentMethodId,
+    observation,
+    isReimbursement: true,
+  };
+
+  await FinanceAPI.saveReceipt(inputMonth, itemData);
+
+  submitBtn.textContent = 'Salvar Reembolso';
+  submitBtn.disabled = false;
+
+  formReimbursement.reset();
+  document.getElementById('reimb-date').value = date; // Mantém a data pra facilitar lançamentos múltiplos
+  alert('Reembolso registrado com sucesso!');
+});
+
+// === LÓGICA DO PAINEL DE CARTÕES ===
+const formPayment = document.getElementById('form-payment');
+const payTypeSelect = document.getElementById('pay-type');
+const payCreditFields = document.getElementById('pay-credit-fields');
+
+payTypeSelect.addEventListener('change', (e) => {
+  payCreditFields.style.display = e.target.value === 'credito' ? 'flex' : 'none';
+});
+
+let editingPaymentId = null;
+const paySubmitBtn = formPayment.querySelector('button[type="submit"]');
+
+formPayment.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = document.getElementById('pay-name').value.trim();
+  const type = payTypeSelect.value;
+  const closing = document.getElementById('pay-closing').value;
+  const due = document.getElementById('pay-due').value;
+
+  if (!name) return;
+
+  let updatedMethods = [...paymentMethods];
+
+  if (editingPaymentId) {
+    // Modo Edição
+    const idx = updatedMethods.findIndex((m) => m.id === editingPaymentId);
+    if (idx !== -1) {
+      updatedMethods[idx] = {
+        id: editingPaymentId,
+        name,
+        type,
+        closing: type === 'credito' ? parseInt(closing) || null : null,
+        due: type === 'credito' ? parseInt(due) || null : null,
+      };
+    }
+  } else {
+    // Modo Criação
+    const newMethod = {
+      id: 'pay_' + Date.now(),
+      name,
+      type,
+      closing: type === 'credito' ? parseInt(closing) || null : null,
+      due: type === 'credito' ? parseInt(due) || null : null,
+    };
+    updatedMethods.push(newMethod);
+  }
+
+  paySubmitBtn.textContent = 'Salvando...';
+  paySubmitBtn.disabled = true;
+
+  await FinanceAPI.savePaymentMethods(updatedMethods);
+
+  resetPaymentForm();
+});
+
+function resetPaymentForm() {
+  formPayment.reset();
+  editingPaymentId = null;
+  paySubmitBtn.textContent = 'Salvar Cartão';
+  paySubmitBtn.disabled = false;
+
+  // Reseta os campos de crédito com base no select padrão
+  payCreditFields.style.display = payTypeSelect.value === 'credito' ? 'flex' : 'none';
+}
+
+function startEditPayment(id) {
+  const method = paymentMethods.find((m) => m.id === id);
+  if (!method) return;
+
+  editingPaymentId = id;
+  document.getElementById('pay-name').value = method.name;
+  payTypeSelect.value = method.type;
+
+  if (method.type === 'credito') {
+    payCreditFields.style.display = 'flex';
+    document.getElementById('pay-closing').value = method.closing || '';
+    document.getElementById('pay-due').value = method.due || '';
+  } else {
+    payCreditFields.style.display = 'none';
+    document.getElementById('pay-closing').value = '';
+    document.getElementById('pay-due').value = '';
+  }
+
+  paySubmitBtn.textContent = 'Salvar Alterações';
+}
+
+async function deletePaymentMethod(id) {
+  if (!confirm('Excluir este método de pagamento? Lançamentos antigos manterão o registro em texto.')) return;
+  const updatedMethods = paymentMethods.filter((m) => m.id !== id);
+  await FinanceAPI.savePaymentMethods(updatedMethods);
+}
+
+function renderPaymentMethodsList() {
+  const listEl = document.getElementById('payments-list');
+  if (!listEl) return;
+  listEl.innerHTML = '';
+
+  paymentMethods.forEach((method) => {
+    const item = document.createElement('div');
+    item.className = 'receipt-item';
+
+    let detailText = '';
+    if (method.type === 'credito' && method.closing) {
+      // Se o vencimento é menor que o fechamento, é no mês seguinte
+      const dueText = method.due < method.closing ? `Vence dia ${method.due} (mês seg.)` : `Vence dia ${method.due}`;
+      detailText = ` • Fecha dia ${method.closing} • ${dueText}`;
+    }
+
+    item.innerHTML = `
+      <div class="receipt-main">
+        <div class="receipt-line">${method.name} <span class="hint small">(${method.type})</span></div>
+        <div class="receipt-meta" style="margin-top:2px;">ID: ${method.id}${detailText}</div>
+      </div>
+      <div class="receipt-right" style="flex-direction: row; gap: 4px; align-items: center;">
+        <button class="action-btn" onclick="startEditPayment('${method.id}')">Editar</button>
+        <button class="action-btn danger" onclick="deletePaymentMethod('${method.id}')">X</button>
+      </div>
+    `;
+    listEl.appendChild(item);
+  });
+}
+
+// Dicionário de estilos para cada tipo de pagamento
+const paymentTypeConfig = {
+  credito: { label: 'Cartões de Crédito', icon: '💳 Créd.' },
+  debito: { label: 'Cartões de Débito', icon: '💴 Déb.' },
+  default: { label: 'Outros Métodos', icon: '🏷️' }, // Fallback mais neutro
+};
+
+function updatePaymentSelects() {
+  const selectPlanned = document.getElementById('planned-payment');
+  const selectActual = document.getElementById('actual-payment');
+
+  let optionsHtml = `<option value="dinheiro">💵 Dinheiro</option>`;
+
+  // 1. Agrupa os métodos dinamicamente pelo 'type'
+  const groupedMethods = paymentMethods.reduce((groups, method) => {
+    const type = method.type || 'default';
+    if (!groups[type]) groups[type] = [];
+    groups[type].push(method);
+    return groups;
+  }, {});
+
+  // 2. Monta o HTML baseando-se nos grupos criados
+  Object.keys(groupedMethods).forEach((type) => {
+    const config = paymentTypeConfig[type] || paymentTypeConfig.default;
+    const methodsInGroup = groupedMethods[type];
+
+    if (methodsInGroup.length > 0) {
+      optionsHtml += `<optgroup label="${config.icon} ${config.label}">`;
+      optionsHtml += methodsInGroup.map((m) => `<option value="${m.id}">${m.name}</option>`).join('');
+      optionsHtml += `</optgroup>`;
+    }
+  });
+
+  if (selectPlanned) {
+    const currentVal = selectPlanned.value;
+    selectPlanned.innerHTML = optionsHtml;
+    if (currentVal) selectPlanned.value = currentVal;
+  }
+
+  if (selectActual) {
+    const currentVal = selectActual.value;
+    selectActual.innerHTML = optionsHtml;
+    if (currentVal) selectActual.value = currentVal;
+  }
+
+  const selectReimb = document.getElementById('reimb-payment');
+  if (selectReimb) {
+    const currentVal = selectReimb.value;
+    selectReimb.innerHTML = optionsHtml;
+    if (currentVal) selectReimb.value = currentVal;
+  }
+}
+
+// Helper para pegar o nome bonito do pagamento
+function getPaymentName(id) {
+  if (!id || id === 'dinheiro') return '💵 Dinheiro';
+  const method = paymentMethods.find((m) => m.id === id);
+  if (!method) return 'Desconhecido';
+
+  const config = paymentTypeConfig[method.type] || paymentTypeConfig.default;
+  return `${config.icon} ${method.name}`;
+}
+// ===================================
 
 // Painel Global
 const summaryIncomeInline = document.getElementById('summary-income-inline');
@@ -418,10 +674,11 @@ async function autoRegisterCompany(type, name) {
 formPlanned.addEventListener('submit', async (e) => {
   e.preventDefault();
   const date = plannedDateInput.value;
-  const inputMonth = date.substring(0, 7);
   const currentViewMonth = getCurrentMonth();
 
-  if (inputMonth !== currentViewMonth) {
+  const inputMonth = date ? date.substring(0, 7) : currentViewMonth;
+
+  if (date && inputMonth !== currentViewMonth) {
     return alert(`A data do orçamento não pertence ao mês selecionado no topo (${currentViewMonth}).`);
   }
 
@@ -430,10 +687,15 @@ formPlanned.addEventListener('submit', async (e) => {
   const description = plannedDescriptionInput.value.trim();
   const amount = parseAmount(plannedAmountInput.value);
   const owner = plannedOwnerSelect.value;
+  const paymentMethodId = document.getElementById('planned-payment').value; // Captura ok
   const fixed = plannedFixedCheckbox.checked;
   const isStatic = plannedStaticCheckbox.checked;
 
-  if (!date || !category || !description || isNaN(amount)) return alert('Preencha data, categoria, descrição e valor.');
+  if (isStatic && !date) {
+    return alert('Para itens estáticos (auto-lançar), é obrigatório informar uma data.');
+  }
+
+  if (!category || !description || isNaN(amount)) return alert('Preencha categoria, descrição e valor.');
 
   plannedSubmitBtn.textContent = 'Salvando...';
   plannedSubmitBtn.disabled = true;
@@ -445,32 +707,42 @@ formPlanned.addEventListener('submit', async (e) => {
     oldItem = plannedItems.find((p) => p.id === editingPlannedId);
   }
 
-  const itemData = { date, category, description, amount, owner, fixed, isStatic, month };
+  const itemData = { date, category, description, amount, owner, paymentMethodId, fixed, isStatic, month };
   if (editingPlannedId !== null) itemData.id = editingPlannedId;
 
   await FinanceAPI.savePlanned(month, itemData);
 
   if (editingPlannedId === null) {
+    // Criação: Gera a Nota Fiscal APENAS se for Estático
     if (isStatic) {
-      const receiptData = { date: date, category, merchant: description, amount, owner, isStatic: true };
+      const receiptData = { date: date, category, merchant: description, amount, owner, paymentMethodId, isStatic: true };
       await FinanceAPI.saveReceipt(month, receiptData);
     }
   } else if (oldItem) {
-    const linkedReceipt = receipts.find((r) => r.date.startsWith(month) && r.category === oldItem.category && r.merchant === oldItem.description);
+    // Edição: Tenta achar uma Nota Fiscal vinculada que seja explicitamente Estática
+    const linkedReceipt = receipts.find((r) => r.date.startsWith(month) && r.category === oldItem.category && r.merchant === oldItem.description && r.isStatic);
 
     if (linkedReceipt) {
-      const updatedReceipt = {
-        id: linkedReceipt.id,
-        date: date,
-        category: category,
-        merchant: description,
-        amount: amount,
-        owner: owner,
-        isStatic: isStatic,
-      };
-      await FinanceAPI.saveReceipt(month, updatedReceipt);
+      if (isStatic) {
+        // Atualiza a nota existente se continua sendo estático
+        const updatedReceipt = {
+          id: linkedReceipt.id,
+          date: date || linkedReceipt.date,
+          category: category,
+          merchant: description,
+          amount: amount,
+          owner: owner,
+          paymentMethodId: paymentMethodId,
+          isStatic: true,
+        };
+        await FinanceAPI.saveReceipt(month, updatedReceipt);
+      } else {
+        // Se era estático e deixou de ser (apenas Fixo agora), DELETA a Nota Fiscal gerada automaticamente
+        await FinanceAPI.deleteReceipt(month, linkedReceipt.id);
+      }
     } else if (isStatic) {
-      const receiptData = { date: date, category, merchant: description, amount, owner, isStatic: true };
+      // Caso não existia nota (era só Fixo) e você ativou o "Estático" na edição
+      const receiptData = { date: date, category, merchant: description, amount, owner, paymentMethodId, isStatic: true };
       await FinanceAPI.saveReceipt(month, receiptData);
     }
   }
@@ -510,6 +782,7 @@ function startEditPlanned(id) {
   plannedDescriptionInput.value = item.description;
   plannedAmountInput.value = item.amount;
   plannedOwnerSelect.value = item.owner;
+  document.getElementById('planned-payment').value = item.paymentMethodId || 'dinheiro';
 
   plannedFixedCheckbox.checked = item.fixed;
   plannedStaticCheckbox.disabled = !item.fixed;
@@ -663,11 +936,12 @@ function renderPlannedItemsList(month) {
           item.className = 'receipt-item';
 
           const dateStr = p.date ? `${p.date.split('-').reverse().join('/').substring(0, 5)} • ` : '';
+          const payStr = ` • ${getPaymentName(p.paymentMethodId)}`;
 
           item.innerHTML = `
           <div class="receipt-main">
             <div class="receipt-line">${p.description}</div>
-            <div class="receipt-meta">${dateStr}Resp: ${p.owner}${p.fixed ? (p.isStatic ? ' • Fixo & Estático' : ' • Fixo') : ''}</div>
+            <div class="receipt-meta">${dateStr}Resp: ${p.owner}${payStr}${p.fixed ? (p.isStatic ? ' • Fixo & Estático' : ' • Fixo') : ''}</div>
           </div>
           <div class="receipt-right">
             <div class="receipt-amount">${formatCurrency(p.amount)}</div>
@@ -729,6 +1003,7 @@ formActual.addEventListener('submit', async (e) => {
   const merchant = actualMerchantInput.value.trim();
   const amount = parseAmount(actualAmountInput.value);
   const owner = actualOwnerSelect.value;
+  const paymentMethodId = document.getElementById('actual-payment').value;
   const observation = actualObservationInput.value.trim(); // PEGA A OBSERVAÇÃO
 
   if (!date || !category || !merchant || isNaN(amount)) return alert('Preencha data, categoria, nome e valor.');
@@ -739,7 +1014,7 @@ formActual.addEventListener('submit', async (e) => {
   await autoRegisterCompany(category, merchant);
 
   // ADICIONA A OBSERVAÇÃO NO OBJETO QUE VAI PRO BANCO
-  const itemData = { date, category, merchant, amount, owner, observation };
+  const itemData = { date, category, merchant, amount, owner, paymentMethodId, observation };
   if (editingReceiptId !== null) itemData.id = editingReceiptId;
 
   await FinanceAPI.saveReceipt(month, itemData);
@@ -776,6 +1051,7 @@ function startEditReceipt(id) {
   actualMerchantInput.value = r.merchant;
   actualAmountInput.value = r.amount;
   actualOwnerSelect.value = r.owner;
+  document.getElementById('actual-payment').value = r.paymentMethodId || 'dinheiro';
   actualObservationInput.value = r.observation || ''; // CARREGA A OBSERVAÇÃO
 
   if (getCategories().includes(r.category)) {
@@ -836,16 +1112,26 @@ function updateReceiptsView() {
 
           // Prepara o HTML da observação se ela existir
           const obsHtml = r.observation ? `<div style="font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">↳ ${r.observation}</div>` : '';
+          const payStr = ` • ${getPaymentName(r.paymentMethodId)}`;
+
+          // Identifica se é reembolso para ficar com a cor verde e tag
+          const isReimb = r.isReimbursement || r.amount < 0;
+          const amountColor = isReimb ? '#62c462' : '#f5f5f5';
+          const reimbBadge = isReimb ? ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Reembolso)</span>' : '';
+
+          // Botão de reembolso rápido (só aparece se não for um reembolso já)
+          const btnReembolsoHtml = !isReimb ? `<button class="action-btn" style="color: #62c462; border: 1px solid rgba(98, 196, 98, 0.3);" onclick="startReimbursement('${r.id}')" title="Reembolsar esta nota">🔄</button>` : '';
 
           item.innerHTML = `
           <div class="receipt-main">
-            <div class="receipt-line">${r.merchant} • ${r.category}</div>
+            <div class="receipt-line">${r.merchant} • ${r.category}${reimbBadge}</div>
             ${obsHtml}
-            <div class="receipt-meta" style="margin-top: 2px;">${r.date.split('-').reverse().join('/')} • ${r.owner}${r.isStatic ? ' • Estático' : ''}</div>
+            <div class="receipt-meta" style="margin-top: 2px;">${r.date.split('-').reverse().join('/')} • ${r.owner}${payStr}${r.isStatic ? ' • Estático' : ''}</div>
           </div>
           <div class="receipt-right">
-            <div class="receipt-amount">${formatCurrency(r.amount)}</div>
+            <div class="receipt-amount" style="color: ${amountColor};">${formatCurrency(r.amount)}</div>
             <div class="receipt-actions">
+              ${btnReembolsoHtml}
               <button class="action-btn" onclick="startEditReceipt('${r.id}')">Editar</button>
               <button class="action-btn danger" onclick="deleteReceipt('${r.id}')">Excluir</button>
             </div>
@@ -1300,6 +1586,8 @@ function updateDashboardView() {
                   amount: t.amount,
                   text: textToDisplay,
                   owner: t.owner || 'Ambos',
+                  paymentMethodId: t.paymentMethodId, // PUXANDO O CARTÃO
+                  isReimbursement: t.isReimbursement || t.amount < 0, // PUXANDO O REEMBOLSO
                 });
               });
             }
@@ -1310,10 +1598,15 @@ function updateDashboardView() {
 
           const obsLines = allTransactions
             .map((t) => {
-              const dateStr = t.date ? `<span style="color: #8e8eab; font-size: 0.68rem; margin-right: 4px;"> • ${t.date.split('-').reverse().join('/').substring(0, 5)} </span> ` : '';
+              const dateStr = t.date ? ` • ${t.date.split('-').reverse().join('/').substring(0, 5)}` : '';
               const ownerHtml = ` <span style="color: #8e8eab;">(${t.owner})</span>`;
+              const payStr = ` <span style="color: #8e8eab;">• ${getPaymentName(t.paymentMethodId)}</span>`;
 
-              return `<div style="margin-top: 6px; margin-bottom: 6px;"><span style="color: #c3c3d5;">↳ ${t.text}</span>${ownerHtml} <span style="opacity:0.6; font-size:0.65rem;">(${formatCurrency(t.amount)}) ${dateStr}</span></div>`;
+              const isReimb = t.isReimbursement;
+              const amountColor = isReimb ? '#62c462' : '#c3c3d5';
+              const reimbBadge = isReimb ? ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Reembolso)</span>' : '';
+
+              return `<div style="margin-top: 6px; margin-bottom: 6px;"><span style="color: #c3c3d5;">↳ ${t.text}${reimbBadge}</span>${ownerHtml}<span style="font-size: 0.7rem;">${payStr} <span style="color: #8e8eab;">${dateStr}</span></span> <span style="color: ${amountColor}; font-size:0.75rem; font-weight:500; margin-left: 4px;">(${formatCurrency(t.amount)})</span></div>`;
             })
             .join('');
 
@@ -1332,8 +1625,21 @@ function updateDashboardView() {
             </details>
           `;
         } else {
-          // Se for só uma nota sem observação, exibe direto sem setinha (Ex: CARRO)
-          tdItemName.innerHTML = `${item.name}${ownerHtml}`;
+          // Se for só uma nota sem observação, exibe direto sem setinha
+          let singleTx = null;
+          if (obsArray.length > 0 && obsArray[0].transactions && obsArray[0].transactions.length > 0) {
+            singleTx = obsArray[0].transactions[0];
+          }
+
+          let reimbBadge = '';
+          let payStr = '';
+          if (singleTx) {
+            const isReimb = singleTx.isReimbursement || singleTx.amount < 0;
+            if (isReimb) reimbBadge = ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold; margin-left: 4px;">(Reembolso)</span>';
+            payStr = ` <span style="font-size: 0.72rem; color: #8e8eab; margin-left: 4px;">• ${getPaymentName(singleTx.paymentMethodId)}</span>`;
+          }
+
+          tdItemName.innerHTML = `${item.name}${reimbBadge}${ownerHtml}${payStr}`;
         }
 
         const tdItemPrev = document.createElement('td');
@@ -1586,6 +1892,138 @@ function updateHistoricalChart() {
   }, 400);
 }
 
+// ===== Dashboard de Cartões de Crédito =====
+function updateCreditCardsDashboard() {
+  const month = getCurrentMonth();
+  const container = document.getElementById('credit-cards-dashboard-list');
+  const cardWrapper = document.getElementById('card-credit-cards');
+
+  if (!container || !cardWrapper || !month) return;
+
+  const creditCards = paymentMethods.filter((m) => m.type === 'credito');
+
+  if (creditCards.length === 0) {
+    cardWrapper.style.display = 'none';
+    return;
+  }
+
+  // LÓGICA NOVA: Calcula o mês anterior dinamicamente (Ex: se month é 2026-04, puxa 2026-03)
+  const [year, m] = month.split('-');
+  const prevDate = new Date(year, parseInt(m) - 2, 1);
+  const prevMonthStr = prevDate.getFullYear() + '-' + String(prevDate.getMonth() + 1).padStart(2, '0');
+
+  // Filtra as notas fiscais dos dois meses necessários
+  const currentMonthReceipts = receipts.filter((r) => r.date.startsWith(month));
+  const prevMonthReceipts = receipts.filter((r) => r.date.startsWith(prevMonthStr));
+
+  let hasAnySpending = false;
+  let html = '';
+
+  creditCards.forEach((card) => {
+    let currentInvoice = 0; // Fatura Atual (Final do mês passado + Início deste mês)
+    let nextInvoice = 0; // Próxima Fatura (Final deste mês)
+    let monthSpend = 0; // Quanto o cartão foi fisicamente passado no mês selecionado
+
+    // 1. Processa as compras do MÊS ATUAL
+    const cardCurrentReceipts = currentMonthReceipts.filter((r) => r.paymentMethodId === card.id);
+    cardCurrentReceipts.forEach((r) => {
+      monthSpend += r.amount;
+      const rDay = parseInt(r.date.split('-')[2]);
+
+      // Se a nota foi depois do dia de fechamento, vai pra próxima fatura
+      if (card.closing && rDay > card.closing) {
+        nextInvoice += r.amount;
+      } else {
+        currentInvoice += r.amount;
+      }
+    });
+
+    // 2. Processa as compras do MÊS ANTERIOR (A "rebarba" da fatura atual)
+    const cardPrevReceipts = prevMonthReceipts.filter((r) => r.paymentMethodId === card.id);
+    cardPrevReceipts.forEach((r) => {
+      const rDay = parseInt(r.date.split('-')[2]);
+      // Se comprou no mês passado DEPOIS do fechamento, a cobrança cai na fatura DESTE MÊS
+      if (card.closing && rDay > card.closing) {
+        currentInvoice += r.amount;
+      }
+    });
+
+    const visualTotal = currentInvoice + nextInvoice;
+
+    // Só exibe o cartão se tiver alguma fatura rolando ou se gastou algo no mês
+    if (visualTotal > 0 || monthSpend > 0) {
+      hasAnySpending = true;
+      const pCurrent = visualTotal > 0 ? (currentInvoice / visualTotal) * 100 : 0;
+      const pNext = visualTotal > 0 ? (nextInvoice / visualTotal) * 100 : 0;
+
+      html += `
+        <div style="background: linear-gradient(145deg, #1a1a2e, #12121c); border: 1px solid #35354a; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="background: rgba(253, 223, 123, 0.1); color: #fddf7b; padding: 6px; border-radius: 8px; font-size: 1.1rem; border: 1px solid rgba(253, 223, 123, 0.2);">💳</span>
+              <div>
+                <div style="font-weight: 600; color: #f5f5f5; font-size: 0.95rem;">${card.name}</div>
+                <div style="font-size: 0.72rem; color: #a6a6c0;">Fecha dia ${card.closing || '?'} • Vence dia ${card.due || '?'}</div>
+              </div>
+            </div>
+            <div style="text-align: right;">
+              <div style="font-size: 0.72rem; color: #a6a6c0;">Gasto no Mês</div>
+              <div style="font-weight: 700; color: #fddf7b; font-size: 1.05rem;">${formatCurrency(monthSpend)}</div>
+            </div>
+          </div>
+          
+          ${
+            card.closing
+              ? `
+          <div style="display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: #0b0b10; margin-top: 4px; border: 1px solid #27273a;">
+            ${pCurrent > 0 ? `<div style="width: ${pCurrent}%; background: #62c462;" title="Fatura Atual"></div>` : ''}
+            ${pNext > 0 ? `<div style="width: ${pNext}%; background: #f7c84a;" title="Próxima Fatura"></div>` : ''}
+          </div>
+          <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">
+            <span><strong style="color: #62c462;">■</strong> Fatura Atual: <span style="color: #f5f5f5;">${formatCurrency(currentInvoice)}</span></span>
+            <span><strong style="color: #f7c84a;">■</strong> Próx. Fatura: <span style="color: #f5f5f5;">${formatCurrency(nextInvoice)}</span></span>
+          </div>
+          `
+              : ''
+          }
+        </div>
+      `;
+    }
+  });
+
+  if (hasAnySpending) {
+    container.innerHTML = html;
+    cardWrapper.style.display = 'block';
+  } else {
+    cardWrapper.style.display = 'none';
+  }
+}
+
+// === Função de Reembolso Rápido (Espelhamento) ===
+function startReimbursement(id) {
+  const r = receipts.find((x) => x.id === id);
+  if (!r) return;
+
+  // 1. Abre o painel de Reembolso e fecha os outros
+  document.getElementById('income-panel').style.display = 'none';
+  document.getElementById('payments-panel').style.display = 'none';
+  document.getElementById('reimbursement-panel').style.display = 'block';
+
+  // 2. Preenche os campos copiando os dados da nota original
+  document.getElementById('reimb-date').value = r.date;
+  document.getElementById('reimb-category').value = r.category;
+  document.getElementById('reimb-merchant').value = r.merchant;
+  document.getElementById('reimb-amount').value = Math.abs(r.amount);
+  document.getElementById('reimb-owner').value = r.owner || 'Ambos';
+  document.getElementById('reimb-payment').value = r.paymentMethodId || 'dinheiro';
+
+  // 3. Adiciona uma observação automática para rastreio
+  document.getElementById('reimb-observation').value = `Reembolso ref. à nota de ${r.date.split('-').reverse().join('/').substring(0, 5)}`;
+
+  // 4. Rola a tela para o topo para o usuário ver o formulário preenchido
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
 // ===== Refresh geral =====
 
 function refreshAll() {
@@ -1636,6 +2074,7 @@ function refreshAll() {
   updateGlobalSummaries();
   updateReceiptsView();
   updateDashboardView();
+  updateCreditCardsDashboard(); // <--- CHAMADA NOVA AQUI
   updateChartsView();
   updateHistoricalChart();
 }
@@ -1654,6 +2093,13 @@ function syncData(month) {
 
   btnLoadMonth.textContent = 'Sincronizando...';
   btnLoadMonth.disabled = true;
+
+  // NOVO: Escuta Cartões/Pagamentos
+  FinanceAPI.listenPaymentMethods((methods) => {
+    paymentMethods = methods || [];
+    renderPaymentMethodsList();
+    updatePaymentSelects();
+  });
 
   // 1. Escuta Empresas em tempo real
   FinanceAPI.listenCompanies((comps) => {

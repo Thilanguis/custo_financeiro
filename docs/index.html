@@ -86,9 +86,55 @@
             <div style="display: flex; gap: 8px">
               <button id="btn-load-month" class="action-btn" style="height: 35px; padding: 0 15px">Carregar</button>
               <button id="btn-toggle-income" class="action-btn" style="height: 35px; padding: 0 12px" title="Editar Rendas">⚙️ Rendas</button>
+              <button id="btn-toggle-payments" class="action-btn" style="height: 35px; padding: 0 12px" title="Gerenciar Cartões">💳 Cartões</button>
+              <button id="btn-toggle-reimbursement" class="action-btn" style="height: 35px; padding: 0 12px" title="Lançar Reembolso">🔄 Reembolso</button>
             </div>
           </div>
 
+          <div id="reimbursement-panel" style="display: none; margin-top: 12px; border-top: 1px solid #252537; padding-top: 12px; animation: fadeIn 0.15s ease-out">
+            <h3 style="font-size: 0.95rem; margin-top: 0; color: #62c462">Lançar Reembolso (Retorno de Dinheiro)</h3>
+            <form id="form-reimbursement" style="margin-bottom: 12px">
+              <div class="field-row">
+                <div class="field">
+                  <label>Data</label>
+                  <input type="date" id="reimb-date" required />
+                </div>
+                <div class="field">
+                  <label>Categoria Abatida</label>
+                  <input type="text" id="reimb-category" placeholder="Saúde, Supermercado..." required />
+                </div>
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <label>Origem / Empresa</label>
+                  <input type="text" id="reimb-merchant" placeholder="Ex: Seguradora, Amigo..." required />
+                </div>
+                <div class="field">
+                  <label>Valor (CAD)</label>
+                  <input type="number" step="0.01" id="reimb-amount" required />
+                </div>
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <label>Responsável</label>
+                  <select id="reimb-owner">
+                    <option value="Gabriel">Gabriel</option>
+                    <option value="Luana">Luana</option>
+                    <option value="Ambos">Ambos</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Onde Caiu?</label>
+                  <select id="reimb-payment"></select>
+                </div>
+                <div class="field" style="flex: 2">
+                  <label>Observação (Opcional)</label>
+                  <input type="text" id="reimb-observation" />
+                </div>
+              </div>
+              <button type="submit" class="btn-primary" style="margin-top: 4px; background: linear-gradient(135deg, #62c462 0%, #3e8e41 100%); color: #fff">Salvar Reembolso</button>
+            </form>
+          </div>
           <div id="income-panel" style="display: none; margin-top: 12px; border-top: 1px solid #252537; padding-top: 12px; animation: fadeIn 0.15s ease-out">
             <div class="field-row">
               <div class="field">
@@ -101,6 +147,37 @@
               </div>
             </div>
             <button id="btn-save-income" class="btn-primary" style="margin-top: 4px">Salvar Rendas</button>
+          </div>
+
+          <div id="payments-panel" style="display: none; margin-top: 12px; border-top: 1px solid #252537; padding-top: 12px; animation: fadeIn 0.15s ease-out">
+            <h3 style="font-size: 0.95rem; margin-top: 0">Cadastrar Cartão</h3>
+            <form id="form-payment" style="margin-bottom: 12px">
+              <div class="field-row">
+                <div class="field" style="flex: 2">
+                  <label>Nome / Banco / Final</label>
+                  <input type="text" id="pay-name" placeholder="Ex: Nubank Crédito" required />
+                </div>
+                <div class="field" style="flex: 1">
+                  <label>Tipo</label>
+                  <select id="pay-type">
+                    <option value="credito">Crédito</option>
+                    <option value="debito">Débito</option>
+                  </select>
+                </div>
+              </div>
+              <div class="field-row" id="pay-credit-fields">
+                <div class="field">
+                  <label>Dia Fechamento</label>
+                  <input type="number" id="pay-closing" min="1" max="31" placeholder="Ex: 15" />
+                </div>
+                <div class="field">
+                  <label>Dia Vencimento</label>
+                  <input type="number" id="pay-due" min="1" max="31" placeholder="Ex: 22" />
+                </div>
+              </div>
+              <button type="submit" class="btn-primary" style="margin-top: 4px">Salvar Cartão</button>
+            </form>
+            <div id="payments-list" class="receipts-list" style="max-height: 200px"></div>
           </div>
         </div>
       </section>
@@ -117,8 +194,8 @@
           <form id="form-planned">
             <div class="field-row">
               <div class="field">
-                <label>Data</label>
-                <input type="date" id="planned-date" required />
+                <label>Data (Opcional)</label>
+                <input type="date" id="planned-date" />
               </div>
               <div class="field">
                 <label>Categoria</label>
@@ -143,6 +220,10 @@
                   <option value="Luana">Luana</option>
                   <option value="Ambos">Ambos</option>
                 </select>
+              </div>
+              <div class="field">
+                <label>Pagamento</label>
+                <select id="planned-payment"></select>
               </div>
               <div class="field checkbox-field" style="display: flex; flex-direction: column; gap: 8px; justify-content: center">
                 <label>
@@ -210,6 +291,10 @@
                   <option value="Ambos">Ambos</option>
                 </select>
               </div>
+              <div class="field">
+                <label>Pagamento</label>
+                <select id="actual-payment"></select>
+              </div>
               <div class="field" style="flex: 2">
                 <label>Observação (Opcional)</label>
                 <input type="text" id="actual-observation" />
@@ -239,6 +324,12 @@
           <div id="owner-breakdown-list" class="receipts-list" style="margin-top: 0; max-height: none"></div>
         </div>
 
+        <div class="card" id="card-credit-cards" style="display: none">
+          <div class="list-header-row" style="margin-bottom: 12px">
+            <h3>Faturas de Cartões (Lançamentos do Mês)</h3>
+          </div>
+          <div id="credit-cards-dashboard-list" style="display: flex; flex-direction: column; gap: 10px"></div>
+        </div>
         <div class="card">
           <div class="list-header-row">
             <h3>Comparativo Orçamento x Real</h3>

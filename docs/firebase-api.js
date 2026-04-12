@@ -45,6 +45,21 @@ window.FinanceAPI = {
     await db.collection('familias').doc(this.familyId).collection('configuracoes').doc('empresas').set(companyDirectory);
   },
 
+  // ===== MÉTODOS DE PAGAMENTO (CARTÕES) =====
+  listenPaymentMethods(callback) {
+    const unsub = db
+      .collection('familias')
+      .doc(this.familyId)
+      .collection('configuracoes')
+      .doc('pagamentos')
+      .onSnapshot((doc) => callback(doc.exists ? doc.data().methods || [] : []));
+    this.unsubscribers.push(unsub);
+  },
+
+  async savePaymentMethods(methods) {
+    await db.collection('familias').doc(this.familyId).collection('configuracoes').doc('pagamentos').set({ methods });
+  },
+
   // ===== RENDAS =====
   listenIncome(month, callback) {
     const unsub = db

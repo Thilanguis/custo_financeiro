@@ -128,7 +128,9 @@ formReimbursement.addEventListener('submit', async (e) => {
   const paymentMethodId = document.getElementById('reimb-payment').value;
   const observation = document.getElementById('reimb-observation').value.trim();
 
-  if (!date || !category || !merchant || isNaN(amount)) return alert('Preencha data, categoria, origem e valor.');
+  if (!date || !category || !merchant || isNaN(amount) || !paymentMethodId) {
+    return alert('Preencha data, categoria, origem, valor e selecione onde caiu o reembolso.');
+  }
 
   const submitBtn = formReimbursement.querySelector('button[type="submit"]');
   submitBtn.textContent = 'Salvando...';
@@ -291,7 +293,11 @@ function updatePaymentSelects() {
   const selectPlanned = document.getElementById('planned-payment');
   const selectActual = document.getElementById('actual-payment');
 
-  let optionsHtml = `<option value="dinheiro">💵 Dinheiro</option>`;
+  // Adiciona a opção vazia padrão para forçar a escolha do usuário
+  let optionsHtml = `
+    <option value="" disabled selected>Selecione o pagamento...</option>
+    <option value="dinheiro">💵 Dinheiro</option>
+  `;
 
   // 1. Agrupa os métodos dinamicamente pelo 'type'
   const groupedMethods = paymentMethods.reduce((groups, method) => {
@@ -704,7 +710,9 @@ formPlanned.addEventListener('submit', async (e) => {
     return alert('Para itens estáticos (auto-lançar), é obrigatório informar uma data.');
   }
 
-  if (!category || !description || isNaN(amount)) return alert('Preencha categoria, descrição e valor.');
+  if (!category || !description || isNaN(amount) || !paymentMethodId) {
+    return alert('Preencha categoria, descrição, valor e selecione o pagamento.');
+  }
 
   plannedSubmitBtn.textContent = 'Salvando...';
   plannedSubmitBtn.disabled = true;
@@ -1013,7 +1021,9 @@ formActual.addEventListener('submit', async (e) => {
   const paymentMethodId = document.getElementById('actual-payment').value;
   const observation = actualObservationInput.value.trim();
 
-  if (!date || !category || !merchant || isNaN(amount)) return alert('Preencha data, categoria, nome e valor.');
+  if (!date || !category || !merchant || isNaN(amount) || !paymentMethodId) {
+    return alert('Preencha data, categoria, nome, valor e selecione o pagamento.');
+  }
 
   actualSubmitBtn.textContent = 'Salvando...';
   actualSubmitBtn.disabled = true;
@@ -2241,22 +2251,109 @@ function initAppUI() {
   syncData(m);
 }
 
+// ===== Helpers para Biometria (WebAuthn) =====
+function bufferToBase64URL(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let str = '';
+  for (const char of bytes) str += String.fromCharCode(char);
+  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+function base64URLToBuffer(base64URL) {
+  const base64 = base64URL.replace(/-/g, '+').replace(/_/g, '/');
+  const padLen = (4 - (base64.length % 4)) % 4;
+  const str = atob(base64.padEnd(base64.length + padLen, '='));
+  const buffer = new ArrayBuffer(str.length);
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < str.length; i++) bytes[i] = str.charCodeAt(i);
+  return buffer;
+}
+
+// Cadastra a digital no dispositivo pela primeira vez
+async function registerBiometrics(userEmail) {
+  if (!window.PublicKeyCredential) return; // Navegador não suporta
+
+  try {
+    const options = {
+      challenge: new Uint8Array(32), // Num ambiente real, vem do backend
+      rp: { name: 'Controle Financeiro', id: window.location.hostname },
+      user: { id: new Uint8Array(16), name: userEmail, displayName: userEmail },
+      pubKeyCredParams: [
+        { alg: -7, type: 'public-key' },
+        { alg: -257, type: 'public-key' },
+      ],
+      authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required' },
+      timeout: 60000,
+    };
+
+    const credential = await navigator.credentials.create({ publicKey: options });
+    localStorage.setItem('biometricCredentialId', bufferToBase64URL(credential.rawId));
+    console.log('Biometria cadastrada com sucesso.');
+  } catch (err) {
+    console.warn('Registro biométrico ignorado ou falhou:', err);
+  }
+}
+
+// Solicita a digital para liberar a tela
+async function verifyBiometrics() {
+  const credIdStr = localStorage.getItem('biometricCredentialId');
+  if (!credIdStr) return true; // Se não tem digital salva, libera direto
+
+  const biometricOverlay = document.getElementById('biometric-overlay');
+  biometricOverlay.style.display = 'flex';
+
+  try {
+    const options = {
+      challenge: new Uint8Array(32),
+      allowCredentials: [{ id: base64URLToBuffer(credIdStr), type: 'public-key' }],
+      userVerification: 'required',
+      timeout: 60000,
+    };
+
+    await navigator.credentials.get({ publicKey: options });
+    biometricOverlay.style.display = 'none'; // Sucesso: esconde a tela de bloqueio
+    return true;
+  } catch (err) {
+    console.error('Falha na biometria:', err);
+    return false; // Mantém bloqueado
+  }
+}
+
+// Tenta desbloquear ao clicar no botão caso a primeira tentativa automática falhe
+document.getElementById('btn-unlock-biometrics')?.addEventListener('click', verifyBiometrics);
+
 // Escuta mudanças no Firebase Auth
-FinanceAPI.onAuthStateChanged((user) => {
+FinanceAPI.onAuthStateChanged(async (user) => {
+  const userDisplay = document.getElementById('user-display');
+  const biometricOverlay = document.getElementById('biometric-overlay');
+
   if (user) {
-    // Logado
+    // 1. Oculta login e mostra botão de sair + email
     loginOverlay.style.display = 'none';
     btnLogout.style.display = 'block';
+    if (userDisplay) userDisplay.textContent = user.email;
 
-    // Inicia a UI agora que estamos autenticados
+    // 2. Fluxo de Biometria
+    const hasBiometrics = localStorage.getItem('biometricCredentialId');
+
+    if (!hasBiometrics) {
+      // Primeira vez após login com senha: pede pra cadastrar a digital
+      await registerBiometrics(user.email);
+    } else {
+      // Já tem cadastro: trava a tela e pede a digital antes de mostrar os dados
+      const unlocked = await verifyBiometrics();
+      if (!unlocked) return; // Para a execução se errar/cancelar a digital
+    }
+
+    // 3. Libera o carregamento dos dados após biometria OK
     initAppUI();
-
-    // O próximo passo será carregar os dados reais do banco aqui.
-    console.log('Usuário logado:', user.email);
+    console.log('Usuário logado e verificado:', user.email);
   } else {
     // Deslogado
     loginOverlay.style.display = 'flex';
     btnLogout.style.display = 'none';
+    if (userDisplay) userDisplay.textContent = '';
+    if (biometricOverlay) biometricOverlay.style.display = 'none';
   }
 });
 

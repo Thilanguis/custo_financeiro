@@ -676,27 +676,71 @@ button:active {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .list-header-row h3 {
   margin: 0;
 }
 
+/* Responsividade: no celular, o título fica em cima e os botões embaixo */
+@media (max-width: 600px) {
+  .list-header-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .header-actions {
+    width: 100%;
+  }
+}
+
 .header-actions {
   display: flex;
-  gap: 6px;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* ISSO AQUI ESTAVA FALTANDO NO SEU ARQUIVO E QUEBROU O SELECT */
+.filter-select {
+  background: #1a1a2e;
+  color: #f5f5f5;
+  border: 1px solid #35354a;
+  border-radius: 20px;
+  padding: 5px 32px 5px 12px;
+  font-size: 0.75rem;
+  outline: none;
+  cursor: pointer;
+  transition: all 0.2s;
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a6a6c0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 14px;
+}
+
+.filter-select:hover,
+.filter-select:focus {
+  border-color: #fddf7b;
+  background-color: #252540;
 }
 
 .header-actions .action-btn {
-  background: #27273a;
+  background: #1a1a2e;
   color: #c3c3d5;
-  padding: 4px 10px;
+  border: 1px solid #35354a;
+  padding: 5px 12px;
+  border-radius: 20px;
 }
 
 .header-actions .action-btn:hover {
-  background: #35354a;
-  color: #fff;
+  background: #252540;
+  color: #f5f5f5;
+  border-color: #4a4a6a;
 }
 
 /* Totalizador no final das listas */

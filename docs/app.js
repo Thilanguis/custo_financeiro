@@ -856,6 +856,49 @@ async function deleteReceipt(id) {
   if (editingReceiptId === id) resetReceiptForm();
 }
 
+// ===== Estado de Ordenação Dinâmica (Linha 551 aprox.) =====
+let plannedSortType = 'date';
+let plannedSortOrder = 'desc';
+
+let receiptsSortType = 'date';
+let receiptsSortOrder = 'desc';
+
+// No Dashboard, como as categorias são fixas, mantemos por Nome ou Valor Real
+let dashSortType = 'actual';
+let dashSortOrder = 'desc';
+
+// Listeners blindados
+document.getElementById('sort-planned-type')?.addEventListener('change', (e) => {
+  plannedSortType = e.target.value;
+  renderPlannedItemsList(getCurrentMonth());
+});
+document.getElementById('btn-sort-planned-order')?.addEventListener('click', (e) => {
+  plannedSortOrder = plannedSortOrder === 'asc' ? 'desc' : 'asc';
+  e.target.textContent = plannedSortOrder === 'asc' ? '⬆️' : '⬇️';
+  renderPlannedItemsList(getCurrentMonth());
+});
+
+document.getElementById('sort-receipts-type')?.addEventListener('change', (e) => {
+  receiptsSortType = e.target.value;
+  updateReceiptsView();
+});
+document.getElementById('btn-sort-receipts-order')?.addEventListener('click', (e) => {
+  receiptsSortOrder = receiptsSortOrder === 'asc' ? 'desc' : 'asc';
+  e.target.textContent = receiptsSortOrder === 'asc' ? '⬆️' : '⬇️';
+  updateReceiptsView();
+});
+
+document.getElementById('sort-dash-type')?.addEventListener('change', (e) => {
+  dashSortType = e.target.value;
+  updateDashboardView();
+});
+document.getElementById('btn-sort-dash-order')?.addEventListener('click', (e) => {
+  dashSortOrder = dashSortOrder === 'asc' ? 'desc' : 'asc';
+  e.target.textContent = dashSortOrder === 'asc' ? '⬆️' : '⬇️';
+  updateDashboardView();
+});
+// =========================================
+
 // ===== Lógica Abrir/Fechar Tudo =====
 const btnExpandPlanned = document.getElementById('btn-expand-planned');
 const btnCollapsePlanned = document.getElementById('btn-collapse-planned');
@@ -926,7 +969,23 @@ function renderPlannedItemsList(month) {
     .sort()
     .forEach((cat) => {
       // Ordena do valor mais alto para o mais baixo
-      const groupItems = grouped[cat].sort((a, b) => b.amount - a.amount);
+      const groupItems = grouped[cat].sort((a, b) => {
+        let valA, valB;
+
+        if (receiptsSortType === 'amount') {
+          valA = a.amount;
+          valB = b.amount;
+        } else if (receiptsSortType === 'date') {
+          valA = a.date;
+          valB = b.date;
+        } else {
+          valA = a.merchant.toLowerCase();
+          valB = b.merchant.toLowerCase();
+        }
+
+        if (receiptsSortOrder === 'asc') return valA > valB ? 1 : -1;
+        return valA < valB ? 1 : -1;
+      });
       const isOpen = openPlannedCats.has(cat);
       const catTotal = groupItems.reduce((acc, curr) => acc + curr.amount, 0);
 
@@ -1148,7 +1207,16 @@ function updateReceiptsView() {
     .sort()
     .forEach((cat) => {
       // Ordena do valor mais alto para o mais baixo (ignorando a data)
-      const groupItems = grouped[cat].sort((a, b) => b.amount - a.amount);
+      const groupItems = grouped[cat].sort((a, b) => {
+        let valA = a[receiptsSortType] || '';
+        let valB = b[receiptsSortType] || '';
+        if (typeof valA === 'string') valA = valA.toLowerCase();
+        if (typeof valB === 'string') valB = valB.toLowerCase();
+
+        if (valA < valB) return receiptsSortOrder === 'asc' ? -1 : 1;
+        if (valA > valB) return receiptsSortOrder === 'asc' ? 1 : -1;
+        return 0;
+      });
       const isOpen = openReceiptCats.has(cat);
       const catTotal = groupItems.reduce((acc, curr) => acc + curr.amount, 0);
 
@@ -1462,12 +1530,12 @@ function updateDashboardView() {
 
     const key = makeKey(p.category, p.description);
     if (!mapCat[p.category].items.has(key)) {
-      // A CORREÇÃO ESTÁ AQUI: Adicionei o obsList: [] na criação do item previsto também
-      mapCat[p.category].items.set(key, { name: p.description, planned: 0, actual: 0, obsList: [], owners: new Set() });
+      mapCat[p.category].items.set(key, { name: p.description, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: p.date || '' });
     }
     const item = mapCat[p.category].items.get(key);
     item.planned += p.amount;
     if (p.owner) item.owners.add(p.owner);
+    if (p.date && (!item.maxDate || p.date > item.maxDate)) item.maxDate = p.date;
   });
 
   // Agrupa os reais
@@ -1477,11 +1545,12 @@ function updateDashboardView() {
 
     const key = makeKey(r.category, r.merchant);
     if (!mapCat[r.category].items.has(key)) {
-      mapCat[r.category].items.set(key, { name: r.merchant, planned: 0, actual: 0, obsList: [], owners: new Set() });
+      mapCat[r.category].items.set(key, { name: r.merchant, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: r.date || '' });
     }
     const item = mapCat[r.category].items.get(key);
     item.actual += r.amount;
     if (r.owner) item.owners.add(r.owner);
+    if (r.date && (!item.maxDate || r.date > item.maxDate)) item.maxDate = r.date;
 
     // Salva na lista de observações SEPARANDO POR RESPONSÁVEL
     const obsText = r.observation ? r.observation.trim() : 'Sem observação';
@@ -1583,7 +1652,26 @@ function updateDashboardView() {
 
     // Linhas de Detalhe (Filhos)
     if (isOpen) {
-      const items = Array.from(data.items.values()).sort((a, b) => a.name.localeCompare(b.name));
+      const items = Array.from(data.items.values()).sort((a, b) => {
+        let valA, valB;
+        if (dashSortType === 'diff') {
+          valA = Math.round((a.planned - a.actual) * 100) / 100;
+          valB = Math.round((b.planned - b.actual) * 100) / 100;
+        } else if (dashSortType === 'date') {
+          valA = a.maxDate || '';
+          valB = b.maxDate || '';
+        } else {
+          valA = a[dashSortType];
+          valB = b[dashSortType];
+        }
+
+        if (typeof valA === 'string') valA = valA.toLowerCase();
+        if (typeof valB === 'string') valB = valB.toLowerCase();
+
+        if (valA < valB) return dashSortOrder === 'asc' ? -1 : 1;
+        if (valA > valB) return dashSortOrder === 'asc' ? 1 : -1;
+        return 0;
+      });
       items.forEach((item) => {
         // CORREÇÃO: Arredondamento nos itens filhos também
         const diffItem = Math.round((item.planned - item.actual) * 100) / 100;
@@ -2328,10 +2416,19 @@ FinanceAPI.onAuthStateChanged(async (user) => {
   const biometricOverlay = document.getElementById('biometric-overlay');
 
   if (user) {
-    // 1. Oculta login e mostra botão de sair + email
+    // 1. Oculta login e mostra botão de sair + nome
     loginOverlay.style.display = 'none';
     btnLogout.style.display = 'block';
-    if (userDisplay) userDisplay.textContent = user.email;
+    if (userDisplay) {
+      let nome = user.displayName;
+      if (!nome) {
+        const emailLower = user.email.toLowerCase();
+        if (emailLower.includes('gabriel')) nome = 'Gabriel';
+        else if (emailLower.includes('luana')) nome = 'Luana';
+        else nome = user.email.split('@')[0];
+      }
+      userDisplay.textContent = `👤 ${nome}`;
+    }
 
     // 2. Fluxo de Biometria
     const hasBiometrics = localStorage.getItem('biometricCredentialId');

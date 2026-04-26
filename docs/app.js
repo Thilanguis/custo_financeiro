@@ -1442,23 +1442,17 @@ function updateDashboardView() {
               ${pLaz > 0 ? `<div style="width: ${pLaz}%; background: #ff7b7b;" title="Lazer e Outros: ${formatCurrency(totLaz)}"></div>` : ''}
             </div>
 
-            <div style="display: flex; width: 100%; margin-bottom: 8px; font-size: 0.8rem;">
-              <div style="width: ${pGastoTotal}%; border-top: 2px dashed #ff7b7b; padding-top: 4px;">
-                <span style="color: #ff7b7b; font-weight: 600; white-space: nowrap;">Gasto: ${formatCurrency(totalReal)}</span>
-              </div>
+            <div style="display: flex; width: 100%;">
+              <div style="width: ${pGastoTotal}%; border-top: 2px dashed #ff7b7b;"></div>
+              ${freeReal > 0 ? `<div style="width: ${pLivreTotal}%; border-top: 2px solid #62c462;"></div>` : ''}
+            </div>
+            <div style="display: flex; justify-content: space-between; width: 100%; margin-bottom: 8px; font-size: 0.8rem; padding-top: 4px; gap: 8px;">
+              <span style="color: #ff7b7b; font-weight: 600; white-space: nowrap;">Gasto: ${formatCurrency(totalReal)}</span>
               ${
                 freeReal > 0
-                  ? `
-              <div style="width: ${pLivreTotal}%; border-top: 2px solid #62c462; padding-top: 4px; text-align: right;">
-                <span style="color: #62c462; font-weight: 600; white-space: nowrap;">Livre: ${formatCurrency(freeReal)}</span>
-              </div>
-              `
+                  ? `<span style="color: #62c462; font-weight: 600; white-space: nowrap; text-align: right;">Livre: ${formatCurrency(freeReal)}</span>`
                   : freeReal < 0
-                    ? `
-              <div style="width: ${pLivreTotal}%; padding-top: 4px; text-align: right; margin-left: auto;">
-                <span style="color: #ff7b7b; font-weight: 600; white-space: nowrap;">Estouro: ${formatCurrency(freeReal)}</span>
-              </div>
-              `
+                    ? `<span style="color: #ff7b7b; font-weight: 600; white-space: nowrap; text-align: right;">Estouro: ${formatCurrency(freeReal)}</span>`
                     : ''
               }
             </div>

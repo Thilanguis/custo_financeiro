@@ -2414,6 +2414,13 @@ document.getElementById('btn-unlock-biometrics')?.addEventListener('click', veri
 FinanceAPI.onAuthStateChanged(async (user) => {
   const userDisplay = document.getElementById('user-display');
   const biometricOverlay = document.getElementById('biometric-overlay');
+  const globalLoader = document.getElementById('global-loader');
+
+  // Tira o loader de transição da frente suavemente
+  if (globalLoader) {
+    globalLoader.style.opacity = '0';
+    setTimeout(() => (globalLoader.style.display = 'none'), 300);
+  }
 
   if (user) {
     // 1. Oculta login e mostra botão de sair + nome

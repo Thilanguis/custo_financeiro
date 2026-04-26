@@ -790,3 +790,19 @@ button:active {
   color: #fddf7b;
   font-size: 0.95rem;
 }
+
+/* ===== Loader Global ===== */
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(253, 223, 123, 0.2);
+  border-top-color: #fddf7b;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -1,11 +1,97 @@
+// ===== UI: Notificações e Modais Customizados =====
+
+function showToast(message, type = 'info') {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(() => {
+    if (toast.parentNode) toast.remove();
+  }, 3000);
+}
+
+function showConfirm(message, isDanger = false) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'custom-modal-overlay';
+    overlay.innerHTML = `
+      <div class="custom-modal">
+        <p>${message.replace(/\n/g, '<br>')}</p>
+        <div class="custom-modal-actions">
+          <button class="custom-modal-btn cancel">Cancelar</button>
+          <button class="custom-modal-btn ${isDanger ? 'danger' : 'confirm'}">Confirmar</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    void overlay.offsetWidth; // Reflow
+    overlay.classList.add('active');
+
+    const btnCancel = overlay.querySelector('.cancel');
+    const btnConfirm = overlay.querySelector('.confirm, .danger');
+
+    const close = (result) => {
+      overlay.classList.remove('active');
+      setTimeout(() => overlay.remove(), 200);
+      resolve(result);
+    };
+
+    btnCancel.onclick = () => close(false);
+    btnConfirm.onclick = () => close(true);
+  });
+}
+
+function showPrompt(message, defaultValue = '') {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'custom-modal-overlay';
+    overlay.innerHTML = `
+      <div class="custom-modal">
+        <p>${message.replace(/\n/g, '<br>')}</p>
+        <input type="text" id="prompt-input" value="${defaultValue}" />
+        <div class="custom-modal-actions">
+          <button class="custom-modal-btn cancel">Cancelar</button>
+          <button class="custom-modal-btn confirm">OK</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const input = overlay.querySelector('#prompt-input');
+    input.focus();
+    input.setSelectionRange(0, input.value.length);
+
+    void overlay.offsetWidth; // Reflow
+    overlay.classList.add('active');
+
+    const btnCancel = overlay.querySelector('.cancel');
+    const btnConfirm = overlay.querySelector('.confirm');
+
+    const close = (result) => {
+      overlay.classList.remove('active');
+      setTimeout(() => overlay.remove(), 200);
+      resolve(result);
+    };
+
+    btnCancel.onclick = () => close(null);
+    btnConfirm.onclick = () => close(input.value);
+    input.onkeydown = (e) => {
+      if (e.key === 'Enter') close(input.value);
+      if (e.key === 'Escape') close(null);
+    };
+  });
+}
+
 // ===== Estado em memória =====
 
-const plannedItems = []; // {id, month, category, description, amount, owner, fixed}
-const receipts = []; // {id, date, category, merchant, amount, owner, fixed}
-const incomes = []; // {month, owner, amount}
-let paymentMethods = []; // Puxado do Firebase
+const plannedItems = [];
+const receipts = [];
+const incomes = [];
+let paymentMethods = [];
 
-// Memória para não resetar o agrupamento ao adicionar/excluir item (Padrão: tudo fechado)
 const openPlannedCats = new Set();
 const openReceiptCats = new Set();
 const openDashboardCats = new Set();
@@ -14,7 +100,6 @@ const openOwnerCats = new Set();
 let nextId = 1;
 const getNextId = () => nextId++;
 
-// Categorias e Empresas unificadas e dinâmicas
 const companyDirectory = {
   Transporte: ['STM', 'UBER'],
   Supermercado: ['MARCHE SA', 'WALMART', 'SUPER C', 'MAXI', 'MARCHE DOMAINE', 'IGA', 'COSTCO', 'PROVIGO', 'SAQ', 'MARCHE BRESILIEN', 'BULKBARN', 'METRO', 'ADONIS', 'T&T', 'KIMPHAY', 'MERCADO'],
@@ -27,17 +112,15 @@ const companyDirectory = {
   'Cuidados pessoais': ['CABELO', 'UNHA', 'PHARMAPRIX', 'JEAN COUTO', 'ACADEMIA', 'REMÉDIO', 'MASSAGEM', 'MÉDICO', 'VETERINÁRIO'],
 };
 
-// Helper dinâmico
 function getCategories() {
   return Object.keys(companyDirectory);
 }
 
 // ===== Utilitários =====
 
-// Formata como "CAD 1.234,56"
 function formatCurrency(value) {
   const n = Number(value) || 0;
-  const fixed = n.toFixed(2); // "1234.56"
+  const fixed = n.toFixed(2);
   const [intPart, decPart] = fixed.split('.');
   const withThousands = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   return 'CAD ' + withThousands + ',' + decPart;
@@ -48,7 +131,6 @@ function parseAmount(str) {
   return parseFloat(String(str).replace(',', '.'));
 }
 
-// Retorna a data respeitando o fuso horário local (Quebec/Brasil)
 function getLocalDateString() {
   const d = new Date();
   const offset = d.getTimezoneOffset() * 60000;
@@ -56,7 +138,7 @@ function getLocalDateString() {
 }
 
 function getCurrentMonthISO() {
-  return getLocalDateString().slice(0, 7); // AAAA-MM
+  return getLocalDateString().slice(0, 7);
 }
 
 function makeKey(category, description) {
@@ -124,7 +206,7 @@ formReimbursement.addEventListener('submit', async (e) => {
   const currentViewMonth = getCurrentMonth();
 
   if (inputMonth !== currentViewMonth) {
-    return alert(`A data do reembolso não pertence ao mês selecionado no topo (${currentViewMonth}).`);
+    return showToast(`A data do reembolso não pertence ao mês selecionado (${currentViewMonth}).`, 'error');
   }
 
   const category = document.getElementById('reimb-category').value.trim();
@@ -135,7 +217,7 @@ formReimbursement.addEventListener('submit', async (e) => {
   const observation = document.getElementById('reimb-observation').value.trim();
 
   if (!date || !category || !merchant || isNaN(amount) || !paymentMethodId) {
-    return alert('Preencha data, categoria, origem, valor e selecione onde caiu o reembolso.');
+    return showToast('Preencha data, categoria, origem, valor e selecione onde caiu.', 'error');
   }
 
   const submitBtn = formReimbursement.querySelector('button[type="submit"]');
@@ -144,7 +226,6 @@ formReimbursement.addEventListener('submit', async (e) => {
 
   await autoRegisterCompany(category, merchant);
 
-  // SACADA DE MESTRE: Math.abs garante o número positivo, e o "-" na frente converte pra negativo!
   const itemData = {
     date,
     category,
@@ -162,8 +243,8 @@ formReimbursement.addEventListener('submit', async (e) => {
   submitBtn.disabled = false;
 
   formReimbursement.reset();
-  document.getElementById('reimb-date').value = date; // Mantém a data pra facilitar lançamentos múltiplos
-  alert('Reembolso registrado com sucesso!');
+  document.getElementById('reimb-date').value = date;
+  showToast('Reembolso registrado com sucesso!', 'success');
 });
 
 // === LÓGICA DO PAINEL DE CARTÕES ===
@@ -190,7 +271,6 @@ formPayment.addEventListener('submit', async (e) => {
   let updatedMethods = [...paymentMethods];
 
   if (editingPaymentId) {
-    // Modo Edição
     const idx = updatedMethods.findIndex((m) => m.id === editingPaymentId);
     if (idx !== -1) {
       updatedMethods[idx] = {
@@ -202,7 +282,6 @@ formPayment.addEventListener('submit', async (e) => {
       };
     }
   } else {
-    // Modo Criação
     const newMethod = {
       id: 'pay_' + Date.now(),
       name,
@@ -219,6 +298,7 @@ formPayment.addEventListener('submit', async (e) => {
   await FinanceAPI.savePaymentMethods(updatedMethods);
 
   resetPaymentForm();
+  showToast('Cartão salvo com sucesso!', 'success');
 });
 
 function resetPaymentForm() {
@@ -226,8 +306,6 @@ function resetPaymentForm() {
   editingPaymentId = null;
   paySubmitBtn.textContent = 'Salvar Cartão';
   paySubmitBtn.disabled = false;
-
-  // Reseta os campos de crédito com base no select padrão
   payCreditFields.style.display = payTypeSelect.value === 'credito' ? 'flex' : 'none';
 }
 
@@ -253,9 +331,10 @@ function startEditPayment(id) {
 }
 
 async function deletePaymentMethod(id) {
-  if (!confirm('Excluir este método de pagamento? Lançamentos antigos manterão o registro em texto.')) return;
+  if (!(await showConfirm('Excluir este método de pagamento? Lançamentos antigos manterão o registro em texto.', true))) return;
   const updatedMethods = paymentMethods.filter((m) => m.id !== id);
   await FinanceAPI.savePaymentMethods(updatedMethods);
+  showToast('Método de pagamento excluído.', 'success');
 }
 
 function renderPaymentMethodsList() {
@@ -269,7 +348,6 @@ function renderPaymentMethodsList() {
 
     let detailText = '';
     if (method.type === 'credito' && method.closing) {
-      // Se o vencimento é menor que o fechamento, é no mês seguinte
       const dueText = method.due < method.closing ? `Vence dia ${method.due} (mês seg.)` : `Vence dia ${method.due}`;
       detailText = ` • Fecha dia ${method.closing} • ${dueText}`;
     }
@@ -288,24 +366,21 @@ function renderPaymentMethodsList() {
   });
 }
 
-// Dicionário de estilos para cada tipo de pagamento
 const paymentTypeConfig = {
   credito: { label: 'Cartões de Crédito', icon: '💳 Créd.' },
   debito: { label: 'Cartões de Débito', icon: '💴 Déb.' },
-  default: { label: 'Outros Métodos', icon: '🏷️' }, // Fallback mais neutro
+  default: { label: 'Outros Métodos', icon: '🏷️' },
 };
 
 function updatePaymentSelects() {
   const selectPlanned = document.getElementById('planned-payment');
   const selectActual = document.getElementById('actual-payment');
 
-  // Adiciona a opção vazia padrão para forçar a escolha do usuário
   let optionsHtml = `
     <option value="" disabled selected>Selecione o pagamento...</option>
     <option value="dinheiro">💵 Dinheiro</option>
   `;
 
-  // 1. Agrupa os métodos dinamicamente pelo 'type'
   const groupedMethods = paymentMethods.reduce((groups, method) => {
     const type = method.type || 'default';
     if (!groups[type]) groups[type] = [];
@@ -313,7 +388,6 @@ function updatePaymentSelects() {
     return groups;
   }, {});
 
-  // 2. Monta o HTML baseando-se nos grupos criados
   Object.keys(groupedMethods).forEach((type) => {
     const config = paymentTypeConfig[type] || paymentTypeConfig.default;
     const methodsInGroup = groupedMethods[type];
@@ -352,7 +426,6 @@ function updatePaymentSelects() {
   }
 }
 
-// Helper para pegar o nome bonito do pagamento
 function getPaymentName(id) {
   if (!id || id === 'dinheiro') return '💵 Dinheiro';
   const method = paymentMethods.find((m) => m.id === id);
@@ -363,12 +436,10 @@ function getPaymentName(id) {
 }
 // ===================================
 
-// Painel Global
 const summaryIncomeInline = document.getElementById('summary-income-inline');
 const summaryExpenseInline = document.getElementById('summary-expense-inline');
 const summarySaldoLivre = document.getElementById('summary-saldo-livre');
 
-// Aba 3 (Dashboard)
 const summarySaldoPrevisto = document.getElementById('summary-saldo-previsto');
 const summarySaldoReal = document.getElementById('summary-saldo-real');
 const summaryDiffSaldo = document.getElementById('summary-diff-saldo');
@@ -377,28 +448,23 @@ function getCurrentMonth() {
   return monthInput.value;
 }
 
-// 1. Função para buscar a renda (atual ou a última salva no passado)
 function loadIncomeToInputs(month) {
   let income = incomes.find((i) => i.month === month);
 
-  // Se não tem renda para esse mês, busca a última disponível antes dele
   if (!income) {
     const pastIncomes = incomes.filter((i) => i.month < month).sort((a, b) => b.month.localeCompare(a.month));
-
     if (pastIncomes.length > 0) {
       income = pastIncomes[0];
     }
   }
 
-  // Preenche os campos de input
   incomeLuanaInput.value = income ? income.luana || 0 : 0;
   incomeGabrielInput.value = income ? income.gabriel || 0 : 0;
 }
 
-// 2. Evento do botão Carregar (Clona contas fixas do mês anterior)
 btnLoadMonth.addEventListener('click', async () => {
   const targetMonth = getCurrentMonth();
-  if (!targetMonth) return alert('Selecione um mês primeiro.');
+  if (!targetMonth) return showToast('Selecione um mês primeiro.', 'error');
 
   const originalText = btnLoadMonth.textContent;
   btnLoadMonth.textContent = 'Processando...';
@@ -418,13 +484,11 @@ btnLoadMonth.addEventListener('click', async () => {
       for (const item of fixedItemsToClone) {
         let newDate = '';
 
-        // Se o item tinha data, extrai o dia e junta com o novo mês
         if (item.date) {
           const oldDateParts = item.date.split('-');
           const day = oldDateParts.length === 3 ? oldDateParts[2] : '01';
           newDate = `${targetMonth}-${day}`;
         } else if (item.isStatic) {
-          // Fallback de segurança: se for estático e estiver sem data por algum bug, força dia 01
           newDate = `${targetMonth}-01`;
         }
 
@@ -439,7 +503,7 @@ btnLoadMonth.addEventListener('click', async () => {
             merchant: item.description,
             amount: item.amount,
             owner: item.owner,
-            paymentMethodId: item.paymentMethodId || 'dinheiro', // Repassa o pagamento pro Real
+            paymentMethodId: item.paymentMethodId || 'dinheiro',
             isStatic: true,
           };
           await FinanceAPI.saveReceipt(targetMonth, receiptData);
@@ -447,28 +511,27 @@ btnLoadMonth.addEventListener('click', async () => {
       }
 
       if (fixedItemsToClone.length > 0) {
-        alert(`${fixedItemsToClone.length} contas fixas copiadas de ${prevMonthStr}!`);
+        showToast(`${fixedItemsToClone.length} contas fixas copiadas de ${prevMonthStr}!`, 'success');
       } else {
-        alert(`Nenhuma conta marcada como "Fixo" encontrada em ${prevMonthStr}.`);
+        showToast(`Nenhuma conta marcada como "Fixo" encontrada em ${prevMonthStr}.`, 'info');
       }
     } else {
-      alert('Este mês já possui itens. A cópia automática só funciona em meses vazios.');
+      showToast('Este mês já possui itens. A cópia automática só funciona em meses vazios.', 'error');
     }
 
     loadIncomeToInputs(targetMonth);
   } catch (error) {
     console.error('Erro ao clonar:', error);
-    alert('Erro ao carregar mês.');
+    showToast('Erro ao carregar mês.', 'error');
   } finally {
     btnLoadMonth.textContent = originalText;
     btnLoadMonth.disabled = false;
   }
 });
 
-// 3. Novo Salvar Rendas
 btnSaveIncome.addEventListener('click', async () => {
   const month = getCurrentMonth();
-  if (!month) return alert('Selecione o mês.');
+  if (!month) return showToast('Selecione o mês.', 'error');
 
   const luana = parseAmount(incomeLuanaInput.value) || 0;
   const gabriel = parseAmount(incomeGabrielInput.value) || 0;
@@ -487,11 +550,10 @@ btnSaveIncome.addEventListener('click', async () => {
 
   btnSaveIncome.textContent = 'Salvar Rendas';
   btnSaveIncome.disabled = false;
-  alert(`Rendas de ${month} salvas!`);
+  showToast(`Rendas de ${month} salvas com sucesso!`, 'success');
   refreshAll();
 });
 
-// 4. Helper para o cálculo de saldo
 function getIncomeTotalForMonth(month) {
   const exact = incomes.find((i) => i.month === month);
   if (exact) return (exact.luana || 0) + (exact.gabriel || 0);
@@ -515,7 +577,7 @@ monthInput.addEventListener('change', () => {
   }
 });
 
-// ===== Chips de tipos & empresas (uso em 2 telas) =====
+// ===== Chips de tipos & empresas =====
 
 const plannedTypeChips = document.getElementById('planned-type-chips');
 const plannedCompanyChips = document.getElementById('planned-company-chips');
@@ -524,7 +586,7 @@ const receiptCompanyChips = document.getElementById('receipt-company-chips');
 
 let selectedPlannedType = getCategories()[0];
 let selectedReceiptType = getCategories()[0];
-let isEditMode = false; // Flag para interceptar os cliques
+let isEditMode = false;
 
 function renderTypeChips(container, selectedType, onSelect) {
   container.innerHTML = '';
@@ -541,7 +603,6 @@ function renderTypeChips(container, selectedType, onSelect) {
     container.appendChild(chip);
   });
 
-  // Botão embutido e minimalista
   const manageChip = document.createElement('div');
   manageChip.className = 'chip special-action';
   manageChip.style.background = isEditMode ? '#62c462' : 'transparent';
@@ -580,21 +641,22 @@ function renderCompanyChips(container, type, onSelectCompany) {
   });
 }
 
-// Funções de CRUD das Tags (Nativo e leve)
 async function handleEditCategory(oldName) {
-  const newName = prompt(`Renomear a categoria "${oldName}"?\n\nDeixe em branco e clique em OK para EXCLUIR.`, oldName);
+  const newName = await showPrompt(`Renomear a categoria "${oldName}"?\n\nDeixe em branco e clique em OK para EXCLUIR.`, oldName);
   if (newName === null) return;
 
   const trimmed = newName.trim();
   if (trimmed === '') {
-    if (confirm(`Atenção: Excluir a categoria "${oldName}" vai sumir com todas as empresas dentro dela. Continuar?`)) {
+    if (await showConfirm(`Atenção: Excluir a categoria "${oldName}" vai sumir com todas as empresas dentro dela. Continuar?`, true)) {
       delete companyDirectory[oldName];
+      showToast('Categoria excluída.', 'success');
     }
   } else if (trimmed !== oldName) {
     companyDirectory[trimmed] = companyDirectory[oldName];
     delete companyDirectory[oldName];
     if (selectedPlannedType === oldName) selectedPlannedType = trimmed;
     if (selectedReceiptType === oldName) selectedReceiptType = trimmed;
+    showToast('Categoria renomeada.', 'success');
   }
 
   updatePlannedChips();
@@ -603,17 +665,19 @@ async function handleEditCategory(oldName) {
 }
 
 async function handleEditCompany(category, oldName) {
-  const newName = prompt(`Renomear a empresa "${oldName}"?\n\nDeixe em branco e clique em OK para EXCLUIR.`, oldName);
+  const newName = await showPrompt(`Renomear a empresa "${oldName}"?\n\nDeixe em branco e clique em OK para EXCLUIR.`, oldName);
   if (newName === null) return;
 
   const trimmed = newName.trim().toUpperCase();
   if (trimmed === '') {
-    if (confirm(`Excluir a empresa "${oldName}"?`)) {
+    if (await showConfirm(`Excluir a empresa "${oldName}"?`, true)) {
       companyDirectory[category] = companyDirectory[category].filter((c) => c !== oldName);
+      showToast('Empresa excluída.', 'success');
     }
   } else if (trimmed !== oldName) {
     const idx = companyDirectory[category].indexOf(oldName);
     if (idx !== -1) companyDirectory[category][idx] = trimmed;
+    showToast('Empresa renomeada.', 'success');
   }
 
   updatePlannedChips();
@@ -625,7 +689,7 @@ function updatePlannedChips() {
   renderTypeChips(plannedTypeChips, selectedPlannedType, (type) => {
     selectedPlannedType = type;
     plannedCategoryInput.value = type;
-    plannedDescriptionInput.value = ''; // Limpa a empresa ao trocar de categoria
+    plannedDescriptionInput.value = '';
     updatePlannedChips();
   });
 
@@ -638,7 +702,7 @@ function updateReceiptChips() {
   renderTypeChips(receiptTypeChips, selectedReceiptType, (type) => {
     selectedReceiptType = type;
     actualCategoryInput.value = type;
-    actualMerchantInput.value = ''; // Limpa a empresa ao trocar de categoria
+    actualMerchantInput.value = '';
     updateReceiptChips();
   });
 
@@ -646,7 +710,6 @@ function updateReceiptChips() {
     actualMerchantInput.value = company;
   });
 
-  // Mantém a aba de Eventos Anuais 100% sincronizada com as edições globais
   if (typeof updateAnnualChips === 'function') updateAnnualChips();
 }
 
@@ -663,7 +726,6 @@ const plannedStaticCheckbox = document.getElementById('planned-static');
 const labelPlannedStatic = document.getElementById('label-planned-static');
 const plannedSubmitBtn = document.getElementById('planned-submit-btn');
 
-// Regra: Estático só liga se Fixo estiver marcado
 plannedFixedCheckbox.addEventListener('change', (e) => {
   if (e.target.checked) {
     plannedStaticCheckbox.disabled = false;
@@ -683,7 +745,6 @@ const companyNameInput = document.getElementById('company-name');
 
 let editingPlannedId = null;
 
-// Auto Register Assíncrono
 async function autoRegisterCompany(type, name) {
   const t = type.trim();
   const n = name.trim().toUpperCase();
@@ -710,7 +771,7 @@ formPlanned.addEventListener('submit', async (e) => {
   const inputMonth = date ? date.substring(0, 7) : currentViewMonth;
 
   if (date && inputMonth !== currentViewMonth) {
-    return alert(`A data do orçamento não pertence ao mês selecionado no topo (${currentViewMonth}).`);
+    return showToast(`A data do orçamento não pertence ao mês selecionado (${currentViewMonth}).`, 'error');
   }
 
   const month = inputMonth;
@@ -718,16 +779,16 @@ formPlanned.addEventListener('submit', async (e) => {
   const description = plannedDescriptionInput.value.trim();
   const amount = parseAmount(plannedAmountInput.value);
   const owner = plannedOwnerSelect.value;
-  const paymentMethodId = document.getElementById('planned-payment').value; // Captura ok
+  const paymentMethodId = document.getElementById('planned-payment').value;
   const fixed = plannedFixedCheckbox.checked;
   const isStatic = plannedStaticCheckbox.checked;
 
   if (isStatic && !date) {
-    return alert('Para itens estáticos (auto-lançar), é obrigatório informar uma data.');
+    return showToast('Para itens estáticos (auto-lançar), é obrigatório informar uma data.', 'error');
   }
 
   if (!category || !description || isNaN(amount) || !paymentMethodId) {
-    return alert('Preencha categoria, descrição, valor e selecione o pagamento.');
+    return showToast('Preencha categoria, descrição, valor e selecione o pagamento.', 'error');
   }
 
   plannedSubmitBtn.textContent = 'Salvando...';
@@ -746,13 +807,11 @@ formPlanned.addEventListener('submit', async (e) => {
   await FinanceAPI.savePlanned(month, itemData);
 
   if (editingPlannedId === null) {
-    // Criação: Gera a Nota Fiscal APENAS se for Estático
     if (isStatic) {
       const receiptData = { date: date, category, merchant: description, amount, owner, paymentMethodId, isStatic: true };
       await FinanceAPI.saveReceipt(month, receiptData);
     }
   } else if (oldItem) {
-    // Edição: Acha a Nota usando Categoria, Loja, RESPONSÁVEL e VALOR para não misturar itens duplos (ex: 2 academias)
     const linkedReceipt = receipts.find((r) => r.date.startsWith(month) && r.category === oldItem.category && r.merchant === oldItem.description && r.owner === oldItem.owner && r.amount === oldItem.amount && r.isStatic);
 
     if (linkedReceipt) {
@@ -781,6 +840,7 @@ formPlanned.addEventListener('submit', async (e) => {
   plannedSubmitBtn.textContent = 'Adicionar ao Orçamento';
   plannedSubmitBtn.disabled = false;
   resetPlannedForm();
+  showToast('Salvo no orçamento com sucesso!', 'success');
 });
 
 function resetPlannedForm() {
@@ -834,12 +894,11 @@ async function deletePlanned(id) {
 
   const msg = p.isStatic ? `O item "${p.description}" é ESTÁTICO. Excluí-lo aqui também apagará a Nota Fiscal vinculada. Deseja continuar?` : `Excluir o item "${p.description}" do Orçamento?`;
 
-  if (!confirm(msg)) return;
+  if (!(await showConfirm(msg, true))) return;
 
   const month = getCurrentMonth();
   await FinanceAPI.deletePlanned(month, id);
 
-  // Exclusão em cadeia nas Notas Fiscais (usando Responsável e Valor)
   if (p.isStatic) {
     const receiptToDelete = receipts.find((r) => r.date.startsWith(month) && r.category === p.category && r.merchant === p.description && r.owner === p.owner && r.amount === p.amount && r.isStatic);
     if (receiptToDelete) {
@@ -848,6 +907,7 @@ async function deletePlanned(id) {
   }
 
   if (editingPlannedId === id) resetPlannedForm();
+  showToast('Item do orçamento excluído.', 'success');
 }
 
 async function deleteReceipt(id) {
@@ -856,12 +916,11 @@ async function deleteReceipt(id) {
 
   const msg = r.isStatic ? `A nota fiscal de "${r.merchant}" é ESTÁTICA. Excluí-la aqui também apagará a previsão no Orçamento. Deseja continuar?` : `Excluir a nota fiscal de "${r.merchant}"?`;
 
-  if (!confirm(msg)) return;
+  if (!(await showConfirm(msg, true))) return;
 
   const month = r.date.substring(0, 7);
   await FinanceAPI.deleteReceipt(month, id);
 
-  // Exclusão em cadeia no Orçamento (usando Responsável e Valor)
   if (r.isStatic) {
     const plannedToDelete = plannedItems.find((p) => p.month === month && p.category === r.category && p.description === r.merchant && p.owner === r.owner && p.amount === r.amount && p.isStatic);
     if (plannedToDelete) {
@@ -870,20 +929,19 @@ async function deleteReceipt(id) {
   }
 
   if (editingReceiptId === id) resetReceiptForm();
+  showToast('Nota fiscal excluída.', 'success');
 }
 
-// ===== Estado de Ordenação Dinâmica (Linha 551 aprox.) =====
+// ===== Estado de Ordenação Dinâmica =====
 let plannedSortType = 'date';
 let plannedSortOrder = 'desc';
 
 let receiptsSortType = 'date';
 let receiptsSortOrder = 'desc';
 
-// No Dashboard, como as categorias são fixas, mantemos por Nome ou Valor Real
 let dashSortType = 'actual';
 let dashSortOrder = 'desc';
 
-// Listeners blindados
 document.getElementById('sort-planned-type')?.addEventListener('change', (e) => {
   plannedSortType = e.target.value;
   renderPlannedItemsList(getCurrentMonth());
@@ -913,7 +971,6 @@ document.getElementById('btn-sort-dash-order')?.addEventListener('click', (e) =>
   e.target.textContent = dashSortOrder === 'asc' ? '⬆️' : '⬇️';
   updateDashboardView();
 });
-// =========================================
 
 // ===== Lógica Abrir/Fechar Tudo =====
 const btnExpandPlanned = document.getElementById('btn-expand-planned');
@@ -942,12 +999,12 @@ btnExpandPlanned.addEventListener('click', () => {
   const month = getCurrentMonth();
   if (!month) return;
   const items = plannedItems.filter((p) => p.month === month);
-  items.forEach((p) => openPlannedCats.add(p.category)); // Adiciona todas as categorias na memória
+  items.forEach((p) => openPlannedCats.add(p.category));
   renderPlannedItemsList(month);
 });
 
 btnCollapsePlanned.addEventListener('click', () => {
-  openPlannedCats.clear(); // Limpa a memória
+  openPlannedCats.clear();
   renderPlannedItemsList(getCurrentMonth());
 });
 
@@ -955,12 +1012,12 @@ btnExpandReceipts.addEventListener('click', () => {
   const month = getCurrentMonth();
   if (!month) return;
   const list = receipts.filter((r) => r.date.startsWith(month));
-  list.forEach((r) => openReceiptCats.add(r.category)); // Adiciona todas as categorias na memória
+  list.forEach((r) => openReceiptCats.add(r.category));
   updateReceiptsView();
 });
 
 btnCollapseReceipts.addEventListener('click', () => {
-  openReceiptCats.clear(); // Limpa a memória
+  openReceiptCats.clear();
   updateReceiptsView();
 });
 
@@ -984,7 +1041,6 @@ function renderPlannedItemsList(month) {
   Object.keys(grouped)
     .sort()
     .forEach((cat) => {
-      // Ordena do valor mais alto para o mais baixo
       const groupItems = grouped[cat].sort((a, b) => {
         let valA, valB;
 
@@ -1046,7 +1102,6 @@ function renderPlannedItemsList(month) {
       }
     });
 
-  // Calcula o subtotal apenas dos itens marcados como fixos
   const footerDiv = document.createElement('div');
   footerDiv.className = 'list-footer-total';
   footerDiv.innerHTML = `<span>TOTAL PREVISTO</span><span>${formatCurrency(grandTotal)}</span>`;
@@ -1062,12 +1117,11 @@ const actualCategoryInput = document.getElementById('actual-category');
 const actualMerchantInput = document.getElementById('actual-merchant');
 const actualAmountInput = document.getElementById('actual-amount');
 const actualOwnerSelect = document.getElementById('actual-owner');
-const actualObservationInput = document.getElementById('actual-observation'); // NOVO INPUT
+const actualObservationInput = document.getElementById('actual-observation');
 const receiptsList = document.getElementById('receipts-list');
 
 let editingReceiptId = null;
 
-// Sincroniza a tag ativa com o que for digitado no campo Categoria
 plannedCategoryInput.addEventListener('input', (e) => {
   selectedPlannedType = e.target.value.trim();
   updatePlannedChips();
@@ -1085,7 +1139,7 @@ formActual.addEventListener('submit', async (e) => {
   const currentViewMonth = getCurrentMonth();
 
   if (inputMonth !== currentViewMonth) {
-    return alert(`A data da nota fiscal não pertence ao mês selecionado no topo (${currentViewMonth}).`);
+    return showToast(`A data da nota não pertence ao mês selecionado (${currentViewMonth}).`, 'error');
   }
 
   const month = inputMonth;
@@ -1097,7 +1151,7 @@ formActual.addEventListener('submit', async (e) => {
   const observation = actualObservationInput.value.trim();
 
   if (!date || !category || !merchant || isNaN(amount) || !paymentMethodId) {
-    return alert('Preencha data, categoria, nome, valor e selecione o pagamento.');
+    return showToast('Preencha data, categoria, nome, valor e selecione o pagamento.', 'error');
   }
 
   actualSubmitBtn.textContent = 'Salvando...';
@@ -1105,20 +1159,16 @@ formActual.addEventListener('submit', async (e) => {
 
   await autoRegisterCompany(category, merchant);
 
-  // NOVO: Resgata a nota antiga para manter as flags essenciais
   let oldReceipt = null;
   if (editingReceiptId !== null) {
     oldReceipt = receipts.find((r) => r.id === editingReceiptId);
   }
 
-  // NOVO: Preserva as flags de Estático e Reembolso
   const isStatic = oldReceipt ? oldReceipt.isStatic || false : false;
   const isReimb = oldReceipt ? oldReceipt.isReimbursement || false : false;
 
-  // Proteção: Se for reembolso e a pessoa editar o valor sem o sinal de menos, força negativo
   const finalAmount = isReimb ? -Math.abs(amount) : amount;
 
-  // Monta o objeto sem perder as propriedades de sistema
   const itemData = {
     date,
     category,
@@ -1135,7 +1185,6 @@ formActual.addEventListener('submit', async (e) => {
 
   await FinanceAPI.saveReceipt(month, itemData);
 
-  // ESPELHAMENTO INVERSO: Acha o Orçamento usando Categoria, Loja, RESPONSÁVEL e VALOR para não errar o item
   if (oldReceipt && oldReceipt.isStatic) {
     const linkedPlanned = plannedItems.find((p) => p.month === month && p.category === oldReceipt.category && p.description === oldReceipt.merchant && p.owner === oldReceipt.owner && p.amount === oldReceipt.amount && p.isStatic);
 
@@ -1159,6 +1208,7 @@ formActual.addEventListener('submit', async (e) => {
   actualSubmitBtn.textContent = 'Salvar Nota Fiscal';
   actualSubmitBtn.disabled = false;
   resetReceiptForm();
+  showToast('Nota fiscal salva com sucesso!', 'success');
 });
 
 function resetReceiptForm() {
@@ -1169,7 +1219,7 @@ function resetReceiptForm() {
   selectedReceiptType = getCategories()[0] || '';
   actualCategoryInput.value = selectedReceiptType;
   actualMerchantInput.value = '';
-  actualObservationInput.value = ''; // RESETA A OBSERVAÇÃO
+  actualObservationInput.value = '';
 
   const selectedMonth = getCurrentMonth();
   const today = getLocalDateString();
@@ -1189,7 +1239,7 @@ function startEditReceipt(id) {
   actualAmountInput.value = r.amount;
   actualOwnerSelect.value = r.owner;
   document.getElementById('actual-payment').value = r.paymentMethodId || 'dinheiro';
-  actualObservationInput.value = r.observation || ''; // CARREGA A OBSERVAÇÃO
+  actualObservationInput.value = r.observation || '';
 
   if (getCategories().includes(r.category)) {
     selectedReceiptType = r.category;
@@ -1222,7 +1272,6 @@ function updateReceiptsView() {
   Object.keys(grouped)
     .sort()
     .forEach((cat) => {
-      // Ordena do valor mais alto para o mais baixo (ignorando a data)
       const groupItems = grouped[cat].sort((a, b) => {
         let valA = a[receiptsSortType] || '';
         let valB = b[receiptsSortType] || '';
@@ -1256,16 +1305,13 @@ function updateReceiptsView() {
           const item = document.createElement('div');
           item.className = 'receipt-item';
 
-          // Prepara o HTML da observação se ela existir
           const obsHtml = r.observation ? `<div style="font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">↳ ${r.observation}</div>` : '';
           const payStr = ` • ${getPaymentName(r.paymentMethodId)}`;
 
-          // Identifica se é reembolso para ficar com a cor verde e tag
           const isReimb = r.isReimbursement || r.amount < 0;
           const amountColor = isReimb ? '#62c462' : '#f5f5f5';
           const reimbBadge = isReimb ? ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Reembolso)</span>' : '';
 
-          // Botão de reembolso rápido (só aparece se não for um reembolso já)
           const btnReembolsoHtml = !isReimb ? `<button class="action-btn" style="color: #62c462; border: 1px solid rgba(98, 196, 98, 0.3);" onclick="startReimbursement('${r.id}')" title="Reembolsar esta nota">🔄</button>` : '';
 
           item.innerHTML = `
@@ -1288,7 +1334,6 @@ function updateReceiptsView() {
       }
     });
 
-  // Define o que é custo de vida base (O resto entra como lazer/supérfluo automaticamente)
   const categoriasEssenciais = ['Contas', 'Supermercado', 'Transporte', 'Combustível', 'Saúde', 'Educação', 'Cuidados pessoais'];
 
   let totalEssencial = 0;
@@ -1321,16 +1366,13 @@ function updateGlobalSummaries() {
   const saldoPrevisto = totalIncome - totalPlanned;
   const saldoReal = totalIncome - totalActual;
 
-  // 1. Renda: Fica positiva (verde) sem comparação
   document.getElementById('summary-income-inline').textContent = formatCurrency(totalIncome);
 
-  // 2. Gasto: > Previsto = Vermelho | Senão = Amarelo
   const elExpense = document.getElementById('summary-expense-inline');
   elExpense.textContent = formatCurrency(totalActual);
   document.getElementById('summary-planned-expense').textContent = formatCurrency(totalPlanned).replace('CAD ', '');
   elExpense.className = totalActual > totalPlanned ? 'status-danger' : 'status-warning';
 
-  // 3. Livre: >= Previsto = Verde | Senão = Vermelho
   const elLivre = document.getElementById('summary-saldo-livre');
   elLivre.textContent = formatCurrency(saldoReal);
   document.getElementById('summary-saldo-previsto').textContent = formatCurrency(saldoPrevisto).replace('CAD ', '');
@@ -1339,7 +1381,6 @@ function updateGlobalSummaries() {
   renderPlannedItemsList(month);
 }
 
-// No final do arquivo, ajuste o initAppUI
 function initAppUI() {
   const m = getCurrentMonthISO();
   monthInput.value = m;
@@ -1356,7 +1397,6 @@ function initAppUI() {
   updatePlannedChips();
   updateReceiptChips();
 
-  // Sincroniza e força o refresh da aba 2
   syncData(m);
 }
 
@@ -1377,7 +1417,6 @@ function updateDashboardView() {
 
   const totalIncome = getIncomeTotalForMonth(month);
 
-  // === RENDERIZAÇÃO DO CONSUMO DA RENDA E DETALHAMENTO ===
   if (ownerContainer) {
     const categoriasEssenciais = ['Contas', 'Supermercado', 'Transporte', 'Combustível', 'Saúde', 'Casa', 'Pets', 'Educação', 'Cuidados pessoais'];
 
@@ -1398,12 +1437,10 @@ function updateDashboardView() {
       const owner = r.owner || 'Ambos';
       totalReal += r.amount;
 
-      // Acumula os totais de cada pessoa
       if (owner === 'Gabriel') gabTotal += r.amount;
       else if (owner === 'Luana') luaTotal += r.amount;
       else ambTotal += r.amount;
 
-      // Acumula por categoria
       if (categoriasEssenciais.includes(r.category)) {
         totEss += r.amount;
         if (owner === 'Gabriel') gabEss += r.amount;
@@ -1423,7 +1460,6 @@ function updateDashboardView() {
       const baseBarWidth = Math.max(totalIncome, totalReal);
       const freeReal = totalIncome - totalReal;
 
-      // Variáveis da Primeira Barra (Macro)
       const pEss = baseBarWidth > 0 ? (totEss / baseBarWidth) * 100 : 0;
       const pLaz = baseBarWidth > 0 ? (totLaz / baseBarWidth) * 100 : 0;
 
@@ -1433,10 +1469,8 @@ function updateDashboardView() {
       const pGastoTotal = baseBarWidth > 0 ? (totalReal / baseBarWidth) * 100 : 0;
       const pLivreTotal = baseBarWidth > 0 ? Math.max((freeReal / baseBarWidth) * 100, 0) : 0;
 
-      // Controle de Estado da Sanfona Macro
       const isDetailsOpen = window.isConsumptionDetailsOpen || false;
 
-      // Função global auxiliar para o toggle das sanfonas internas (por pessoa)
       window.toggleOwnerCat = function (owner) {
         if (openOwnerCats.has(owner)) openOwnerCats.delete(owner);
         else openOwnerCats.add(owner);
@@ -1485,7 +1519,6 @@ function updateDashboardView() {
             </div>
       `;
 
-      // Estrutura clássica de números/texto para cada responsável
       const ownersArray = [
         { name: 'Gabriel', total: gabTotal, ess: gabEss, laz: gabLaz },
         { name: 'Luana', total: luaTotal, ess: luaEss, laz: luaLaz },
@@ -1529,11 +1562,9 @@ function updateDashboardView() {
       ownerContainer.innerHTML = html;
     }
   }
-  // ==============================================
 
   const mapCat = {};
 
-  // Agrupa os previstos
   plannedForMonth.forEach((p) => {
     if (!mapCat[p.category]) mapCat[p.category] = { planned: 0, actual: 0, items: new Map() };
     mapCat[p.category].planned += p.amount;
@@ -1548,7 +1579,6 @@ function updateDashboardView() {
     if (p.date && (!item.maxDate || p.date > item.maxDate)) item.maxDate = p.date;
   });
 
-  // Agrupa os reais
   receiptsForMonth.forEach((r) => {
     if (!mapCat[r.category]) mapCat[r.category] = { planned: 0, actual: 0, items: new Map() };
     mapCat[r.category].actual += r.amount;
@@ -1562,17 +1592,15 @@ function updateDashboardView() {
     if (r.owner) item.owners.add(r.owner);
     if (r.date && (!item.maxDate || r.date > item.maxDate)) item.maxDate = r.date;
 
-    // Salva na lista de observações SEPARANDO POR RESPONSÁVEL
     const obsText = r.observation ? r.observation.trim() : 'Sem observação';
     const ownerName = r.owner || 'Ambos';
 
-    // Procura se já existe a MESMA observação para a MESMA pessoa
     const existingObs = item.obsList.find((o) => o.text.toLowerCase() === obsText.toLowerCase() && o.owner === ownerName);
 
     if (existingObs) {
       existingObs.amount += r.amount;
       existingObs.owners.add(ownerName);
-      existingObs.transactions.push(r); // Guarda a transação para a sanfona
+      existingObs.transactions.push(r);
     } else {
       item.obsList.push({ text: obsText, amount: r.amount, owner: ownerName, owners: new Set([ownerName]), transactions: [r] });
     }
@@ -1593,11 +1621,9 @@ function updateDashboardView() {
     sumPlanned += data.planned;
     sumActual += data.actual;
 
-    // CORREÇÃO: Arredondamento para forçar o zero absoluto e ativar a cor amarela
     const diffCat = Math.round((data.planned - data.actual) * 100) / 100;
     const isOpen = openDashboardCats.has(cat);
 
-    // Header da Categoria
     const trCat = document.createElement('tr');
     trCat.className = 'dashboard-group-header';
     trCat.onclick = () => {
@@ -1614,7 +1640,6 @@ function updateDashboardView() {
     catTitle.innerHTML = `<span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}`;
     catContainer.appendChild(catTitle);
 
-    // CORREÇÃO: A barra agora sempre existe no fundo, mesmo se os valores forem zero
     let percent = 0;
     if (data.planned > 0) {
       percent = (data.actual / data.planned) * 100;
@@ -1628,10 +1653,8 @@ function updateDashboardView() {
     progressFill.className = 'progress-bar-fill';
     progressFill.style.width = Math.min(percent, 100) + '%';
 
-    // Arredondamento seguro para evitar bugs decimais do JavaScript
     const roundedPercent = Math.round(percent * 100) / 100;
 
-    // Verde se não estourou, Amarelo se bateu exato, Vermelho se passou
     if (roundedPercent < 100) progressFill.classList.add('progress-safe');
     else if (roundedPercent === 100) progressFill.classList.add('progress-warning');
     else progressFill.classList.add('progress-danger');
@@ -1650,7 +1673,6 @@ function updateDashboardView() {
     tdCatReal.textContent = formatCurrency(data.actual);
 
     const tdCatDiff = document.createElement('td');
-    // Aplica a cor da Diferença (Amarelo = neutral quando for exatamente zero)
     tdCatDiff.className = 'numeric ' + (diffCat > 0 ? 'positive' : diffCat === 0 ? 'neutral' : 'negative');
     tdCatDiff.textContent = formatCurrency(diffCat);
 
@@ -1660,7 +1682,6 @@ function updateDashboardView() {
     trCat.appendChild(tdCatDiff);
     tbody.appendChild(trCat);
 
-    // Linhas de Detalhe (Filhos)
     if (isOpen) {
       const items = Array.from(data.items.values()).sort((a, b) => {
         let valA, valB;
@@ -1683,7 +1704,6 @@ function updateDashboardView() {
         return 0;
       });
       items.forEach((item) => {
-        // CORREÇÃO: Arredondamento nos itens filhos também
         const diffItem = Math.round((item.planned - item.actual) * 100) / 100;
 
         const trItem = document.createElement('tr');
@@ -1694,20 +1714,16 @@ function updateDashboardView() {
         const obsArray = item.obsList || [];
         let obsHtml = '';
 
-        // 1. Considera inválidas observações genéricas se estiverem sozinhas
         const isGenericObs = (text) => {
           const t = text.trim().toLowerCase();
           return t === 'sem observação' || t === '-' || t === '';
         };
 
-        // Verifica se há alguma observação que agrupou mais de uma transação
         const hasGroupedTransactions = obsArray.some((o) => o.transactions && o.transactions.length > 1);
 
-        // Só renderiza subitens se tiver mais de um, ou se tiver um válido, ou transações agrupadas
         const shouldRenderObs = obsArray.length > 1 || (obsArray.length === 1 && !isGenericObs(obsArray[0].text)) || hasGroupedTransactions;
-        // 1.1 Extrai e formata todas as datas das transações e CONTA o total de itens
         let datesArray = [];
-        let totalTxCount = 0; // Contador para sabermos se tem mais de 1 nota
+        let totalTxCount = 0;
 
         (item.obsList || []).forEach((obs) => {
           (obs.transactions || []).forEach((t) => {
@@ -1723,21 +1739,16 @@ function updateDashboardView() {
 
         datesArray.sort((a, b) => b.localeCompare(a));
 
-        // 2. Formata os responsáveis e as datas de forma limpa (Para o Subtítulo)
         const ownersArray = Array.from(item.owners || []);
         const ownersText = ownersArray.length > 0 ? `(${ownersArray.join(', ')})` : '';
 
-        // A MÁGICA AQUI: Só mostra a data no cabeçalho se houver EXATAMENTE 1 compra.
-        // Se for mais de 1, esconde e deixa o usuário abrir a sanfona para ver.
         const datesText = totalTxCount > 1 ? '' : datesArray.join(', ');
 
         const metaText = [ownersText, datesText].filter(Boolean).join(' • ');
 
-        // 3. Montagem da Sanfona na LOJA (Design Responsivo e Quebrado em Blocos)
         if (shouldRenderObs) {
           let allTransactions = [];
 
-          // Extrai todas as transações individualmente para padronizar o layout
           obsArray.forEach((o) => {
             const textToDisplay = isGenericObs(o.text) ? 'Sem observação' : o.text;
             if (o.transactions && o.transactions.length > 0) {
@@ -1754,7 +1765,6 @@ function updateDashboardView() {
             }
           });
 
-          // Ordena por data (mais recente primeiro)
           allTransactions.sort((a, b) => b.date.localeCompare(a.date));
 
           const obsLines = allTransactions
@@ -1766,7 +1776,6 @@ function updateDashboardView() {
               const amountColor = isReimb ? '#62c462' : '#c3c3d5';
               const reimbBadge = isReimb ? ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Reemb.)</span>' : '';
 
-              // Cria um bloco individual para cada item da sanfona (perfeito pro mobile)
               return `
                 <div style="margin-top: 8px; margin-bottom: 8px; border-left: 2px solid #27273a; padding-left: 8px;">
                   <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 4px;">
@@ -1784,7 +1793,6 @@ function updateDashboardView() {
 
           const totalItems = allTransactions.length;
 
-          // A sanfona AGORA É A LOJA (Com título quebrado em 2 linhas)
           tdItemName.innerHTML = `
             <details style="cursor: pointer; margin: 2px 0;">
               <summary style="outline: none; user-select: none; color: #fddf7b;">
@@ -1800,7 +1808,6 @@ function updateDashboardView() {
             </details>
           `;
         } else {
-          // Se for só uma nota sem observação, exibe direto sem setinha, quebrado em 2 linhas
           let singleTx = null;
           if (obsArray.length > 0 && obsArray[0].transactions && obsArray[0].transactions.length > 0) {
             singleTx = obsArray[0].transactions[0];
@@ -1843,7 +1850,6 @@ function updateDashboardView() {
     }
   });
 
-  // Totais do Rodapé
   const totalDiff = Math.round((sumPlanned - sumActual) * 100) / 100;
   document.getElementById('dashboard-total-planned').textContent = formatCurrency(sumPlanned);
   document.getElementById('dashboard-total-actual').textContent = formatCurrency(sumActual);
@@ -1883,7 +1889,6 @@ function updateChartsView() {
     categoriesChart.destroy();
   }
 
-  // Plugin customizado para desenhar os valores diretamente nas barras
   const valueLabelsPlugin = {
     id: 'valueLabels',
     afterDatasetsDraw(chart) {
@@ -1924,7 +1929,7 @@ function updateChartsView() {
       responsive: true,
       layout: {
         padding: {
-          top: 25, // Dá espaço extra no topo para o número não cortar
+          top: 25,
           bottom: 10,
         },
       },
@@ -1950,26 +1955,22 @@ let historyDebounceTimer = null;
 function updateHistoricalChart() {
   if (!chartHistoryCanvas) return;
 
-  // Debounce para não travar o banco de dados se a função for chamada seguidamente
   clearTimeout(historyDebounceTimer);
   historyDebounceTimer = setTimeout(async () => {
     try {
       const db = window.db;
       const familyId = window.FinanceAPI.familyId;
 
-      // 1. Busca todos os meses na raiz da família (direto no banco)
       const mesesSnap = await db.collection('familias').doc(familyId).collection('meses').get();
       let allMonthsData = [];
 
-      // 2. Itera para extrair a renda e puxar as notas fiscais
       for (const doc of mesesSnap.docs) {
         const monthStr = doc.id;
-        if (!/^\d{4}-\d{2}$/.test(monthStr)) continue; // Pula docs de configuração
+        if (!/^\d{4}-\d{2}$/.test(monthStr)) continue;
 
         const incData = doc.data();
         const income = (incData.luana || 0) + (incData.gabriel || 0);
 
-        // Busca as despesas atreladas exclusivamente a esse mês
         const notasSnap = await doc.ref.collection('notas_fiscais').get();
         let expense = 0;
         notasSnap.forEach((n) => {
@@ -1984,10 +1985,8 @@ function updateHistoricalChart() {
         return;
       }
 
-      // Ordena de forma cronológica (do mais antigo pro mais novo)
       allMonthsData.sort((a, b) => a.month.localeCompare(b.month));
 
-      // Aplica o filtro de período do select
       let displayData = allMonthsData;
       const limit = historyMonthsSelect.value;
       if (limit !== 'all') {
@@ -2005,7 +2004,6 @@ function updateHistoricalChart() {
         selectedPeriodTotal += bal;
       });
 
-      // Atualiza UI de Total
       const totalEl = document.getElementById('history-total-accumulated');
       if (totalEl) {
         totalEl.textContent = 'Total: ' + formatCurrency(selectedPeriodTotal);
@@ -2016,7 +2014,6 @@ function updateHistoricalChart() {
         historyChart.destroy();
       }
 
-      // Plugin do Chart.js para desenhar valores em cima da barra
       const valueLabelsPlugin = {
         id: 'valueLabels',
         afterDatasetsDraw(chart) {
@@ -2087,12 +2084,10 @@ function updateCreditCardsDashboard() {
     return;
   }
 
-  // LÓGICA NOVA: Calcula o mês anterior dinamicamente (Ex: se month é 2026-04, puxa 2026-03)
   const [year, m] = month.split('-');
   const prevDate = new Date(year, parseInt(m) - 2, 1);
   const prevMonthStr = prevDate.getFullYear() + '-' + String(prevDate.getMonth() + 1).padStart(2, '0');
 
-  // Filtra as notas fiscais dos dois meses necessários
   const currentMonthReceipts = receipts.filter((r) => r.date.startsWith(month));
   const prevMonthReceipts = receipts.filter((r) => r.date.startsWith(prevMonthStr));
 
@@ -2100,17 +2095,15 @@ function updateCreditCardsDashboard() {
   let html = '';
 
   creditCards.forEach((card) => {
-    let currentInvoice = 0; // Fatura Atual (Final do mês passado + Início deste mês)
-    let nextInvoice = 0; // Próxima Fatura (Final deste mês)
-    let monthSpend = 0; // Quanto o cartão foi fisicamente passado no mês selecionado
+    let currentInvoice = 0;
+    let nextInvoice = 0;
+    let monthSpend = 0;
 
-    // 1. Processa as compras do MÊS ATUAL
     const cardCurrentReceipts = currentMonthReceipts.filter((r) => r.paymentMethodId === card.id);
     cardCurrentReceipts.forEach((r) => {
       monthSpend += r.amount;
       const rDay = parseInt(r.date.split('-')[2]);
 
-      // Se a nota foi depois do dia de fechamento, vai pra próxima fatura
       if (card.closing && rDay > card.closing) {
         nextInvoice += r.amount;
       } else {
@@ -2118,11 +2111,9 @@ function updateCreditCardsDashboard() {
       }
     });
 
-    // 2. Processa as compras do MÊS ANTERIOR (A "rebarba" da fatura atual)
     const cardPrevReceipts = prevMonthReceipts.filter((r) => r.paymentMethodId === card.id);
     cardPrevReceipts.forEach((r) => {
       const rDay = parseInt(r.date.split('-')[2]);
-      // Se comprou no mês passado DEPOIS do fechamento, a cobrança cai na fatura DESTE MÊS
       if (card.closing && rDay > card.closing) {
         currentInvoice += r.amount;
       }
@@ -2130,7 +2121,6 @@ function updateCreditCardsDashboard() {
 
     const visualTotal = currentInvoice + nextInvoice;
 
-    // Só exibe o cartão se tiver alguma fatura rolando ou se gastou algo no mês
     if (visualTotal > 0 || monthSpend > 0) {
       hasAnySpending = true;
       const pCurrent = visualTotal > 0 ? (currentInvoice / visualTotal) * 100 : 0;
@@ -2184,12 +2174,10 @@ function startReimbursement(id) {
   const r = receipts.find((x) => x.id === id);
   if (!r) return;
 
-  // 1. Abre o painel de Reembolso e fecha os outros
   document.getElementById('income-panel').style.display = 'none';
   document.getElementById('payments-panel').style.display = 'none';
   document.getElementById('reimbursement-panel').style.display = 'block';
 
-  // 2. Preenche os campos copiando os dados da nota original
   document.getElementById('reimb-date').value = r.date;
   document.getElementById('reimb-category').value = r.category;
   document.getElementById('reimb-merchant').value = r.merchant;
@@ -2197,10 +2185,8 @@ function startReimbursement(id) {
   document.getElementById('reimb-owner').value = r.owner || 'Ambos';
   document.getElementById('reimb-payment').value = r.paymentMethodId || 'dinheiro';
 
-  // 3. Adiciona uma observação automática para rastreio
   document.getElementById('reimb-observation').value = `Reembolso ref. à nota de ${r.date.split('-').reverse().join('/').substring(0, 5)}`;
 
-  // 4. Rola a tela para o topo para o usuário ver o formulário preenchido
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -2254,7 +2240,7 @@ function refreshAll() {
   updateGlobalSummaries();
   updateReceiptsView();
   updateDashboardView();
-  updateCreditCardsDashboard(); // <--- CHAMADA NOVA AQUI
+  updateCreditCardsDashboard();
   updateChartsView();
   updateHistoricalChart();
   checkAnnualAlerts();
@@ -2270,19 +2256,17 @@ const btnDoLogin = document.getElementById('btn-do-login');
 function syncData(month) {
   if (!month) return;
 
-  FinanceAPI.clearListeners(); // Limpa as conexões abertas do mês anterior
+  FinanceAPI.clearListeners();
 
   btnLoadMonth.textContent = 'Sincronizando...';
   btnLoadMonth.disabled = true;
 
-  // NOVO: Escuta Cartões/Pagamentos
   FinanceAPI.listenPaymentMethods((methods) => {
     paymentMethods = methods || [];
     renderPaymentMethodsList();
     updatePaymentSelects();
   });
 
-  // 1. Escuta Empresas em tempo real
   FinanceAPI.listenCompanies((comps) => {
     if (comps && Object.keys(comps).length > 0) {
       Object.keys(companyDirectory).forEach((key) => delete companyDirectory[key]);
@@ -2292,7 +2276,6 @@ function syncData(month) {
     }
   });
 
-  // 2. Escuta Rendas em tempo real
   FinanceAPI.listenIncome(month, (inc) => {
     const idx = incomes.findIndex((i) => i.month === month);
     if (inc) {
@@ -2303,7 +2286,6 @@ function syncData(month) {
     refreshAll();
   });
 
-  // 3. Escuta Orçamento Previsto em tempo real
   FinanceAPI.listenPlanned(month, (pItems) => {
     for (let i = plannedItems.length - 1; i >= 0; i--) {
       if (plannedItems[i].month === month) plannedItems.splice(i, 1);
@@ -2312,7 +2294,6 @@ function syncData(month) {
     refreshAll();
   });
 
-  // 4. Escuta Notas Fiscais em tempo real
   FinanceAPI.listenReceipts(month, (rItems) => {
     for (let i = receipts.length - 1; i >= 0; i--) {
       if (receipts[i].date.startsWith(month)) receipts.splice(i, 1);
@@ -2320,46 +2301,17 @@ function syncData(month) {
     receipts.push(...rItems);
     refreshAll();
 
-    // Libera o botão após o primeiro carregamento
     btnLoadMonth.textContent = 'Carregar';
     btnLoadMonth.disabled = false;
   });
 
-  // Escuta Eventos Anuais (independente do mês)
   FinanceAPI.listenAnnualEvents((events) => {
     annualEvents = events || [];
     renderAnnualList();
-    checkAnnualAlerts(); // Verifica os alertas do mês atual
+    checkAnnualAlerts();
   });
 }
 
-function initAppUI() {
-  const m = getCurrentMonthISO();
-  monthInput.value = m;
-
-  selectedPlannedType = getCategories()[0] || '';
-  selectedReceiptType = getCategories()[0] || '';
-  selectedAnnualType = getCategories()[0] || '';
-
-  // Força os inputs a começarem preenchidos com a tag ativa inicial
-  plannedCategoryInput.value = selectedPlannedType;
-  actualCategoryInput.value = selectedReceiptType;
-  if (typeof annualCategoryInput !== 'undefined' && annualCategoryInput) annualCategoryInput.value = selectedAnnualType;
-
-  // Define a data de hoje como padrão nos formulários
-  const today = getLocalDateString();
-  const defaultDate = today.startsWith(m) ? today : `${m}-01`;
-
-  if (plannedDateInput) plannedDateInput.value = defaultDate;
-  if (actualDateInput) actualDateInput.value = defaultDate;
-
-  updatePlannedChips();
-  updateReceiptChips();
-
-  syncData(m);
-}
-
-// ===== Helpers para Biometria (WebAuthn) =====
 function bufferToBase64URL(buffer) {
   const bytes = new Uint8Array(buffer);
   let str = '';
@@ -2377,13 +2329,12 @@ function base64URLToBuffer(base64URL) {
   return buffer;
 }
 
-// Cadastra a digital no dispositivo pela primeira vez
 async function registerBiometrics(userEmail) {
-  if (!window.PublicKeyCredential) return; // Navegador não suporta
+  if (!window.PublicKeyCredential) return;
 
   try {
     const options = {
-      challenge: new Uint8Array(32), // Num ambiente real, vem do backend
+      challenge: new Uint8Array(32),
       rp: { name: 'Controle Financeiro', id: window.location.hostname },
       user: { id: new Uint8Array(16), name: userEmail, displayName: userEmail },
       pubKeyCredParams: [
@@ -2402,10 +2353,9 @@ async function registerBiometrics(userEmail) {
   }
 }
 
-// Solicita a digital para liberar a tela
 async function verifyBiometrics() {
   const credIdStr = localStorage.getItem('biometricCredentialId');
-  if (!credIdStr) return true; // Se não tem digital salva, libera direto
+  if (!credIdStr) return true;
 
   const biometricOverlay = document.getElementById('biometric-overlay');
   biometricOverlay.style.display = 'flex';
@@ -2419,31 +2369,27 @@ async function verifyBiometrics() {
     };
 
     await navigator.credentials.get({ publicKey: options });
-    biometricOverlay.style.display = 'none'; // Sucesso: esconde a tela de bloqueio
+    biometricOverlay.style.display = 'none';
     return true;
   } catch (err) {
     console.error('Falha na biometria:', err);
-    return false; // Mantém bloqueado
+    return false;
   }
 }
 
-// Tenta desbloquear ao clicar no botão caso a primeira tentativa automática falhe
 document.getElementById('btn-unlock-biometrics')?.addEventListener('click', verifyBiometrics);
 
-// Escuta mudanças no Firebase Auth
 FinanceAPI.onAuthStateChanged(async (user) => {
   const userDisplay = document.getElementById('user-display');
   const biometricOverlay = document.getElementById('biometric-overlay');
   const globalLoader = document.getElementById('global-loader');
 
-  // Tira o loader de transição da frente suavemente
   if (globalLoader) {
     globalLoader.style.opacity = '0';
     setTimeout(() => (globalLoader.style.display = 'none'), 300);
   }
 
   if (user) {
-    // 1. Oculta login e mostra botão de sair + nome
     loginOverlay.style.display = 'none';
     btnLogout.style.display = 'block';
     if (userDisplay) {
@@ -2457,23 +2403,18 @@ FinanceAPI.onAuthStateChanged(async (user) => {
       userDisplay.textContent = `👤 ${nome}`;
     }
 
-    // 2. Fluxo de Biometria
     const hasBiometrics = localStorage.getItem('biometricCredentialId');
 
     if (!hasBiometrics) {
-      // Primeira vez após login com senha: pede pra cadastrar a digital
       await registerBiometrics(user.email);
     } else {
-      // Já tem cadastro: trava a tela e pede a digital antes de mostrar os dados
       const unlocked = await verifyBiometrics();
-      if (!unlocked) return; // Para a execução se errar/cancelar a digital
+      if (!unlocked) return;
     }
 
-    // 3. Libera o carregamento dos dados após biometria OK
     initAppUI();
     console.log('Usuário logado e verificado:', user.email);
   } else {
-    // Deslogado
     loginOverlay.style.display = 'flex';
     btnLogout.style.display = 'none';
     if (userDisplay) userDisplay.textContent = '';
@@ -2492,7 +2433,7 @@ formLogin.addEventListener('submit', async (e) => {
     btnDoLogin.disabled = true;
     await FinanceAPI.login(email, pass);
   } catch (error) {
-    alert('Erro no login: ' + error.message);
+    showToast('Erro no login: ' + error.message, 'error');
   } finally {
     btnDoLogin.textContent = originalText;
     btnDoLogin.disabled = false;
@@ -2518,7 +2459,6 @@ const annualObservationInput = document.getElementById('annual-observation');
 const annualSubmitBtn = document.getElementById('annual-submit-btn');
 const annualItemsList = document.getElementById('annual-items-list');
 
-// Variáveis e construtores dos Chips
 let selectedAnnualType = '';
 const annualTypeChips = document.getElementById('annual-type-chips');
 const annualCompanyChips = document.getElementById('annual-company-chips');
@@ -2548,7 +2488,7 @@ if (formAnnual) {
     e.preventDefault();
     const name = annualNameInput.value.trim();
     const category = annualCategoryInput.value.trim();
-    const dateVal = annualDateInput.value; // Formato YYYY-MM-DD
+    const dateVal = annualDateInput.value;
     const monthTarget = dateVal ? dateVal.split('-')[1] : '';
     const dayTarget = dateVal ? dateVal.split('-')[2] : '';
     const amount = parseAmount(annualAmountInput.value);
@@ -2556,7 +2496,9 @@ if (formAnnual) {
     const paymentMethodId = annualPaymentSelect.value;
     const observation = annualObservationInput.value.trim();
 
-    if (!name || !category || !monthTarget || !dayTarget || isNaN(amount) || !paymentMethodId) return alert('Preencha todos os campos obrigatórios.');
+    if (!name || !category || !monthTarget || !dayTarget || isNaN(amount) || !paymentMethodId) {
+      return showToast('Preencha todos os campos obrigatórios.', 'error');
+    }
 
     annualSubmitBtn.textContent = 'Salvando...';
     annualSubmitBtn.disabled = true;
@@ -2571,6 +2513,7 @@ if (formAnnual) {
     annualSubmitBtn.textContent = 'Salvar Evento Anual';
     annualSubmitBtn.disabled = false;
     resetAnnualForm();
+    showToast('Evento anual salvo com sucesso!', 'success');
   });
 }
 
@@ -2593,7 +2536,6 @@ function startEditAnnual(id) {
   annualNameInput.value = item.name;
   annualCategoryInput.value = item.category;
 
-  // Monta uma data genérica para preencher o input type="date"
   const dummyYear = new Date().getFullYear();
   const safeDay = item.dayTarget ? String(item.dayTarget).padStart(2, '0') : '01';
   annualDateInput.value = `${dummyYear}-${item.monthTarget}-${safeDay}`;
@@ -2609,15 +2551,15 @@ function startEditAnnual(id) {
     updateAnnualChips();
   }
 
-  // Muda de tela
   document.querySelector('.nav-btn[data-view="annual"]').click();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 async function deleteAnnual(id) {
-  if (!confirm('Excluir este evento do planejamento anual?')) return;
+  if (!(await showConfirm('Excluir este evento do planejamento anual?', true))) return;
   await FinanceAPI.deleteAnnualEvent(id);
   if (editingAnnualId === id) resetAnnualForm();
+  showToast('Evento excluído.', 'success');
 }
 
 function renderAnnualList() {
@@ -2629,7 +2571,6 @@ function renderAnnualList() {
     return;
   }
 
-  // Ordena por mês
   const sorted = [...annualEvents].sort((a, b) => a.monthTarget.localeCompare(b.monthTarget));
   const monthNames = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 
@@ -2639,7 +2580,6 @@ function renderAnnualList() {
     const diaText = item.dayTarget ? ` (Dia ${item.dayTarget})` : '';
     const monthLabel = monthNames[parseInt(item.monthTarget) - 1] + diaText;
 
-    // NOVO: Nome do pagamento e formatação da observação
     const payStr = ` • ${getPaymentName(item.paymentMethodId)}`;
     const obsHtml = item.observation ? `<div style="font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">↳ ${item.observation}</div>` : '';
 
@@ -2663,16 +2603,14 @@ function renderAnnualList() {
 
 // === Sistema de Alerta no Orçamento ===
 function checkAnnualAlerts() {
-  const currentMonthStr = getCurrentMonth(); // Ex: 2026-04
+  const currentMonthStr = getCurrentMonth();
   if (!currentMonthStr) return;
 
-  const currentMonthNum = currentMonthStr.split('-')[1]; // Pega só o "04"
+  const currentMonthNum = currentMonthStr.split('-')[1];
 
-  // Filtra os eventos que batem com o mês atual e que AINDA NÃO FORAM lançados no orçamento
   const pendingEvents = annualEvents.filter((ev) => {
     if (ev.monthTarget !== currentMonthNum) return false;
 
-    // Checa se já existe no orçamento deste mês (buscando pelo nome)
     const alreadyPlanned = plannedItems.some((p) => p.month === currentMonthStr && p.description.toLowerCase() === ev.name.toLowerCase());
     return !alreadyPlanned;
   });
@@ -2685,13 +2623,12 @@ function checkAnnualAlerts() {
 
   if (pendingEvents.length === 0) {
     container.style.display = 'none';
-    if (navBtnAnnual) navBtnAnnual.innerHTML = '🔔 Eventos';
+    if (navBtnAnnual) navBtnAnnual.innerHTML = '🔔';
     return;
   }
 
-  // Adiciona a bolinha indicadora no menu superior
   if (navBtnAnnual) {
-    navBtnAnnual.innerHTML = `🔔 Eventos <span style="background: #ff7b7b; color: #12121c; border-radius: 50%; padding: 2px 6px; font-size: 0.7rem; font-weight: bold; margin-left: 4px;">${pendingEvents.length}</span>`;
+    navBtnAnnual.innerHTML = `🔔 <span style="background: #ff7b7b; color: #12121c; border-radius: 50%; padding: 2px 6px; font-size: 0.7rem; font-weight: bold; margin-left: 4px;">${pendingEvents.length}</span>`;
   }
 
   container.style.display = 'block';
@@ -2726,8 +2663,7 @@ window.launchAnnualToBudget = async function (eventId, targetMonthStr) {
   const fullDateStr = `${targetMonthStr}-${diaFormatado}`;
   const formattedDateBr = `${diaFormatado}/${targetMonthStr.split('-')[1]}/${targetMonthStr.split('-')[0]}`;
 
-  const confirmLaunch = confirm(`Deseja lançar "${ev.name}" no orçamento do dia ${formattedDateBr} com valor de ${formatCurrency(ev.amount)}?`);
-  if (!confirmLaunch) return;
+  if (!(await showConfirm(`Deseja lançar "${ev.name}" no orçamento do dia ${formattedDateBr} com valor de ${formatCurrency(ev.amount)}?`))) return;
 
   const itemData = {
     date: fullDateStr,
@@ -2743,30 +2679,25 @@ window.launchAnnualToBudget = async function (eventId, targetMonthStr) {
   };
 
   await FinanceAPI.savePlanned(targetMonthStr, itemData);
-  alert('Lançado com sucesso no Orçamento!');
+  showToast('Lançado com sucesso no Orçamento!', 'success');
 };
 
 // ===== PWA e Service Worker =====
 
-// 1. Registra o Service Worker (Necessário para o app instalar offline)
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./service-worker.js').catch((err) => console.error('Falha no Service Worker:', err));
   });
 }
 
-// 2. Intercepta o evento de instalação do Chrome/Android
 let deferredPrompt;
 const installBanner = document.getElementById('install-banner');
 const btnInstall = document.getElementById('btn-install');
 const btnCloseInstall = document.getElementById('btn-close-install');
 
 window.addEventListener('beforeinstallprompt', (e) => {
-  // Impede o mini-infobar padrão de aparecer em dispositivos móveis
   e.preventDefault();
-  // Guarda o evento para acionar o botão depois
   deferredPrompt = e;
-  // Exibe o nosso banner customizado
   if (installBanner) installBanner.style.display = 'flex';
 });
 

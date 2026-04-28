@@ -136,4 +136,30 @@ window.FinanceAPI = {
   async deleteReceipt(month, id) {
     await db.collection('familias').doc(this.familyId).collection('meses').doc(month).collection('notas_fiscais').doc(id).delete();
   },
+
+  // ===== PLANEJAMENTO ANUAL =====
+  listenAnnualEvents(callback) {
+    const unsub = db
+      .collection('familias')
+      .doc(this.familyId)
+      .collection('eventos_anuais')
+      .onSnapshot((snap) => callback(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+    this.unsubscribers.push(unsub);
+  },
+
+  async saveAnnualEvent(item) {
+    const coll = db.collection('familias').doc(this.familyId).collection('eventos_anuais');
+    if (item.id && typeof item.id === 'string') {
+      await coll.doc(item.id).set(item);
+      return item.id;
+    } else {
+      delete item.id;
+      const docRef = await coll.add(item);
+      return docRef.id;
+    }
+  },
+
+  async deleteAnnualEvent(id) {
+    await db.collection('familias').doc(this.familyId).collection('eventos_anuais').doc(id).delete();
+  },
 };

@@ -48,9 +48,15 @@ function parseAmount(str) {
   return parseFloat(String(str).replace(',', '.'));
 }
 
+// Retorna a data respeitando o fuso horário local (Quebec/Brasil)
+function getLocalDateString() {
+  const d = new Date();
+  const offset = d.getTimezoneOffset() * 60000;
+  return new Date(d - offset).toISOString().split('T')[0];
+}
+
 function getCurrentMonthISO() {
-  const today = new Date();
-  return today.toISOString().slice(0, 7); // AAAA-MM
+  return getLocalDateString().slice(0, 7); // AAAA-MM
 }
 
 function makeKey(category, description) {
@@ -337,6 +343,13 @@ function updatePaymentSelects() {
     selectReimb.innerHTML = optionsHtml;
     if (currentVal) selectReimb.value = currentVal;
   }
+
+  const selectAnnual = document.getElementById('annual-payment');
+  if (selectAnnual) {
+    const currentVal = selectAnnual.value;
+    selectAnnual.innerHTML = optionsHtml;
+    if (currentVal) selectAnnual.value = currentVal;
+  }
 }
 
 // Helper para pegar o nome bonito do pagamento
@@ -490,7 +503,7 @@ monthInput.addEventListener('change', () => {
   const newMonth = getCurrentMonth();
   syncData(newMonth);
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateString();
   const newDefaultDate = today.startsWith(newMonth) ? today : `${newMonth}-01`;
 
   if (actualDateInput && !editingReceiptId) {
@@ -632,6 +645,9 @@ function updateReceiptChips() {
   renderCompanyChips(receiptCompanyChips, selectedReceiptType, (company) => {
     actualMerchantInput.value = company;
   });
+
+  // Mantém a aba de Eventos Anuais 100% sincronizada com as edições globais
+  if (typeof updateAnnualChips === 'function') updateAnnualChips();
 }
 
 // ===== Orçamento mensal (custos previstos) =====
@@ -779,7 +795,7 @@ function resetPlannedForm() {
   plannedCategoryInput.value = selectedPlannedType;
 
   const selectedMonth = getCurrentMonth();
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateString();
   if (plannedDateInput) {
     plannedDateInput.value = today.startsWith(selectedMonth) ? today : `${selectedMonth}-01`;
   }
@@ -1156,7 +1172,7 @@ function resetReceiptForm() {
   actualObservationInput.value = ''; // RESETA A OBSERVAÇÃO
 
   const selectedMonth = getCurrentMonth();
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateString();
   actualDateInput.value = today.startsWith(selectedMonth) ? today : `${selectedMonth}-01`;
 
   updateReceiptChips();
@@ -2241,6 +2257,7 @@ function refreshAll() {
   updateCreditCardsDashboard(); // <--- CHAMADA NOVA AQUI
   updateChartsView();
   updateHistoricalChart();
+  checkAnnualAlerts();
 }
 
 // ===== Inicialização e Autenticação =====
@@ -2307,6 +2324,13 @@ function syncData(month) {
     btnLoadMonth.textContent = 'Carregar';
     btnLoadMonth.disabled = false;
   });
+
+  // Escuta Eventos Anuais (independente do mês)
+  FinanceAPI.listenAnnualEvents((events) => {
+    annualEvents = events || [];
+    renderAnnualList();
+    checkAnnualAlerts(); // Verifica os alertas do mês atual
+  });
 }
 
 function initAppUI() {
@@ -2315,13 +2339,15 @@ function initAppUI() {
 
   selectedPlannedType = getCategories()[0] || '';
   selectedReceiptType = getCategories()[0] || '';
+  selectedAnnualType = getCategories()[0] || '';
 
   // Força os inputs a começarem preenchidos com a tag ativa inicial
   plannedCategoryInput.value = selectedPlannedType;
   actualCategoryInput.value = selectedReceiptType;
+  if (typeof annualCategoryInput !== 'undefined' && annualCategoryInput) annualCategoryInput.value = selectedAnnualType;
 
   // Define a data de hoje como padrão nos formulários
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateString();
   const defaultDate = today.startsWith(m) ? today : `${m}-01`;
 
   if (plannedDateInput) plannedDateInput.value = defaultDate;
@@ -2476,6 +2502,249 @@ formLogin.addEventListener('submit', async (e) => {
 btnLogout.addEventListener('click', async () => {
   await FinanceAPI.logout();
 });
+
+// ===== PLANEJAMENTO ANUAL (LÓGICA) =====
+let annualEvents = [];
+let editingAnnualId = null;
+
+const formAnnual = document.getElementById('form-annual');
+const annualNameInput = document.getElementById('annual-name');
+const annualCategoryInput = document.getElementById('annual-category');
+const annualDateInput = document.getElementById('annual-date');
+const annualAmountInput = document.getElementById('annual-amount');
+const annualOwnerSelect = document.getElementById('annual-owner');
+const annualPaymentSelect = document.getElementById('annual-payment');
+const annualObservationInput = document.getElementById('annual-observation');
+const annualSubmitBtn = document.getElementById('annual-submit-btn');
+const annualItemsList = document.getElementById('annual-items-list');
+
+// Variáveis e construtores dos Chips
+let selectedAnnualType = '';
+const annualTypeChips = document.getElementById('annual-type-chips');
+const annualCompanyChips = document.getElementById('annual-company-chips');
+
+function updateAnnualChips() {
+  if (!annualTypeChips || !annualCompanyChips) return;
+  renderTypeChips(annualTypeChips, selectedAnnualType, (type) => {
+    selectedAnnualType = type;
+    annualCategoryInput.value = type;
+    annualNameInput.value = '';
+    updateAnnualChips();
+  });
+  renderCompanyChips(annualCompanyChips, selectedAnnualType, (company) => {
+    annualNameInput.value = company;
+  });
+}
+
+if (annualCategoryInput) {
+  annualCategoryInput.addEventListener('input', (e) => {
+    selectedAnnualType = e.target.value.trim();
+    updateAnnualChips();
+  });
+}
+
+if (formAnnual) {
+  formAnnual.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = annualNameInput.value.trim();
+    const category = annualCategoryInput.value.trim();
+    const dateVal = annualDateInput.value; // Formato YYYY-MM-DD
+    const monthTarget = dateVal ? dateVal.split('-')[1] : '';
+    const dayTarget = dateVal ? dateVal.split('-')[2] : '';
+    const amount = parseAmount(annualAmountInput.value);
+    const owner = annualOwnerSelect.value;
+    const paymentMethodId = annualPaymentSelect.value;
+    const observation = annualObservationInput.value.trim();
+
+    if (!name || !category || !monthTarget || !dayTarget || isNaN(amount) || !paymentMethodId) return alert('Preencha todos os campos obrigatórios.');
+
+    annualSubmitBtn.textContent = 'Salvando...';
+    annualSubmitBtn.disabled = true;
+
+    await autoRegisterCompany(category, name);
+
+    const itemData = { name, category, monthTarget, dayTarget, amount, owner, paymentMethodId, observation };
+    if (editingAnnualId) itemData.id = editingAnnualId;
+
+    await FinanceAPI.saveAnnualEvent(itemData);
+
+    annualSubmitBtn.textContent = 'Salvar Evento Anual';
+    annualSubmitBtn.disabled = false;
+    resetAnnualForm();
+  });
+}
+
+function resetAnnualForm() {
+  formAnnual.reset();
+  editingAnnualId = null;
+  annualSubmitBtn.textContent = 'Salvar Evento Anual';
+
+  selectedAnnualType = getCategories()[0] || '';
+  if (annualCategoryInput) annualCategoryInput.value = selectedAnnualType;
+  if (annualObservationInput) annualObservationInput.value = '';
+  updateAnnualChips();
+}
+
+function startEditAnnual(id) {
+  const item = annualEvents.find((a) => a.id === id);
+  if (!item) return;
+
+  editingAnnualId = id;
+  annualNameInput.value = item.name;
+  annualCategoryInput.value = item.category;
+
+  // Monta uma data genérica para preencher o input type="date"
+  const dummyYear = new Date().getFullYear();
+  const safeDay = item.dayTarget ? String(item.dayTarget).padStart(2, '0') : '01';
+  annualDateInput.value = `${dummyYear}-${item.monthTarget}-${safeDay}`;
+
+  annualAmountInput.value = item.amount;
+  annualOwnerSelect.value = item.owner;
+  annualPaymentSelect.value = item.paymentMethodId || 'dinheiro';
+  annualObservationInput.value = item.observation || '';
+  annualSubmitBtn.textContent = 'Salvar Alterações';
+
+  if (getCategories().includes(item.category)) {
+    selectedAnnualType = item.category;
+    updateAnnualChips();
+  }
+
+  // Muda de tela
+  document.querySelector('.nav-btn[data-view="annual"]').click();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function deleteAnnual(id) {
+  if (!confirm('Excluir este evento do planejamento anual?')) return;
+  await FinanceAPI.deleteAnnualEvent(id);
+  if (editingAnnualId === id) resetAnnualForm();
+}
+
+function renderAnnualList() {
+  if (!annualItemsList) return;
+  annualItemsList.innerHTML = '';
+
+  if (annualEvents.length === 0) {
+    annualItemsList.innerHTML = '<p class="hint">Nenhum evento anual cadastrado.</p>';
+    return;
+  }
+
+  // Ordena por mês
+  const sorted = [...annualEvents].sort((a, b) => a.monthTarget.localeCompare(b.monthTarget));
+  const monthNames = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+
+  sorted.forEach((item) => {
+    const el = document.createElement('div');
+    el.className = 'receipt-item';
+    const diaText = item.dayTarget ? ` (Dia ${item.dayTarget})` : '';
+    const monthLabel = monthNames[parseInt(item.monthTarget) - 1] + diaText;
+
+    // NOVO: Nome do pagamento e formatação da observação
+    const payStr = ` • ${getPaymentName(item.paymentMethodId)}`;
+    const obsHtml = item.observation ? `<div style="font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">↳ ${item.observation}</div>` : '';
+
+    el.innerHTML = `
+      <div class="receipt-main">
+        <div class="receipt-line">${item.name} • <span style="color:#fddf7b">[Mês: ${monthLabel}]</span></div>
+        ${obsHtml}
+        <div class="receipt-meta" style="margin-top:2px;">${item.category} • Resp: ${item.owner}${payStr}</div>
+      </div>
+      <div class="receipt-right">
+        <div class="receipt-amount">${formatCurrency(item.amount)}</div>
+        <div class="receipt-actions">
+          <button class="action-btn" onclick="startEditAnnual('${item.id}')">Editar</button>
+          <button class="action-btn danger" onclick="deleteAnnual('${item.id}')">Excluir</button>
+        </div>
+      </div>
+    `;
+    annualItemsList.appendChild(el);
+  });
+}
+
+// === Sistema de Alerta no Orçamento ===
+function checkAnnualAlerts() {
+  const currentMonthStr = getCurrentMonth(); // Ex: 2026-04
+  if (!currentMonthStr) return;
+
+  const currentMonthNum = currentMonthStr.split('-')[1]; // Pega só o "04"
+
+  // Filtra os eventos que batem com o mês atual e que AINDA NÃO FORAM lançados no orçamento
+  const pendingEvents = annualEvents.filter((ev) => {
+    if (ev.monthTarget !== currentMonthNum) return false;
+
+    // Checa se já existe no orçamento deste mês (buscando pelo nome)
+    const alreadyPlanned = plannedItems.some((p) => p.month === currentMonthStr && p.description.toLowerCase() === ev.name.toLowerCase());
+    return !alreadyPlanned;
+  });
+
+  const container = document.getElementById('annual-alert-container');
+  const listEl = document.getElementById('annual-alert-list');
+  const navBtnAnnual = document.querySelector('.nav-btn[data-view="annual"]');
+
+  if (!container || !listEl) return;
+
+  if (pendingEvents.length === 0) {
+    container.style.display = 'none';
+    if (navBtnAnnual) navBtnAnnual.innerHTML = '🔔 Eventos';
+    return;
+  }
+
+  // Adiciona a bolinha indicadora no menu superior
+  if (navBtnAnnual) {
+    navBtnAnnual.innerHTML = `🔔 Eventos <span style="background: #ff7b7b; color: #12121c; border-radius: 50%; padding: 2px 6px; font-size: 0.7rem; font-weight: bold; margin-left: 4px;">${pendingEvents.length}</span>`;
+  }
+
+  container.style.display = 'block';
+  listEl.innerHTML = '';
+
+  pendingEvents.forEach((ev) => {
+    const el = document.createElement('div');
+    el.style.display = 'flex';
+    el.style.justifyContent = 'space-between';
+    el.style.alignItems = 'center';
+    el.style.background = '#151524';
+    el.style.padding = '8px 12px';
+    el.style.borderRadius = '8px';
+    el.style.border = '1px solid rgba(247, 200, 74, 0.3)';
+
+    el.innerHTML = `
+      <div>
+        <div style="font-weight: 600; font-size: 0.9rem; color: #f5f5f5;">${ev.name} (Dia ${ev.dayTarget || '01'})</div>
+        <div style="font-size: 0.75rem; color: #a6a6c0;">Previsto: ${formatCurrency(ev.amount)} • ${ev.owner}</div>
+      </div>
+      <button class="btn-primary small" style="margin: 0; padding: 6px 12px; font-size: 0.8rem;" onclick="launchAnnualToBudget('${ev.id}', '${currentMonthStr}')">Lançar no Orçamento</button>
+    `;
+    listEl.appendChild(el);
+  });
+}
+
+window.launchAnnualToBudget = async function (eventId, targetMonthStr) {
+  const ev = annualEvents.find((e) => e.id === eventId);
+  if (!ev) return;
+
+  const diaFormatado = ev.dayTarget ? String(ev.dayTarget).padStart(2, '0') : '01';
+  const fullDateStr = `${targetMonthStr}-${diaFormatado}`;
+  const formattedDateBr = `${diaFormatado}/${targetMonthStr.split('-')[1]}/${targetMonthStr.split('-')[0]}`;
+
+  const confirmLaunch = confirm(`Deseja lançar "${ev.name}" no orçamento do dia ${formattedDateBr} com valor de ${formatCurrency(ev.amount)}?`);
+  if (!confirmLaunch) return;
+
+  const itemData = {
+    date: fullDateStr,
+    category: ev.category,
+    description: ev.name,
+    amount: ev.amount,
+    owner: ev.owner,
+    paymentMethodId: ev.paymentMethodId || 'dinheiro',
+    observation: ev.observation || '',
+    fixed: false,
+    isStatic: false,
+    month: targetMonthStr,
+  };
+
+  await FinanceAPI.savePlanned(targetMonthStr, itemData);
+  alert('Lançado com sucesso no Orçamento!');
+};
 
 // ===== PWA e Service Worker =====
 

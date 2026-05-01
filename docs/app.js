@@ -1381,7 +1381,31 @@ function updateGlobalSummaries() {
   renderPlannedItemsList(month);
 }
 
-function initAppUI() {
+// Função nova para pré-carregar rendas e evitar bug da virada de mês
+async function preloadAllIncomes() {
+  try {
+    const snap = await window.db.collection('familias').doc(FinanceAPI.familyId).collection('meses').get();
+    snap.forEach((doc) => {
+      // Pega apenas documentos no formato de mês (ex: 2026-04)
+      if (/^\d{4}-\d{2}$/.test(doc.id)) {
+        const data = doc.data();
+        if (data.luana !== undefined || data.gabriel !== undefined) {
+          const exists = incomes.find((i) => i.month === doc.id);
+          if (!exists) {
+            incomes.push({ month: doc.id, luana: data.luana || 0, gabriel: data.gabriel || 0 });
+          }
+        }
+      }
+    });
+    // Atualiza a tela assim que tiver o histórico em mãos
+    loadIncomeToInputs(getCurrentMonth());
+    refreshAll();
+  } catch (e) {
+    console.error('Erro ao pré-carregar rendas do histórico:', e);
+  }
+}
+
+async function initAppUI() {
   const m = getCurrentMonthISO();
   monthInput.value = m;
 
@@ -1396,6 +1420,24 @@ function initAppUI() {
 
   updatePlannedChips();
   updateReceiptChips();
+
+  // Busca todo o histórico de rendas ANTES de sincronizar o mês atual
+  try {
+    const snap = await window.db.collection('familias').doc(FinanceAPI.familyId).collection('meses').get();
+    snap.forEach((doc) => {
+      if (/^\d{4}-\d{2}$/.test(doc.id)) {
+        const data = doc.data();
+        if (data.luana !== undefined || data.gabriel !== undefined) {
+          const exists = incomes.find((i) => i.month === doc.id);
+          if (!exists) {
+            incomes.push({ month: doc.id, luana: data.luana || 0, gabriel: data.gabriel || 0 });
+          }
+        }
+      }
+    });
+  } catch (e) {
+    console.error('Erro ao pré-carregar rendas:', e);
+  }
 
   syncData(m);
 }
@@ -1980,6 +2022,22 @@ function updateHistoricalChart() {
         allMonthsData.push({ month: monthStr, income, expense });
       }
 
+      // INJEÇÃO DA MEMÓRIA: Garante que o mês atual sempre apareça no gráfico,
+      // mesmo que o documento ainda não tenha sido criado no Firebase
+      const currentMonth = getCurrentMonth();
+      if (currentMonth) {
+        const currentIncome = getIncomeTotalForMonth(currentMonth);
+        const currentExpense = receipts.filter((r) => r.date.startsWith(currentMonth)).reduce((s, r) => s + r.amount, 0);
+
+        const existingIdx = allMonthsData.findIndex((d) => d.month === currentMonth);
+        if (existingIdx !== -1) {
+          allMonthsData[existingIdx].income = currentIncome;
+          allMonthsData[existingIdx].expense = currentExpense;
+        } else {
+          allMonthsData.push({ month: currentMonth, income: currentIncome, expense: currentExpense });
+        }
+      }
+
       if (allMonthsData.length === 0) {
         if (historyChart) historyChart.destroy();
         return;
@@ -2098,6 +2156,8 @@ function updateCreditCardsDashboard() {
     let currentInvoice = 0;
     let nextInvoice = 0;
     let monthSpend = 0;
+    let prevRollover = 0;
+    let currentMonthInsideInvoice = 0;
 
     const cardCurrentReceipts = currentMonthReceipts.filter((r) => r.paymentMethodId === card.id);
     cardCurrentReceipts.forEach((r) => {
@@ -2108,6 +2168,7 @@ function updateCreditCardsDashboard() {
         nextInvoice += r.amount;
       } else {
         currentInvoice += r.amount;
+        currentMonthInsideInvoice += r.amount;
       }
     });
 
@@ -2116,6 +2177,7 @@ function updateCreditCardsDashboard() {
       const rDay = parseInt(r.date.split('-')[2]);
       if (card.closing && rDay > card.closing) {
         currentInvoice += r.amount;
+        prevRollover += r.amount;
       }
     });
 
@@ -2123,7 +2185,8 @@ function updateCreditCardsDashboard() {
 
     if (visualTotal > 0 || monthSpend > 0) {
       hasAnySpending = true;
-      const pCurrent = visualTotal > 0 ? (currentInvoice / visualTotal) * 100 : 0;
+      const pPrev = visualTotal > 0 ? (prevRollover / visualTotal) * 100 : 0;
+      const pCurr = visualTotal > 0 ? (currentMonthInsideInvoice / visualTotal) * 100 : 0;
       const pNext = visualTotal > 0 ? (nextInvoice / visualTotal) * 100 : 0;
 
       html += `
@@ -2137,8 +2200,8 @@ function updateCreditCardsDashboard() {
               </div>
             </div>
             <div style="text-align: right;">
-              <div style="font-size: 0.72rem; color: #a6a6c0;">Gasto no Mês</div>
-              <div style="font-weight: 700; color: #fddf7b; font-size: 1.05rem;">${formatCurrency(monthSpend)}</div>
+              <div style="font-size: 0.72rem; color: #a6a6c0; text-transform: uppercase; font-weight: 600;">Fatura Atual</div>
+              <div style="font-weight: 800; color: #62c462; font-size: 1.25rem; letter-spacing: -0.5px;">${formatCurrency(currentInvoice)}</div>
             </div>
           </div>
           
@@ -2146,11 +2209,17 @@ function updateCreditCardsDashboard() {
             card.closing
               ? `
           <div style="display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: #0b0b10; margin-top: 4px; border: 1px solid #27273a;">
-            ${pCurrent > 0 ? `<div style="width: ${pCurrent}%; background: #62c462;" title="Fatura Atual"></div>` : ''}
+            ${pPrev > 0 ? `<div style="width: ${pPrev}%; background: #4a90e2;" title="Mês Passado"></div>` : ''}
+            ${pCurr > 0 ? `<div style="width: ${pCurr}%; background: #62c462;" title="Fatura Atual (Este Mês)"></div>` : ''}
             ${pNext > 0 ? `<div style="width: ${pNext}%; background: #f7c84a;" title="Próxima Fatura"></div>` : ''}
           </div>
-          <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">
-            <span><strong style="color: #62c462;">■</strong> Fatura Atual: <span style="color: #f5f5f5;">${formatCurrency(currentInvoice)}</span></span>
+          
+          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem; color: #a6a6c0; margin-top: 4px;">
+            <span style="display: flex; align-items: center; gap: 6px;">
+              <span><strong style="color: #4a90e2;">■</strong> Passado: <span style="color: #c3c3d5;">${formatCurrency(prevRollover)}</span></span>
+              <span style="color: #4a4a6a;">|</span>
+              <span><strong style="color: #62c462;">■</strong> Gasto no Mês: <span style="color: #c3c3d5;">${formatCurrency(monthSpend)}</span></span>
+            </span>
             <span><strong style="color: #f7c84a;">■</strong> Próx. Fatura: <span style="color: #f5f5f5;">${formatCurrency(nextInvoice)}</span></span>
           </div>
           `
@@ -2294,6 +2363,12 @@ function syncData(month) {
     refreshAll();
   });
 
+  // LÓGICA NOVA: Descobre qual é o mês anterior para carregar em background
+  const [year, m] = month.split('-');
+  const prevDate = new Date(year, parseInt(m) - 2, 1);
+  const prevMonthStr = prevDate.getFullYear() + '-' + String(prevDate.getMonth() + 1).padStart(2, '0');
+
+  // 1. Escuta as notas do Mês Atual
   FinanceAPI.listenReceipts(month, (rItems) => {
     for (let i = receipts.length - 1; i >= 0; i--) {
       if (receipts[i].date.startsWith(month)) receipts.splice(i, 1);
@@ -2303,6 +2378,15 @@ function syncData(month) {
 
     btnLoadMonth.textContent = 'Carregar';
     btnLoadMonth.disabled = false;
+  });
+
+  // 2. Escuta as notas do Mês Anterior (Exclusivo para plugar os dados na Fatura do Cartão)
+  FinanceAPI.listenReceipts(prevMonthStr, (rItems) => {
+    for (let i = receipts.length - 1; i >= 0; i--) {
+      if (receipts[i].date.startsWith(prevMonthStr)) receipts.splice(i, 1);
+    }
+    receipts.push(...rItems);
+    refreshAll();
   });
 
   FinanceAPI.listenAnnualEvents((events) => {
@@ -2456,6 +2540,7 @@ const annualAmountInput = document.getElementById('annual-amount');
 const annualOwnerSelect = document.getElementById('annual-owner');
 const annualPaymentSelect = document.getElementById('annual-payment');
 const annualObservationInput = document.getElementById('annual-observation');
+const annualOneOffCheckbox = document.getElementById('annual-one-off');
 const annualSubmitBtn = document.getElementById('annual-submit-btn');
 const annualItemsList = document.getElementById('annual-items-list');
 
@@ -2495,6 +2580,7 @@ if (formAnnual) {
     const owner = annualOwnerSelect.value;
     const paymentMethodId = annualPaymentSelect.value;
     const observation = annualObservationInput.value.trim();
+    const isOneOff = annualOneOffCheckbox ? annualOneOffCheckbox.checked : false;
 
     if (!name || !category || !monthTarget || !dayTarget || isNaN(amount) || !paymentMethodId) {
       return showToast('Preencha todos os campos obrigatórios.', 'error');
@@ -2505,7 +2591,7 @@ if (formAnnual) {
 
     await autoRegisterCompany(category, name);
 
-    const itemData = { name, category, monthTarget, dayTarget, amount, owner, paymentMethodId, observation };
+    const itemData = { name, category, monthTarget, dayTarget, amount, owner, paymentMethodId, observation, isOneOff };
     if (editingAnnualId) itemData.id = editingAnnualId;
 
     await FinanceAPI.saveAnnualEvent(itemData);
@@ -2525,6 +2611,7 @@ function resetAnnualForm() {
   selectedAnnualType = getCategories()[0] || '';
   if (annualCategoryInput) annualCategoryInput.value = selectedAnnualType;
   if (annualObservationInput) annualObservationInput.value = '';
+  if (annualOneOffCheckbox) annualOneOffCheckbox.checked = false;
   updateAnnualChips();
 }
 
@@ -2544,6 +2631,8 @@ function startEditAnnual(id) {
   annualOwnerSelect.value = item.owner;
   annualPaymentSelect.value = item.paymentMethodId || 'dinheiro';
   annualObservationInput.value = item.observation || '';
+  if (annualOneOffCheckbox) annualOneOffCheckbox.checked = item.isOneOff || false;
+
   annualSubmitBtn.textContent = 'Salvar Alterações';
 
   if (getCategories().includes(item.category)) {
@@ -2582,10 +2671,13 @@ function renderAnnualList() {
 
     const payStr = ` • ${getPaymentName(item.paymentMethodId)}`;
     const obsHtml = item.observation ? `<div style="font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">↳ ${item.observation}</div>` : '';
+    const oneOffBadge = item.isOneOff
+      ? ' <span style="background: rgba(255, 123, 123, 0.15); color: #ff7b7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(255, 123, 123, 0.3); margin-left: 6px; vertical-align: middle;">Único</span>'
+      : '';
 
     el.innerHTML = `
       <div class="receipt-main">
-        <div class="receipt-line">${item.name} • <span style="color:#fddf7b">[Mês: ${monthLabel}]</span></div>
+        <div class="receipt-line">${item.name}${oneOffBadge} • <span style="color:#fddf7b">[Mês: ${monthLabel}]</span></div>
         ${obsHtml}
         <div class="receipt-meta" style="margin-top:2px;">${item.category} • Resp: ${item.owner}${payStr}</div>
       </div>
@@ -2644,9 +2736,11 @@ function checkAnnualAlerts() {
     el.style.borderRadius = '8px';
     el.style.border = '1px solid rgba(247, 200, 74, 0.3)';
 
+    const oneOffBadge = ev.isOneOff ? ' <span style="color:#ff7b7b; font-size:0.7rem; font-weight:bold;">(Único)</span>' : '';
+
     el.innerHTML = `
       <div>
-        <div style="font-weight: 600; font-size: 0.9rem; color: #f5f5f5;">${ev.name} (Dia ${ev.dayTarget || '01'})</div>
+        <div style="font-weight: 600; font-size: 0.9rem; color: #f5f5f5;">${ev.name}${oneOffBadge} (Dia ${ev.dayTarget || '01'})</div>
         <div style="font-size: 0.75rem; color: #a6a6c0;">Previsto: ${formatCurrency(ev.amount)} • ${ev.owner}</div>
       </div>
       <button class="btn-primary small" style="margin: 0; padding: 6px 12px; font-size: 0.8rem;" onclick="launchAnnualToBudget('${ev.id}', '${currentMonthStr}')">Lançar no Orçamento</button>
@@ -2679,7 +2773,13 @@ window.launchAnnualToBudget = async function (eventId, targetMonthStr) {
   };
 
   await FinanceAPI.savePlanned(targetMonthStr, itemData);
-  showToast('Lançado com sucesso no Orçamento!', 'success');
+
+  if (ev.isOneOff) {
+    await FinanceAPI.deleteAnnualEvent(eventId);
+    showToast('Lançado no Orçamento e removido dos pendentes!', 'success');
+  } else {
+    showToast('Lançado com sucesso no Orçamento!', 'success');
+  }
 };
 
 // ===== PWA e Service Worker =====

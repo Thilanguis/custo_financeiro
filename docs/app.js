@@ -1083,11 +1083,13 @@ function renderPlannedItemsList(month) {
 
           const dateStr = p.date ? `${p.date.split('-').reverse().join('/').substring(0, 5)} • ` : '';
           const payStr = ` • ${getPaymentName(p.paymentMethodId)}`;
+          const obsHtml = p.observation ? `<div style="font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">↳ ${p.observation}</div>` : '';
 
           item.innerHTML = `
           <div class="receipt-main">
             <div class="receipt-line">${p.description}</div>
-            <div class="receipt-meta">${dateStr}Resp: ${p.owner}${payStr}${p.fixed ? (p.isStatic ? ' • Fixo & Estático' : ' • Fixo') : ''}</div>
+            ${obsHtml}
+            <div class="receipt-meta" style="margin-top: 2px;">${dateStr}Resp: ${p.owner}${payStr}${p.fixed ? (p.isStatic ? ' • Fixo & Estático' : ' • Fixo') : ''}</div>
           </div>
           <div class="receipt-right">
             <div class="receipt-amount">${formatCurrency(p.amount)}</div>
@@ -2703,7 +2705,16 @@ function checkAnnualAlerts() {
   const pendingEvents = annualEvents.filter((ev) => {
     if (ev.monthTarget !== currentMonthNum) return false;
 
-    const alreadyPlanned = plannedItems.some((p) => p.month === currentMonthStr && p.description.toLowerCase() === ev.name.toLowerCase());
+    const alreadyPlanned = plannedItems.some((p) => {
+      if (p.month !== currentMonthStr) return false;
+
+      // 1. Tracking Invisível: Match perfeito se foi lançado pelo botão
+      if (p.linkedAnnualId === ev.id) return true;
+
+      // 2. Fallback: Lançamento manual (cruza Nome exato + Valor exato)
+      return p.description.toLowerCase() === ev.name.toLowerCase() && p.amount === ev.amount;
+    });
+
     return !alreadyPlanned;
   });
 
@@ -2737,11 +2748,13 @@ function checkAnnualAlerts() {
     el.style.border = '1px solid rgba(247, 200, 74, 0.3)';
 
     const oneOffBadge = ev.isOneOff ? ' <span style="color:#ff7b7b; font-size:0.7rem; font-weight:bold;">(Único)</span>' : '';
+    const obsHtml = ev.observation ? `<div style="font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">↳ ${ev.observation}</div>` : '';
 
     el.innerHTML = `
       <div>
         <div style="font-weight: 600; font-size: 0.9rem; color: #f5f5f5;">${ev.name}${oneOffBadge} (Dia ${ev.dayTarget || '01'})</div>
-        <div style="font-size: 0.75rem; color: #a6a6c0;">Previsto: ${formatCurrency(ev.amount)} • ${ev.owner}</div>
+        ${obsHtml}
+        <div style="font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">Previsto: ${formatCurrency(ev.amount)} • ${ev.owner}</div>
       </div>
       <button class="btn-primary small" style="margin: 0; padding: 6px 12px; font-size: 0.8rem;" onclick="launchAnnualToBudget('${ev.id}', '${currentMonthStr}')">Lançar no Orçamento</button>
     `;
@@ -2770,6 +2783,7 @@ window.launchAnnualToBudget = async function (eventId, targetMonthStr) {
     fixed: false,
     isStatic: false,
     month: targetMonthStr,
+    linkedAnnualId: ev.id, // Tracking injetado aqui
   };
 
   await FinanceAPI.savePlanned(targetMonthStr, itemData);

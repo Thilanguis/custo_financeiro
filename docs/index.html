@@ -496,10 +496,28 @@
               <div class="field checkbox-field" style="justify-content: flex-start; margin-top: 4px">
                 <label style="color: #fddf7b; font-weight: 500">
                   <input type="checkbox" id="annual-one-off" />
-                  Evento Único (Excluir automaticamente após lançar)
+                  Evento Único (Excluir auto ao lançar)
+                </label>
+              </div>
+              <div class="field checkbox-field" style="justify-content: flex-start; margin-top: 4px">
+                <label style="color: #62c462; font-weight: 500">
+                  <input type="checkbox" id="annual-installment-check" />
+                  Gerar Parcelas / Repetir
                 </label>
               </div>
             </div>
+
+            <div class="field-row" id="annual-installment-fields" style="display: none; background: rgba(98, 196, 98, 0.1); padding: 12px; border-radius: 8px; border: 1px solid rgba(98, 196, 98, 0.3); margin-top: 4px">
+              <div class="field">
+                <label style="color: #62c462">Total de parcelas</label>
+                <input type="number" id="annual-installments-count" min="2" max="24" placeholder="Ex: 4" />
+              </div>
+              <div class="field">
+                <label style="color: #62c462">Intervalo (Meses)</label>
+                <input type="number" id="annual-installments-interval" min="1" max="12" value="1" placeholder="Ex: 1 = Mensal, 2 = Bimestral" />
+              </div>
+            </div>
+
             <button type="submit" class="btn-primary" id="annual-submit-btn" style="margin-top: 8px">Salvar Evento Anual</button>
           </form>
         </div>

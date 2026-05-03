@@ -1061,10 +1061,14 @@ function renderPlannedItemsList(month) {
       const isOpen = openPlannedCats.has(cat);
       const catTotal = groupItems.reduce((acc, curr) => acc + curr.amount, 0);
 
+      const hasEvent = groupItems.some((p) => p.linkedAnnualId);
       const headerDiv = document.createElement('div');
       headerDiv.className = 'group-header-div';
+      const catBadge = hasEvent
+        ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px; vertical-align: middle;">Evento</span>'
+        : '';
       headerDiv.innerHTML = `
-      <span>${isOpen ? '▼' : '▶'} ${cat}</span>
+      <span style="color: #f5f5f5; display: flex; align-items: center;"><span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}${catBadge}</span>
       <span style="color:#a6a6c0; font-size:0.85rem; font-weight:normal;">${formatCurrency(catTotal)}</span>
     `;
 
@@ -1084,10 +1088,13 @@ function renderPlannedItemsList(month) {
           const dateStr = p.date ? `${p.date.split('-').reverse().join('/').substring(0, 5)} • ` : '';
           const payStr = ` • ${getPaymentName(p.paymentMethodId)}`;
           const obsHtml = p.observation ? `<div style="font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">↳ ${p.observation}</div>` : '';
+          const annualBadge = p.linkedAnnualId
+            ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px; vertical-align: middle;">Evento</span>'
+            : '';
 
           item.innerHTML = `
           <div class="receipt-main">
-            <div class="receipt-line">${p.description}</div>
+            <div class="receipt-line">${p.description}${annualBadge}</div>
             ${obsHtml}
             <div class="receipt-meta" style="margin-top: 2px;">${dateStr}Resp: ${p.owner}${payStr}${p.fixed ? (p.isStatic ? ' • Fixo & Estático' : ' • Fixo') : ''}</div>
           </div>
@@ -1290,7 +1297,7 @@ function updateReceiptsView() {
       const headerDiv = document.createElement('div');
       headerDiv.className = 'group-header-div';
       headerDiv.innerHTML = `
-      <span>${isOpen ? '▼' : '▶'} ${cat}</span>
+      <span style="color: #f5f5f5;"><span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}</span>
       <span style="color:#a6a6c0; font-size:0.85rem; font-weight:normal;">${formatCurrency(catTotal)}</span>
     `;
 
@@ -1615,12 +1622,19 @@ function updateDashboardView() {
 
     const key = makeKey(p.category, p.description);
     if (!mapCat[p.category].items.has(key)) {
-      mapCat[p.category].items.set(key, { name: p.description, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: p.date || '' });
+      mapCat[p.category].items.set(key, { name: p.description, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: p.date || '', isAnnual: false, annualEventsData: [] });
     }
     const item = mapCat[p.category].items.get(key);
     item.planned += p.amount;
     if (p.owner) item.owners.add(p.owner);
     if (p.date && (!item.maxDate || p.date > item.maxDate)) item.maxDate = p.date;
+    if (p.linkedAnnualId) {
+      item.isAnnual = true;
+      item.annualEventsData.push({
+        obs: p.observation ? p.observation.trim().toLowerCase() : '',
+        amount: p.amount,
+      });
+    }
   });
 
   receiptsForMonth.forEach((r) => {
@@ -1629,7 +1643,7 @@ function updateDashboardView() {
 
     const key = makeKey(r.category, r.merchant);
     if (!mapCat[r.category].items.has(key)) {
-      mapCat[r.category].items.set(key, { name: r.merchant, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: r.date || '' });
+      mapCat[r.category].items.set(key, { name: r.merchant, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: r.date || '', isAnnual: false, annualObs: new Set() });
     }
     const item = mapCat[r.category].items.get(key);
     item.actual += r.amount;
@@ -1680,8 +1694,12 @@ function updateDashboardView() {
     const catContainer = document.createElement('div');
     catContainer.className = 'cat-name-container';
 
+    const hasEvent = Array.from(data.items.values()).some((item) => item.isAnnual);
     const catTitle = document.createElement('span');
-    catTitle.innerHTML = `<span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}`;
+    catTitle.style.display = 'flex';
+    catTitle.style.alignItems = 'center';
+    const catBadge = hasEvent ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px;">Evento</span>' : '';
+    catTitle.innerHTML = `<span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}${catBadge}`;
     catContainer.appendChild(catTitle);
 
     let percent = 0;
@@ -1811,6 +1829,8 @@ function updateDashboardView() {
 
           allTransactions.sort((a, b) => b.date.localeCompare(a.date));
 
+          let hasRenderedAnnualChild = false;
+
           const obsLines = allTransactions
             .map((t) => {
               const dateStr = t.date ? `${t.date.split('-').reverse().join('/').substring(0, 5)}` : '';
@@ -1820,10 +1840,26 @@ function updateDashboardView() {
               const amountColor = isReimb ? '#62c462' : '#c3c3d5';
               const reimbBadge = isReimb ? ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Reemb.)</span>' : '';
 
+              let isTxAnnual = false;
+              if (item.annualEventsData && item.annualEventsData.length > 0) {
+                const txt = isGenericObs(t.text) ? '' : t.text.toLowerCase();
+                isTxAnnual = item.annualEventsData.some((ev) => {
+                  if (ev.obs && txt && ev.obs === txt) return true; // Bateu por texto
+                  if (ev.amount === t.amount) return true; // Bateu por valor exato
+                  return false;
+                });
+                if (isTxAnnual) {
+                  hasRenderedAnnualChild = true;
+                }
+              }
+              const txAnnualBadge = isTxAnnual
+                ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px; vertical-align: middle;">Evento</span>'
+                : '';
+
               return `
                 <div style="margin-top: 8px; margin-bottom: 8px; border-left: 2px solid #27273a; padding-left: 8px;">
                   <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 4px;">
-                    <span style="color: #c3c3d5; font-size: 0.8rem; line-height: 1.3;">${t.text}${reimbBadge}</span>
+                    <span style="color: #c3c3d5; font-size: 0.8rem; line-height: 1.3;">${t.text}${reimbBadge}${txAnnualBadge}</span>
                     <span style="color: ${amountColor}; font-size: 0.75rem; font-weight: 600; white-space: nowrap; margin-left: 4px;">${formatCurrency(t.amount)}</span>
                   </div>
                   <div style="font-size: 0.7rem; color: #8e8eab; margin-top: 3px; display: flex; flex-wrap: wrap; gap: 4px;">
@@ -1836,13 +1872,17 @@ function updateDashboardView() {
             .join('');
 
           const totalItems = allTransactions.length;
+          const parentAnnualBadge =
+            item.isAnnual && !hasRenderedAnnualChild
+              ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px; vertical-align: middle;">Evento</span>'
+              : '';
 
           tdItemName.innerHTML = `
             <details style="cursor: pointer; margin: 2px 0;">
               <summary style="outline: none; user-select: none; color: #fddf7b;">
                 <div style="display: inline-block;">
-                  <span style="color: #f5f5f5;">${item.name}</span>
-                  <span style="font-size: 0.6rem; background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; margin-left: 4px; border: 1px solid rgba(253, 223, 123, 0.3); white-space: nowrap; vertical-align: middle;">${totalItems} itens</span>
+                  <span style="color: #f5f5f5;">${item.name}</span>${parentAnnualBadge}
+                  <span style="font-size: 0.6rem; background: rgba(74, 144, 226, 0.15); color: #4a90e2; padding: 2px 6px; border-radius: 6px; margin-left: 4px; border: 1px solid rgba(74, 144, 226, 0.3); white-space: nowrap; vertical-align: middle;">${totalItems} itens</span>
                 </div>
                 <div style="font-size: 0.72rem; color: #8e8eab; margin-top: 2px; line-height: 1.3;">${metaText}</div>
               </summary>
@@ -1866,9 +1906,12 @@ function updateDashboardView() {
           }
 
           const singleMetaText = [ownersText, datesArray.join(', '), payStr].filter(Boolean).join(' • ');
+          const parentAnnualBadge = item.isAnnual
+            ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px; vertical-align: middle;">Evento</span>'
+            : '';
 
           tdItemName.innerHTML = `
-            <div style="color: #f5f5f5;">${item.name}${reimbBadge}</div>
+            <div style="color: #f5f5f5;">${item.name}${parentAnnualBadge}${reimbBadge}</div>
             <div style="font-size: 0.72rem; color: #8e8eab; margin-top: 2px; line-height: 1.3;">${singleMetaText}</div>
           `;
         }
@@ -2543,8 +2586,18 @@ const annualOwnerSelect = document.getElementById('annual-owner');
 const annualPaymentSelect = document.getElementById('annual-payment');
 const annualObservationInput = document.getElementById('annual-observation');
 const annualOneOffCheckbox = document.getElementById('annual-one-off');
+const annualInstallmentCheck = document.getElementById('annual-installment-check');
+const annualInstallmentFields = document.getElementById('annual-installment-fields');
+const annualInstallmentsCount = document.getElementById('annual-installments-count');
+const annualInstallmentsInterval = document.getElementById('annual-installments-interval');
 const annualSubmitBtn = document.getElementById('annual-submit-btn');
 const annualItemsList = document.getElementById('annual-items-list');
+
+if (annualInstallmentCheck) {
+  annualInstallmentCheck.addEventListener('change', (e) => {
+    annualInstallmentFields.style.display = e.target.checked ? 'flex' : 'none';
+  });
+}
 
 let selectedAnnualType = '';
 const annualTypeChips = document.getElementById('annual-type-chips');
@@ -2593,15 +2646,42 @@ if (formAnnual) {
 
     await autoRegisterCompany(category, name);
 
-    const itemData = { name, category, monthTarget, dayTarget, amount, owner, paymentMethodId, observation, isOneOff };
-    if (editingAnnualId) itemData.id = editingAnnualId;
+    const isInstallment = annualInstallmentCheck && annualInstallmentCheck.checked && !editingAnnualId;
+    const count = isInstallment ? parseInt(annualInstallmentsCount.value) || 2 : 1;
+    const interval = isInstallment ? parseInt(annualInstallmentsInterval.value) || 1 : 1;
 
-    await FinanceAPI.saveAnnualEvent(itemData);
+    let baseMonth = parseInt(monthTarget);
+
+    for (let i = 0; i < count; i++) {
+      let m = (baseMonth + i * interval) % 12;
+      if (m === 0) m = 12; // Mês 12 (Dezembro) ao invés de 0
+
+      const currentTargetMonth = String(m).padStart(2, '0');
+      const currentName = isInstallment ? `${name} (${i + 1}/${count})` : name;
+
+      const itemData = {
+        name: currentName,
+        category,
+        monthTarget: currentTargetMonth,
+        dayTarget,
+        amount,
+        owner,
+        paymentMethodId,
+        observation,
+        isOneOff,
+      };
+
+      if (editingAnnualId && !isInstallment) {
+        itemData.id = editingAnnualId;
+      }
+
+      await FinanceAPI.saveAnnualEvent(itemData);
+    }
 
     annualSubmitBtn.textContent = 'Salvar Evento Anual';
     annualSubmitBtn.disabled = false;
     resetAnnualForm();
-    showToast('Evento anual salvo com sucesso!', 'success');
+    showToast(isInstallment ? `${count} parcelas salvas com sucesso!` : 'Evento anual salvo com sucesso!', 'success');
   });
 }
 
@@ -2614,6 +2694,9 @@ function resetAnnualForm() {
   if (annualCategoryInput) annualCategoryInput.value = selectedAnnualType;
   if (annualObservationInput) annualObservationInput.value = '';
   if (annualOneOffCheckbox) annualOneOffCheckbox.checked = false;
+  if (annualInstallmentCheck) annualInstallmentCheck.checked = false;
+  if (annualInstallmentFields) annualInstallmentFields.style.display = 'none';
+  if (annualInstallmentCheck) annualInstallmentCheck.parentElement.parentElement.style.display = 'flex'; // Garante que volta a aparecer caso estivesse editando
   updateAnnualChips();
 }
 
@@ -2634,6 +2717,9 @@ function startEditAnnual(id) {
   annualPaymentSelect.value = item.paymentMethodId || 'dinheiro';
   annualObservationInput.value = item.observation || '';
   if (annualOneOffCheckbox) annualOneOffCheckbox.checked = item.isOneOff || false;
+
+  // Oculta opção de gerar parcelas ao editar
+  if (annualInstallmentCheck) annualInstallmentCheck.parentElement.parentElement.style.display = 'none';
 
   annualSubmitBtn.textContent = 'Salvar Alterações';
 
@@ -2662,37 +2748,79 @@ function renderAnnualList() {
     return;
   }
 
-  const sorted = [...annualEvents].sort((a, b) => a.monthTarget.localeCompare(b.monthTarget));
-  const monthNames = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
-
-  sorted.forEach((item) => {
-    const el = document.createElement('div');
-    el.className = 'receipt-item';
-    const diaText = item.dayTarget ? ` (Dia ${item.dayTarget})` : '';
-    const monthLabel = monthNames[parseInt(item.monthTarget) - 1] + diaText;
-
-    const payStr = ` • ${getPaymentName(item.paymentMethodId)}`;
-    const obsHtml = item.observation ? `<div style="font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">↳ ${item.observation}</div>` : '';
-    const oneOffBadge = item.isOneOff
-      ? ' <span style="background: rgba(255, 123, 123, 0.15); color: #ff7b7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(255, 123, 123, 0.3); margin-left: 6px; vertical-align: middle;">Único</span>'
-      : '';
-
-    el.innerHTML = `
-      <div class="receipt-main">
-        <div class="receipt-line">${item.name}${oneOffBadge} • <span style="color:#fddf7b">[Mês: ${monthLabel}]</span></div>
-        ${obsHtml}
-        <div class="receipt-meta" style="margin-top:2px;">${item.category} • Resp: ${item.owner}${payStr}</div>
-      </div>
-      <div class="receipt-right">
-        <div class="receipt-amount">${formatCurrency(item.amount)}</div>
-        <div class="receipt-actions">
-          <button class="action-btn" onclick="startEditAnnual('${item.id}')">Editar</button>
-          <button class="action-btn danger" onclick="deleteAnnual('${item.id}')">Excluir</button>
-        </div>
-      </div>
-    `;
-    annualItemsList.appendChild(el);
+  // 1. Ordena primeiro por mês e depois por dia para ficar na sequência perfeita
+  const sorted = [...annualEvents].sort((a, b) => {
+    if (a.monthTarget === b.monthTarget) {
+      const dayA = a.dayTarget ? parseInt(a.dayTarget) : 1;
+      const dayB = b.dayTarget ? parseInt(b.dayTarget) : 1;
+      return dayA - dayB;
+    }
+    return a.monthTarget.localeCompare(b.monthTarget);
   });
+
+  const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+
+  // 2. Agrupa os eventos pelo mês correspondente
+  const groupedByMonth = {};
+  sorted.forEach((item) => {
+    const monthIdx = parseInt(item.monthTarget) - 1;
+    if (!groupedByMonth[monthIdx]) groupedByMonth[monthIdx] = [];
+    groupedByMonth[monthIdx].push(item);
+  });
+
+  // 3. Renderiza os blocos divididos por mês
+  Object.keys(groupedByMonth)
+    .sort((a, b) => a - b)
+    .forEach((monthIdx) => {
+      // Cria o cabeçalho do mês
+      const header = document.createElement('div');
+      header.className = 'group-header-div';
+      header.style.cursor = 'default';
+      header.style.borderLeft = '4px solid #f7c84a'; // Destaque em amarelo
+      header.innerHTML = `<span style="color: #f5f5f5; font-size: 1rem; font-weight: 700;">📅 ${monthNames[monthIdx]}</span>`;
+      annualItemsList.appendChild(header);
+
+      // Cria um container para dar um leve recuo (identação) nos itens daquele mês
+      const itemsContainer = document.createElement('div');
+      itemsContainer.style.borderLeft = '2px solid #27273a';
+      itemsContainer.style.marginLeft = '8px';
+      itemsContainer.style.paddingLeft = '8px';
+      itemsContainer.style.display = 'flex';
+      itemsContainer.style.flexDirection = 'column';
+      itemsContainer.style.gap = '6px';
+      itemsContainer.style.marginBottom = '12px';
+
+      // Adiciona os itens dentro do mês
+      groupedByMonth[monthIdx].forEach((item) => {
+        const el = document.createElement('div');
+        el.className = 'receipt-item';
+
+        const diaText = item.dayTarget ? `Dia ${item.dayTarget}` : 'Dia 01';
+        const payStr = ` • ${getPaymentName(item.paymentMethodId)}`;
+        const obsHtml = item.observation ? `<div style="font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">↳ ${item.observation}</div>` : '';
+        const oneOffBadge = item.isOneOff
+          ? ' <span style="background: rgba(255, 123, 123, 0.15); color: #ff7b7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(255, 123, 123, 0.3); margin-left: 6px; vertical-align: middle;">Único</span>'
+          : '';
+
+        el.innerHTML = `
+        <div class="receipt-main">
+          <div class="receipt-line">${item.name}${oneOffBadge} <span style="color:#fddf7b; font-size: 0.75rem; margin-left: 4px;">[${diaText}]</span></div>
+          ${obsHtml}
+          <div class="receipt-meta" style="margin-top:2px;">${item.category} • Resp: ${item.owner}${payStr}</div>
+        </div>
+        <div class="receipt-right">
+          <div class="receipt-amount">${formatCurrency(item.amount)}</div>
+          <div class="receipt-actions">
+            <button class="action-btn" onclick="startEditAnnual('${item.id}')">Editar</button>
+            <button class="action-btn danger" onclick="deleteAnnual('${item.id}')">Excluir</button>
+          </div>
+        </div>
+      `;
+        itemsContainer.appendChild(el);
+      });
+
+      annualItemsList.appendChild(itemsContainer);
+    });
 }
 
 // === Sistema de Alerta no Orçamento ===
@@ -2820,6 +2948,7 @@ if (btnInstall) {
     installBanner.style.display = 'none';
     if (deferredPrompt) {
       deferredPrompt.prompt();
+      1;
       const { outcome } = await deferredPrompt.userChoice;
       console.log(`Instalação PWA: ${outcome}`);
       deferredPrompt = null;

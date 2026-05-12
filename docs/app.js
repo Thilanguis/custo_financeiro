@@ -2649,7 +2649,9 @@ if (formAnnual) {
     const dateVal = annualDateInput.value;
     const monthTarget = dateVal ? dateVal.split('-')[1] : '';
     const dayTarget = dateVal ? dateVal.split('-')[2] : '';
-    const amount = parseAmount(annualAmountInput.value);
+    const rawAmount = parseAmount(annualAmountInput.value);
+    const isIncome = document.getElementById('annual-is-income')?.checked || false;
+    const amount = isIncome ? -Math.abs(rawAmount) : Math.abs(rawAmount);
     const owner = annualOwnerSelect.value;
     const paymentMethodId = annualPaymentSelect.value;
     const observation = annualObservationInput.value.trim();
@@ -2687,6 +2689,7 @@ if (formAnnual) {
         paymentMethodId,
         observation,
         isOneOff,
+        isIncome,
       };
 
       if (editingAnnualId && !isInstallment) {
@@ -2712,6 +2715,8 @@ function resetAnnualForm() {
   if (annualCategoryInput) annualCategoryInput.value = selectedAnnualType;
   if (annualObservationInput) annualObservationInput.value = '';
   if (annualOneOffCheckbox) annualOneOffCheckbox.checked = false;
+  const isIncomeCheck = document.getElementById('annual-is-income');
+  if (isIncomeCheck) isIncomeCheck.checked = false;
   if (annualInstallmentCheck) annualInstallmentCheck.checked = false;
   if (annualInstallmentFields) annualInstallmentFields.style.display = 'none';
   if (annualInstallmentCheck) annualInstallmentCheck.parentElement.parentElement.style.display = 'flex'; // Garante que volta a aparecer caso estivesse editando
@@ -2730,7 +2735,10 @@ function startEditAnnual(id) {
   const safeDay = item.dayTarget ? String(item.dayTarget).padStart(2, '0') : '01';
   annualDateInput.value = `${dummyYear}-${item.monthTarget}-${safeDay}`;
 
-  annualAmountInput.value = item.amount;
+  annualAmountInput.value = Math.abs(item.amount);
+  const isIncomeCheck = document.getElementById('annual-is-income');
+  if (isIncomeCheck) isIncomeCheck.checked = item.amount < 0 || item.isIncome;
+
   annualOwnerSelect.value = item.owner;
   annualPaymentSelect.value = item.paymentMethodId || 'dinheiro';
   annualObservationInput.value = item.observation || '';
@@ -2831,14 +2839,19 @@ function renderAnnualList() {
           ? ' <span style="background: rgba(255, 123, 123, 0.15); color: #ff7b7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(255, 123, 123, 0.3); margin-left: 6px; vertical-align: middle;">Único</span>'
           : '';
 
+        const isIncome = item.amount < 0 || item.isIncome;
+        const amountColor = isIncome ? '#62c462' : '#ff7b7b';
+        const displayAmount = isIncome ? `+ ${formatCurrency(Math.abs(item.amount))}` : `- ${formatCurrency(Math.abs(item.amount))}`;
+        const incomeBadge = isIncome ? ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold; margin-left: 4px;">(Entrada)</span>' : '';
+
         el.innerHTML = `
         <div class="receipt-main">
-          <div class="receipt-line">${item.name}${oneOffBadge} <span style="color:#fddf7b; font-size: 0.75rem; margin-left: 4px;">[${diaText}]</span></div>
+          <div class="receipt-line">${item.name}${oneOffBadge}${incomeBadge} <span style="color:#fddf7b; font-size: 0.75rem; margin-left: 4px;">[${diaText}]</span></div>
           ${obsHtml}
           <div class="receipt-meta" style="margin-top:2px;">${item.category} • Resp: ${item.owner}${payStr}</div>
         </div>
         <div class="receipt-right">
-          <div class="receipt-amount">${formatCurrency(item.amount)}</div>
+          <div class="receipt-amount" style="color: ${amountColor};">${displayAmount}</div>
           <div class="receipt-actions">
             <button class="action-btn" onclick="startEditAnnual('${item.id}')">Editar</button>
             <button class="action-btn danger" onclick="deleteAnnual('${item.id}')">Excluir</button>

@@ -801,18 +801,24 @@ formPlanned.addEventListener('submit', async (e) => {
     oldItem = plannedItems.find((p) => p.id === editingPlannedId);
   }
 
+  const syncId = oldItem && oldItem.staticSyncId ? oldItem.staticSyncId : `sync_${Date.now()}`;
+
   const itemData = { date, category, description, amount, owner, paymentMethodId, fixed, isStatic, month };
+  if (isStatic) itemData.staticSyncId = syncId;
   if (editingPlannedId !== null) itemData.id = editingPlannedId;
 
   await FinanceAPI.savePlanned(month, itemData);
 
   if (editingPlannedId === null) {
     if (isStatic) {
-      const receiptData = { date: date, category, merchant: description, amount, owner, paymentMethodId, isStatic: true };
+      const receiptData = { date: date, category, merchant: description, amount, owner, paymentMethodId, isStatic: true, staticSyncId: syncId };
       await FinanceAPI.saveReceipt(month, receiptData);
     }
   } else if (oldItem) {
-    const linkedReceipt = receipts.find((r) => r.date.startsWith(month) && r.category === oldItem.category && r.merchant === oldItem.description && r.owner === oldItem.owner && r.amount === oldItem.amount && r.isStatic);
+    const linkedReceipt = receipts.find((r) => {
+      if (r.staticSyncId && oldItem.staticSyncId) return r.staticSyncId === oldItem.staticSyncId;
+      return r.date.startsWith(month) && r.category === oldItem.category && r.merchant === oldItem.description && r.owner === oldItem.owner && r.amount === oldItem.amount && r.isStatic;
+    });
 
     if (linkedReceipt) {
       if (isStatic) {
@@ -826,13 +832,14 @@ formPlanned.addEventListener('submit', async (e) => {
           paymentMethodId: paymentMethodId,
           isStatic: true,
           isReimbursement: linkedReceipt.isReimbursement || false,
+          staticSyncId: syncId,
         };
         await FinanceAPI.saveReceipt(month, updatedReceipt);
       } else {
         await FinanceAPI.deleteReceipt(month, linkedReceipt.id);
       }
     } else if (isStatic) {
-      const receiptData = { date: date, category, merchant: description, amount, owner, paymentMethodId, isStatic: true };
+      const receiptData = { date: date, category, merchant: description, amount, owner, paymentMethodId, isStatic: true, staticSyncId: syncId };
       await FinanceAPI.saveReceipt(month, receiptData);
     }
   }
@@ -900,7 +907,10 @@ async function deletePlanned(id) {
   await FinanceAPI.deletePlanned(month, id);
 
   if (p.isStatic) {
-    const receiptToDelete = receipts.find((r) => r.date.startsWith(month) && r.category === p.category && r.merchant === p.description && r.owner === p.owner && r.amount === p.amount && r.isStatic);
+    const receiptToDelete = receipts.find((r) => {
+      if (r.staticSyncId && p.staticSyncId) return r.staticSyncId === p.staticSyncId;
+      return r.date.startsWith(month) && r.category === p.category && r.merchant === p.description && r.owner === p.owner && r.amount === p.amount && r.isStatic;
+    });
     if (receiptToDelete) {
       await FinanceAPI.deleteReceipt(month, receiptToDelete.id);
     }
@@ -909,6 +919,38 @@ async function deletePlanned(id) {
   if (editingPlannedId === id) resetPlannedForm();
   showToast('Item do orçamento excluído.', 'success');
 }
+
+window.startLaunchToReal = function (id) {
+  const p = plannedItems.find((x) => x.id === id);
+  if (!p) return;
+
+  // Salva o ID do item previsto para fazer o vínculo exato
+  window.currentLaunchPlannedId = id;
+
+  // Troca para a aba de Lançamento Real (Notas)
+  document.querySelector('.nav-btn[data-view="receipts"]').click();
+
+  // Preenche o formulário com os dados do orçamento
+  actualDateInput.value = p.date || `${p.month}-01`;
+  actualCategoryInput.value = p.category;
+  actualMerchantInput.value = p.description;
+  actualAmountInput.value = Math.abs(p.amount);
+  actualOwnerSelect.value = p.owner || 'Ambos';
+  document.getElementById('actual-payment').value = p.paymentMethodId || 'dinheiro';
+
+  // Marca o checkbox sozinho se for uma entrada
+  const isIncomeCheck = document.getElementById('actual-is-income');
+  if (isIncomeCheck) isIncomeCheck.checked = p.amount < 0 || p.isIncome;
+
+  // Atualiza as tags (chips) visuais
+  if (getCategories().includes(p.category)) {
+    selectedReceiptType = p.category;
+    updateReceiptChips();
+  }
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  showToast('Confirme os dados e clique em Salvar Nota Fiscal.', 'info');
+};
 
 async function deleteReceipt(id) {
   const r = receipts.find((x) => x.id === id);
@@ -922,7 +964,10 @@ async function deleteReceipt(id) {
   await FinanceAPI.deleteReceipt(month, id);
 
   if (r.isStatic) {
-    const plannedToDelete = plannedItems.find((p) => p.month === month && p.category === r.category && p.description === r.merchant && p.owner === r.owner && p.amount === r.amount && p.isStatic);
+    const plannedToDelete = plannedItems.find((p) => {
+      if (p.staticSyncId && r.staticSyncId) return p.staticSyncId === r.staticSyncId;
+      return p.month === month && p.category === r.category && p.description === r.merchant && p.owner === r.owner && p.amount === r.amount && p.isStatic;
+    });
     if (plannedToDelete) {
       await FinanceAPI.deletePlanned(month, plannedToDelete.id);
     }
@@ -1061,12 +1106,30 @@ function renderPlannedItemsList(month) {
       const isOpen = openPlannedCats.has(cat);
       const catTotal = groupItems.reduce((acc, curr) => acc + curr.amount, 0);
 
+      // Verifica se há pelo menos 1 item nesta categoria que seja EVENTO e não esteja na lista Real
+      const hasPendingInGroup = groupItems.some((p) => {
+        if (!p.linkedAnnualId) return false;
+        const isLaunched = receipts.some((r) => {
+          if (r.linkedPlannedId) return r.linkedPlannedId === p.id;
+          return r.date.startsWith(month) && r.category === p.category && r.merchant.toLowerCase() === p.description.toLowerCase() && r.owner === p.owner;
+        });
+        return !isLaunched;
+      });
+
       const hasEvent = groupItems.some((p) => p.linkedAnnualId);
       const headerDiv = document.createElement('div');
       headerDiv.className = 'group-header-div';
+
+      // Aplica o fundo e borda amarela se houver pendência
+      if (hasPendingInGroup) {
+        headerDiv.style.background = 'linear-gradient(90deg, rgba(247, 200, 74, 0.15) 0%, #1a1a2e 100%)';
+        headerDiv.style.borderLeft = '4px solid #f7c84a';
+      }
+
       const catBadge = hasEvent
         ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px; vertical-align: middle;">Evento</span>'
         : '';
+
       headerDiv.innerHTML = `
       <span style="color: #f5f5f5; display: flex; align-items: center;"><span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}${catBadge}</span>
       <span style="color:#a6a6c0; font-size:0.85rem; font-weight:normal;">${formatCurrency(catTotal)}</span>
@@ -1092,10 +1155,19 @@ function renderPlannedItemsList(month) {
             ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px; vertical-align: middle;">Evento</span>'
             : '';
 
+          // Checa se este item específico já foi pago/recebido no mês
+          const isLaunched = receipts.some((r) => {
+            if (r.linkedPlannedId) return r.linkedPlannedId === p.id;
+            return r.date.startsWith(month) && r.category === p.category && r.merchant.toLowerCase() === p.description.toLowerCase() && r.owner === p.owner;
+          });
+
           const isIncome = p.amount < 0;
           const amountColor = isIncome ? '#62c462' : '#ff7b7b';
           const displayAmount = isIncome ? `+ ${formatCurrency(Math.abs(p.amount))}` : `- ${formatCurrency(Math.abs(p.amount))}`;
           const incomeBadge = isIncome ? ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold; margin-left: 4px;">(Entrada)</span>' : '';
+
+          // Mostra o "+" amarelo apenas se estiver pendente E for um evento anual
+          const btnLaunchHtml = !isLaunched && p.linkedAnnualId ? `<button class="action-btn" style="color: #f7c84a; border: 1px solid rgba(247, 200, 74, 0.3);" onclick="startLaunchToReal('${p.id}')" title="Lançar no Real">➕</button>` : '';
 
           item.innerHTML = `
           <div class="receipt-main">
@@ -1106,6 +1178,7 @@ function renderPlannedItemsList(month) {
           <div class="receipt-right">
             <div class="receipt-amount" style="color: ${amountColor};">${displayAmount}</div>
             <div class="receipt-actions">
+              ${btnLaunchHtml}
               <button class="action-btn" onclick="startEditPlanned('${p.id}')">Editar</button>
               <button class="action-btn danger" onclick="deletePlanned('${p.id}')">Excluir</button>
             </div>
@@ -1180,8 +1253,9 @@ formActual.addEventListener('submit', async (e) => {
 
   const isStatic = oldReceipt ? oldReceipt.isStatic || false : false;
   const isReimb = oldReceipt ? oldReceipt.isReimbursement || false : false;
+  const isIncomeChecked = document.getElementById('actual-is-income')?.checked || false;
 
-  const finalAmount = isReimb ? -Math.abs(amount) : amount;
+  const finalAmount = isReimb || isIncomeChecked ? -Math.abs(amount) : Math.abs(amount);
 
   const itemData = {
     date,
@@ -1195,12 +1269,25 @@ formActual.addEventListener('submit', async (e) => {
     isReimbursement: isReimb,
   };
 
+  if (oldReceipt && oldReceipt.staticSyncId) {
+    itemData.staticSyncId = oldReceipt.staticSyncId;
+  }
+
+  // Se o lançamento veio pelo botão +, salva o vínculo forte
+  if (window.currentLaunchPlannedId) {
+    itemData.linkedPlannedId = window.currentLaunchPlannedId;
+    window.currentLaunchPlannedId = null; // Limpa a variável após usar
+  }
+
   if (editingReceiptId !== null) itemData.id = editingReceiptId;
 
   await FinanceAPI.saveReceipt(month, itemData);
 
   if (oldReceipt && oldReceipt.isStatic) {
-    const linkedPlanned = plannedItems.find((p) => p.month === month && p.category === oldReceipt.category && p.description === oldReceipt.merchant && p.owner === oldReceipt.owner && p.amount === oldReceipt.amount && p.isStatic);
+    const linkedPlanned = plannedItems.find((p) => {
+      if (p.staticSyncId && oldReceipt.staticSyncId) return p.staticSyncId === oldReceipt.staticSyncId;
+      return p.month === month && p.category === oldReceipt.category && p.description === oldReceipt.merchant && p.owner === oldReceipt.owner && p.amount === oldReceipt.amount && p.isStatic;
+    });
 
     if (linkedPlanned) {
       const updatedPlanned = {
@@ -1214,6 +1301,7 @@ formActual.addEventListener('submit', async (e) => {
         amount: finalAmount,
         owner: owner,
         paymentMethodId: paymentMethodId,
+        staticSyncId: oldReceipt.staticSyncId || linkedPlanned.staticSyncId,
       };
       await FinanceAPI.savePlanned(month, updatedPlanned);
     }
@@ -1235,6 +1323,12 @@ function resetReceiptForm() {
   actualMerchantInput.value = '';
   actualObservationInput.value = '';
 
+  const isIncomeCheck = document.getElementById('actual-is-income');
+  if (isIncomeCheck) isIncomeCheck.checked = false;
+
+  // Garante que o vínculo não vaze para lançamentos manuais
+  window.currentLaunchPlannedId = null;
+
   const selectedMonth = getCurrentMonth();
   const today = getLocalDateString();
   actualDateInput.value = today.startsWith(selectedMonth) ? today : `${selectedMonth}-01`;
@@ -1250,7 +1344,11 @@ function startEditReceipt(id) {
   actualDateInput.value = r.date;
   actualCategoryInput.value = r.category;
   actualMerchantInput.value = r.merchant;
-  actualAmountInput.value = r.amount;
+
+  actualAmountInput.value = Math.abs(r.amount);
+  const isIncomeCheck = document.getElementById('actual-is-income');
+  if (isIncomeCheck) isIncomeCheck.checked = r.amount < 0 && !r.isReimbursement;
+
   actualOwnerSelect.value = r.owner;
   document.getElementById('actual-payment').value = r.paymentMethodId || 'dinheiro';
   actualObservationInput.value = r.observation || '';
@@ -1377,20 +1475,57 @@ function updateGlobalSummaries() {
   const month = getCurrentMonth();
   if (!month) return;
 
-  const totalIncome = getIncomeTotalForMonth(month);
-  const totalPlanned = plannedItems.filter((p) => p.month === month).reduce((s, p) => s + p.amount, 0);
-  const totalActual = receipts.filter((r) => r.date.startsWith(month)).reduce((s, r) => s + r.amount, 0);
+  // Renda Base (Seu salário fixo cadastrado)
+  const baseIncome = getIncomeTotalForMonth(month);
 
-  const saldoPrevisto = totalIncome - totalPlanned;
-  const saldoReal = totalIncome - totalActual;
+  // Cálculo Previsto
+  let pExp = 0; // Gastos (+)
+  let pExtraInc = 0; // Entradas/Eventos Previstos (-)
+  plannedItems
+    .filter((p) => p.month === month)
+    .forEach((p) => {
+      if (p.amount > 0) pExp += p.amount;
+      else pExtraInc += Math.abs(p.amount);
+    });
 
-  document.getElementById('summary-income-inline').textContent = formatCurrency(totalIncome);
+  // Cálculo Real
+  let rExp = 0; // Gastos Reais (+)
+  let rReimb = 0; // Reembolsos (-) -> Vai abater o gasto
+  let rExtraInc = 0; // Entradas Reais (-) -> Vai somar na renda
 
+  receipts
+    .filter((r) => r.date.startsWith(month))
+    .forEach((r) => {
+      if (r.amount > 0) {
+        rExp += r.amount;
+      } else if (r.isReimbursement) {
+        rReimb += Math.abs(r.amount);
+      } else {
+        rExtraInc += Math.abs(r.amount);
+      }
+    });
+
+  // Gasto Líquido (Abate apenas os Reembolsos)
+  const netPlannedExpense = pExp;
+  const netActualExpense = rExp - rReimb;
+
+  // Renda Total (Salário Base + Entradas de Eventos/Avulsas)
+  const totalIncomePlanned = baseIncome + pExtraInc;
+  const totalIncomeReal = baseIncome + rExtraInc;
+
+  const saldoPrevisto = totalIncomePlanned - netPlannedExpense;
+  const saldoReal = totalIncomeReal - netActualExpense;
+
+  // UI - Renda (Mostra a Renda Total real)
+  document.getElementById('summary-income-inline').textContent = formatCurrency(totalIncomeReal);
+
+  // UI - Gasto (Gasto Líquido: Gastos - Reembolsos)
   const elExpense = document.getElementById('summary-expense-inline');
-  elExpense.textContent = formatCurrency(totalActual);
-  document.getElementById('summary-planned-expense').textContent = formatCurrency(totalPlanned).replace('CAD ', '');
-  elExpense.className = totalActual > totalPlanned ? 'status-danger' : 'status-warning';
+  elExpense.textContent = formatCurrency(netActualExpense);
+  document.getElementById('summary-planned-expense').textContent = formatCurrency(netPlannedExpense).replace('CAD ', '');
+  elExpense.className = netActualExpense > netPlannedExpense ? 'status-danger' : 'status-warning';
 
+  // UI - Livre (Saldo final)
   const elLivre = document.getElementById('summary-saldo-livre');
   elLivre.textContent = formatCurrency(saldoReal);
   document.getElementById('summary-saldo-previsto').textContent = formatCurrency(saldoPrevisto).replace('CAD ', '');
@@ -2399,6 +2534,7 @@ function refreshAll() {
   updateChartsView();
   updateHistoricalChart();
   checkAnnualAlerts();
+  updateBudgetBadge();
 }
 
 // ===== Inicialização e Autenticação =====
@@ -2887,6 +3023,38 @@ function renderAnnualList() {
     });
 }
 
+// === Sistema de Alerta na Aba de Orçamento ===
+function updateBudgetBadge() {
+  const month = getCurrentMonth();
+  const navBtnBudget = document.querySelector('.nav-btn[data-view="budget"]');
+  if (!navBtnBudget) return;
+
+  if (!month) {
+    navBtnBudget.innerHTML = '1. Orçamento';
+    return;
+  }
+
+  const plannedForMonth = plannedItems.filter((p) => p.month === month);
+  let pendingCount = 0;
+
+  plannedForMonth.forEach((p) => {
+    if (!p.linkedAnnualId) return; // Ignora se não for evento anual
+    const isLaunched = receipts.some((r) => {
+      if (r.linkedPlannedId) return r.linkedPlannedId === p.id;
+      return r.date.startsWith(month) && r.category === p.category && r.merchant.toLowerCase() === p.description.toLowerCase() && r.owner === p.owner;
+    });
+    if (!isLaunched) {
+      pendingCount++;
+    }
+  });
+
+  if (pendingCount > 0) {
+    navBtnBudget.innerHTML = `1. Orçamento <span style="background: #f7c84a; color: #12121c; border-radius: 50%; padding: 2px 6px; font-size: 0.7rem; font-weight: bold; margin-left: 4px;">${pendingCount}</span>`;
+  } else {
+    navBtnBudget.innerHTML = '1. Orçamento';
+  }
+}
+
 // === Sistema de Alerta no Orçamento ===
 function checkAnnualAlerts() {
   const currentMonthStr = getCurrentMonth();
@@ -2903,8 +3071,8 @@ function checkAnnualAlerts() {
       // 1. Tracking Invisível: Match perfeito se foi lançado pelo botão
       if (p.linkedAnnualId === ev.id) return true;
 
-      // 2. Fallback: Lançamento manual (cruza Nome exato + Valor exato)
-      return p.description.toLowerCase() === ev.name.toLowerCase() && p.amount === ev.amount;
+      // 2. Fallback: Lançamento manual antigo (cruza Nome, Categoria e Responsável)
+      return p.description.toLowerCase() === ev.name.toLowerCase() && p.category === ev.category && p.owner === ev.owner;
     });
 
     return !alreadyPlanned;

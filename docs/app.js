@@ -1744,7 +1744,9 @@ function updateDashboardView() {
 
     const tdCatReal = document.createElement('td');
     tdCatReal.className = 'numeric';
-    tdCatReal.textContent = formatCurrency(data.actual);
+    const isCatIncome = data.actual < 0;
+    tdCatReal.style.color = data.actual === 0 ? '#f5f5f5' : isCatIncome ? '#62c462' : '#ff7b7b';
+    tdCatReal.textContent = data.actual === 0 ? formatCurrency(0) : isCatIncome ? `+ ${formatCurrency(Math.abs(data.actual))}` : `- ${formatCurrency(Math.abs(data.actual))}`;
 
     const tdCatDiff = document.createElement('td');
     tdCatDiff.className = 'numeric ' + (diffCat > 0 ? 'positive' : diffCat === 0 ? 'neutral' : 'negative');
@@ -1848,8 +1850,9 @@ function updateDashboardView() {
               const dateStr = t.date ? `${t.date.split('-').reverse().join('/').substring(0, 5)}` : '';
               const payStr = getPaymentName(t.paymentMethodId);
 
-              const isReimb = t.isReimbursement;
-              const amountColor = isReimb ? '#62c462' : '#c3c3d5';
+              const isReimb = t.isReimbursement || t.amount < 0;
+              const amountColor = isReimb ? '#62c462' : '#ff7b7b';
+              const displayAmount = isReimb ? `+ ${formatCurrency(Math.abs(t.amount))}` : `- ${formatCurrency(Math.abs(t.amount))}`;
               const reimbBadge = isReimb ? ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Reemb.)</span>' : '';
 
               let isTxAnnual = false;
@@ -1872,7 +1875,7 @@ function updateDashboardView() {
                 <div style="margin-top: 8px; margin-bottom: 8px; border-left: 2px solid #27273a; padding-left: 8px;">
                   <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 4px;">
                     <span style="color: #c3c3d5; font-size: 0.8rem; line-height: 1.3;">${t.text}${reimbBadge}${txAnnualBadge}</span>
-                    <span style="color: ${amountColor}; font-size: 0.75rem; font-weight: 600; white-space: nowrap; margin-left: 4px;">${formatCurrency(t.amount)}</span>
+                    <span style="color: ${amountColor}; font-size: 0.75rem; font-weight: 600; white-space: nowrap; margin-left: 4px;">${displayAmount}</span>
                   </div>
                   <div style="font-size: 0.7rem; color: #8e8eab; margin-top: 3px; display: flex; flex-wrap: wrap; gap: 4px;">
                     <span>(${t.owner})</span>
@@ -1934,7 +1937,9 @@ function updateDashboardView() {
 
         const tdItemReal = document.createElement('td');
         tdItemReal.className = 'numeric';
-        tdItemReal.textContent = formatCurrency(item.actual);
+        const isItemIncome = item.actual < 0;
+        tdItemReal.style.color = item.actual === 0 ? '#f5f5f5' : isItemIncome ? '#62c462' : '#ff7b7b';
+        tdItemReal.textContent = item.actual === 0 ? formatCurrency(0) : isItemIncome ? `+ ${formatCurrency(Math.abs(item.actual))}` : `- ${formatCurrency(Math.abs(item.actual))}`;
 
         const tdItemDiff = document.createElement('td');
         tdItemDiff.className = 'numeric ' + (diffItem > 0 ? 'positive' : diffItem === 0 ? 'neutral' : 'negative');
@@ -1951,7 +1956,11 @@ function updateDashboardView() {
 
   const totalDiff = Math.round((sumPlanned - sumActual) * 100) / 100;
   document.getElementById('dashboard-total-planned').textContent = formatCurrency(sumPlanned);
-  document.getElementById('dashboard-total-actual').textContent = formatCurrency(sumActual);
+
+  const totalActualEl = document.getElementById('dashboard-total-actual');
+  const isSumIncome = sumActual < 0;
+  totalActualEl.style.color = sumActual === 0 ? '#f5f5f5' : isSumIncome ? '#62c462' : '#ff7b7b';
+  totalActualEl.textContent = sumActual === 0 ? formatCurrency(0) : isSumIncome ? `+ ${formatCurrency(Math.abs(sumActual))}` : `- ${formatCurrency(Math.abs(sumActual))}`;
 
   const tdDiffTotal = document.getElementById('dashboard-total-diff');
   tdDiffTotal.textContent = formatCurrency(totalDiff);

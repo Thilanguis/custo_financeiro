@@ -937,6 +937,7 @@ window.startLaunchToReal = function (id) {
   actualAmountInput.value = Math.abs(p.amount);
   actualOwnerSelect.value = p.owner || 'Ambos';
   document.getElementById('actual-payment').value = p.paymentMethodId || 'dinheiro';
+  actualObservationInput.value = p.observation || ''; // Linha adicionada para trazer a observação
 
   // Marca o checkbox sozinho se for uma entrada
   const isIncomeCheck = document.getElementById('actual-is-income');

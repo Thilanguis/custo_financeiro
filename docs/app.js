@@ -2786,16 +2786,27 @@ function renderAnnualList() {
     groupedByMonth[monthIdx].push(item);
   });
 
+  const currentViewMonthStr = getCurrentMonth();
+  const currentMonthIdx = currentViewMonthStr ? parseInt(currentViewMonthStr.split('-')[1]) - 1 : -1;
+
   // 3. Renderiza os blocos divididos por mês
   Object.keys(groupedByMonth)
     .sort((a, b) => a - b)
     .forEach((monthIdx) => {
+      const isCurrentMonth = parseInt(monthIdx) === currentMonthIdx;
+
       // Cria o cabeçalho do mês
       const header = document.createElement('div');
       header.className = 'group-header-div';
       header.style.cursor = 'default';
-      header.style.borderLeft = '4px solid #f7c84a'; // Destaque em amarelo
-      header.innerHTML = `<span style="color: #f5f5f5; font-size: 1rem; font-weight: 700;">📅 ${monthNames[monthIdx]}</span>`;
+      header.style.borderLeft = isCurrentMonth ? '4px solid #62c462' : '4px solid #f7c84a';
+      if (isCurrentMonth) header.style.background = 'linear-gradient(90deg, rgba(98, 196, 98, 0.15) 0%, #1a1a2e 100%)';
+
+      const badgeHtml = isCurrentMonth
+        ? ' <span style="background: rgba(98, 196, 98, 0.15); color: #62c462; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(98, 196, 98, 0.3); margin-left: 8px; vertical-align: middle;">Mês Atual</span>'
+        : '';
+
+      header.innerHTML = `<span style="color: #f5f5f5; font-size: 1rem; font-weight: 700;">📅 ${monthNames[monthIdx]}${badgeHtml}</span>`;
       annualItemsList.appendChild(header);
 
       // Cria um container para dar um leve recuo (identação) nos itens daquele mês

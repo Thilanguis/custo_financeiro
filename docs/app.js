@@ -141,8 +141,8 @@ function getCurrentMonthISO() {
   return getLocalDateString().slice(0, 7);
 }
 
-function makeKey(category, description) {
-  return (category || '').trim().toLowerCase() + '||' + (description || '').trim().toLowerCase();
+function makeKey(category, description, owner = 'Ambos') {
+  return (category || '').trim().toLowerCase() + '||' + (description || '').trim().toLowerCase() + '||' + (owner || 'Ambos').trim().toLowerCase();
 }
 
 // ===== Navegação entre telas =====
@@ -1106,17 +1106,19 @@ function renderPlannedItemsList(month) {
       const isOpen = openPlannedCats.has(cat);
       const catTotal = groupItems.reduce((acc, curr) => acc + curr.amount, 0);
 
-      // Verifica se há pelo menos 1 item nesta categoria que seja EVENTO e não esteja na lista Real
+      // Verifica se há pelo menos 1 item nesta categoria que seja EVENTO (Anual ou Situacional) e esteja pendente
       const hasPendingInGroup = groupItems.some((p) => {
-        if (!p.linkedAnnualId) return false;
+        const isEvent = p.linkedAnnualId || p.category === 'Eventos';
+        if (!isEvent) return false;
+
         const isLaunched = receipts.some((r) => {
           if (r.linkedPlannedId) return r.linkedPlannedId === p.id;
-          return r.date.startsWith(month) && r.category === p.category && r.merchant.toLowerCase() === p.description.toLowerCase() && r.owner === p.owner;
+          return r.date.startsWith(month) && r.category === p.category && r.merchant.toLowerCase() === p.description.toLowerCase() && r.owner === p.owner && Math.abs(r.amount) === Math.abs(p.amount);
         });
         return !isLaunched;
       });
 
-      const hasEvent = groupItems.some((p) => p.linkedAnnualId);
+      const hasEvent = groupItems.some((p) => p.linkedAnnualId || p.category === 'Eventos');
       const headerDiv = document.createElement('div');
       headerDiv.className = 'group-header-div';
 
@@ -1151,14 +1153,15 @@ function renderPlannedItemsList(month) {
           const dateStr = p.date ? `${p.date.split('-').reverse().join('/').substring(0, 5)} • ` : '';
           const payStr = ` • ${getPaymentName(p.paymentMethodId)}`;
           const obsHtml = p.observation ? `<div style="font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">↳ ${p.observation}</div>` : '';
-          const annualBadge = p.linkedAnnualId
+          const isEventItem = p.linkedAnnualId || p.category === 'Eventos';
+          const annualBadge = isEventItem
             ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px; vertical-align: middle;">Evento</span>'
             : '';
 
           // Checa se este item específico já foi pago/recebido no mês
           const isLaunched = receipts.some((r) => {
             if (r.linkedPlannedId) return r.linkedPlannedId === p.id;
-            return r.date.startsWith(month) && r.category === p.category && r.merchant.toLowerCase() === p.description.toLowerCase() && r.owner === p.owner;
+            return r.date.startsWith(month) && r.category === p.category && r.merchant.toLowerCase() === p.description.toLowerCase() && r.owner === p.owner && Math.abs(r.amount) === Math.abs(p.amount);
           });
 
           const isIncome = p.amount < 0;
@@ -1166,8 +1169,8 @@ function renderPlannedItemsList(month) {
           const displayAmount = isIncome ? `+ ${formatCurrency(Math.abs(p.amount))}` : `- ${formatCurrency(Math.abs(p.amount))}`;
           const incomeBadge = isIncome ? ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold; margin-left: 4px;">(Entrada)</span>' : '';
 
-          // Mostra o "+" amarelo apenas se estiver pendente E for um evento anual
-          const btnLaunchHtml = !isLaunched && p.linkedAnnualId ? `<button class="action-btn" style="color: #f7c84a; border: 1px solid rgba(247, 200, 74, 0.3);" onclick="startLaunchToReal('${p.id}')" title="Lançar no Real">➕</button>` : '';
+          // Mostra o "+" amarelo apenas se estiver pendente E for um evento (Anual ou Situacional)
+          const btnLaunchHtml = !isLaunched && isEventItem ? `<button class="action-btn" style="color: #f7c84a; border: 1px solid rgba(247, 200, 74, 0.3);" onclick="startLaunchToReal('${p.id}')" title="Lançar no Real">➕</button>` : '';
 
           item.innerHTML = `
           <div class="receipt-main">
@@ -1771,7 +1774,7 @@ function updateDashboardView() {
     if (!mapCat[p.category]) mapCat[p.category] = { planned: 0, actual: 0, items: new Map() };
     mapCat[p.category].planned += p.amount;
 
-    const key = makeKey(p.category, p.description);
+    const key = makeKey(p.category, p.description, p.owner);
     if (!mapCat[p.category].items.has(key)) {
       mapCat[p.category].items.set(key, { name: p.description, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: p.date || '', isAnnual: false, annualEventsData: [] });
     }
@@ -1792,7 +1795,7 @@ function updateDashboardView() {
     if (!mapCat[r.category]) mapCat[r.category] = { planned: 0, actual: 0, items: new Map() };
     mapCat[r.category].actual += r.amount;
 
-    const key = makeKey(r.category, r.merchant);
+    const key = makeKey(r.category, r.merchant, r.owner);
     if (!mapCat[r.category].items.has(key)) {
       mapCat[r.category].items.set(key, { name: r.merchant, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: r.date || '', isAnnual: false, annualObs: new Set() });
     }
@@ -3038,10 +3041,12 @@ function updateBudgetBadge() {
   let pendingCount = 0;
 
   plannedForMonth.forEach((p) => {
-    if (!p.linkedAnnualId) return; // Ignora se não for evento anual
+    const isEvent = p.linkedAnnualId || p.category === 'Eventos';
+    if (!isEvent) return; // Ignora se não for evento
+
     const isLaunched = receipts.some((r) => {
       if (r.linkedPlannedId) return r.linkedPlannedId === p.id;
-      return r.date.startsWith(month) && r.category === p.category && r.merchant.toLowerCase() === p.description.toLowerCase() && r.owner === p.owner;
+      return r.date.startsWith(month) && r.category === p.category && r.merchant.toLowerCase() === p.description.toLowerCase() && r.owner === p.owner && Math.abs(r.amount) === Math.abs(p.amount);
     });
     if (!isLaunched) {
       pendingCount++;
@@ -3068,11 +3073,11 @@ function checkAnnualAlerts() {
     const alreadyPlanned = plannedItems.some((p) => {
       if (p.month !== currentMonthStr) return false;
 
-      // 1. Tracking Invisível: Match perfeito se foi lançado pelo botão
+      // 1. Verificação por ID (Vínculo Forte)
       if (p.linkedAnnualId === ev.id) return true;
 
-      // 2. Fallback: Lançamento manual antigo (cruza Nome, Categoria e Responsável)
-      return p.description.toLowerCase() === ev.name.toLowerCase() && p.category === ev.category && p.owner === ev.owner;
+      // 2. Múltipla Verificação (Fallback): Nome + Categoria + Dono + Valor
+      return p.description.toLowerCase() === ev.name.toLowerCase() && p.category === ev.category && p.owner === ev.owner && Math.abs(p.amount) === Math.abs(ev.amount);
     });
 
     return !alreadyPlanned;
@@ -3185,7 +3190,6 @@ if (btnInstall) {
     installBanner.style.display = 'none';
     if (deferredPrompt) {
       deferredPrompt.prompt();
-      1;
       const { outcome } = await deferredPrompt.userChoice;
       console.log(`Instalação PWA: ${outcome}`);
       deferredPrompt = null;

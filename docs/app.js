@@ -1095,10 +1095,11 @@ function renderPlannedItemsList(month) {
           const isIncome = p.amount < 0;
           const amountColor = isIncome ? '#62c462' : '#ff7b7b';
           const displayAmount = isIncome ? `+ ${formatCurrency(Math.abs(p.amount))}` : `- ${formatCurrency(Math.abs(p.amount))}`;
+          const incomeBadge = isIncome ? ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold; margin-left: 4px;">(Entrada)</span>' : '';
 
           item.innerHTML = `
           <div class="receipt-main">
-            <div class="receipt-line">${p.description}${annualBadge}</div>
+            <div class="receipt-line">${p.description}${annualBadge}${incomeBadge}</div>
             ${obsHtml}
             <div class="receipt-meta" style="margin-top: 2px;">${dateStr}Resp: ${p.owner}${payStr}${p.fixed ? (p.isStatic ? ' • Fixo & Estático' : ' • Fixo') : ''}</div>
           </div>
@@ -1321,12 +1322,15 @@ function updateReceiptsView() {
           const obsHtml = r.observation ? `<div style="font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">↳ ${r.observation}</div>` : '';
           const payStr = ` • ${getPaymentName(r.paymentMethodId)}`;
 
-          const isReimb = r.isReimbursement || r.amount < 0;
-          const amountColor = isReimb ? '#62c462' : '#ff7b7b';
-          const displayAmount = isReimb ? `+ ${formatCurrency(Math.abs(r.amount))}` : `- ${formatCurrency(Math.abs(r.amount))}`;
-          const reimbBadge = isReimb ? ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Reembolso)</span>' : '';
+          const isIncomeOrReimb = r.isReimbursement || r.amount < 0;
+          const amountColor = isIncomeOrReimb ? '#62c462' : '#ff7b7b';
+          const displayAmount = isIncomeOrReimb ? `+ ${formatCurrency(Math.abs(r.amount))}` : `- ${formatCurrency(Math.abs(r.amount))}`;
 
-          const btnReembolsoHtml = !isReimb ? `<button class="action-btn" style="color: #62c462; border: 1px solid rgba(98, 196, 98, 0.3);" onclick="startReimbursement('${r.id}')" title="Reembolsar esta nota">🔄</button>` : '';
+          let reimbBadge = '';
+          if (r.isReimbursement) reimbBadge = ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Reembolso)</span>';
+          else if (r.amount < 0) reimbBadge = ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Entrada)</span>';
+
+          const btnReembolsoHtml = !isIncomeOrReimb ? `<button class="action-btn" style="color: #62c462; border: 1px solid rgba(98, 196, 98, 0.3);" onclick="startReimbursement('${r.id}')" title="Reembolsar esta nota">🔄</button>` : '';
 
           item.innerHTML = `
           <div class="receipt-main">
@@ -1850,10 +1854,13 @@ function updateDashboardView() {
               const dateStr = t.date ? `${t.date.split('-').reverse().join('/').substring(0, 5)}` : '';
               const payStr = getPaymentName(t.paymentMethodId);
 
-              const isReimb = t.isReimbursement || t.amount < 0;
-              const amountColor = isReimb ? '#62c462' : '#ff7b7b';
-              const displayAmount = isReimb ? `+ ${formatCurrency(Math.abs(t.amount))}` : `- ${formatCurrency(Math.abs(t.amount))}`;
-              const reimbBadge = isReimb ? ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Reemb.)</span>' : '';
+              const isIncomeOrReimb = t.isReimbursement || t.amount < 0;
+              const amountColor = isIncomeOrReimb ? '#62c462' : '#ff7b7b';
+              const displayAmount = isIncomeOrReimb ? `+ ${formatCurrency(Math.abs(t.amount))}` : `- ${formatCurrency(Math.abs(t.amount))}`;
+
+              let reimbBadge = '';
+              if (t.isReimbursement) reimbBadge = ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Reemb.)</span>';
+              else if (t.amount < 0) reimbBadge = ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Entrada)</span>';
 
               let isTxAnnual = false;
               if (item.annualEventsData && item.annualEventsData.length > 0) {
@@ -1915,8 +1922,9 @@ function updateDashboardView() {
           let reimbBadge = '';
           let payStr = '';
           if (singleTx) {
-            const isReimb = singleTx.isReimbursement || singleTx.amount < 0;
-            if (isReimb) reimbBadge = ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold; margin-left: 4px;">(Reemb.)</span>';
+            if (singleTx.isReimbursement) reimbBadge = ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold; margin-left: 4px;">(Reemb.)</span>';
+            else if (singleTx.amount < 0) reimbBadge = ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold; margin-left: 4px;">(Entrada)</span>';
+
             payStr = getPaymentName(singleTx.paymentMethodId);
           }
 
@@ -2934,11 +2942,16 @@ function checkAnnualAlerts() {
     const oneOffBadge = ev.isOneOff ? ' <span style="color:#ff7b7b; font-size:0.7rem; font-weight:bold;">(Único)</span>' : '';
     const obsHtml = ev.observation ? `<div style="font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">↳ ${ev.observation}</div>` : '';
 
+    const isIncome = ev.amount < 0 || ev.isIncome;
+    const amountColor = isIncome ? '#62c462' : '#ff7b7b';
+    const displayAmount = isIncome ? `+ ${formatCurrency(Math.abs(ev.amount))}` : `- ${formatCurrency(Math.abs(ev.amount))}`;
+    const incomeBadge = isIncome ? ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold; margin-left: 4px;">(Entrada)</span>' : '';
+
     el.innerHTML = `
       <div>
-        <div style="font-weight: 600; font-size: 0.9rem; color: #f5f5f5;">${ev.name}${oneOffBadge} (Dia ${ev.dayTarget || '01'})</div>
+        <div style="font-weight: 600; font-size: 0.9rem; color: #f5f5f5;">${ev.name}${oneOffBadge}${incomeBadge} (Dia ${ev.dayTarget || '01'})</div>
         ${obsHtml}
-        <div style="font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">Previsto: ${formatCurrency(ev.amount)} • ${ev.owner}</div>
+        <div style="font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">Previsto: <span style="color: ${amountColor}; font-weight: 600;">${displayAmount}</span> • ${ev.owner}</div>
       </div>
       <button class="btn-primary small" style="margin: 0; padding: 6px 12px; font-size: 0.8rem;" onclick="launchAnnualToBudget('${ev.id}', '${currentMonthStr}')">Lançar no Orçamento</button>
     `;

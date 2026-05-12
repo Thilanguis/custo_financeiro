@@ -1256,9 +1256,11 @@ formActual.addEventListener('submit', async (e) => {
   }
 
   const isStatic = oldReceipt ? oldReceipt.isStatic || false : false;
-  const isReimb = oldReceipt ? oldReceipt.isReimbursement || false : false;
   const isIncomeChecked = document.getElementById('actual-is-income')?.checked || false;
+  const isReimb = oldReceipt ? oldReceipt.isReimbursement || false : false;
 
+  // Se o usuário marcou "Saldo (+)", garantimos que isReimbursement seja false
+  const finalIsReimbursement = isReimb && !isIncomeChecked;
   const finalAmount = isReimb || isIncomeChecked ? -Math.abs(amount) : Math.abs(amount);
 
   const itemData = {
@@ -1270,7 +1272,7 @@ formActual.addEventListener('submit', async (e) => {
     paymentMethodId,
     observation,
     isStatic: isStatic,
-    isReimbursement: isReimb,
+    isReimbursement: finalIsReimbursement,
   };
 
   if (oldReceipt && oldReceipt.staticSyncId) {
@@ -1978,7 +1980,7 @@ function updateDashboardView() {
                   text: textToDisplay,
                   owner: t.owner || 'Ambos',
                   paymentMethodId: t.paymentMethodId,
-                  isReimbursement: t.isReimbursement || t.amount < 0,
+                  isReimbursement: t.isReimbursement || false, // Respeita o banco de dados
                 });
               });
             }

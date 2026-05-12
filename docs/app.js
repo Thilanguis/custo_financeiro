@@ -1415,6 +1415,13 @@ async function preloadAllIncomes() {
 }
 
 async function initAppUI() {
+  // Trava de segurança: aguarda o ID da família ser carregado antes de buscar os dados
+  let retries = 0;
+  while (!FinanceAPI.familyId && retries < 20) {
+    await new Promise((r) => setTimeout(r, 100));
+    retries++;
+  }
+
   const m = getCurrentMonthISO();
   monthInput.value = m;
 
@@ -2306,7 +2313,19 @@ function startReimbursement(id) {
 
 // ===== Refresh geral =====
 
+let isAppReady = false;
+
 function refreshAll() {
+  // Só esconde o loader quando o primeiro ciclo de dados for injetado na tela
+  if (!isAppReady) {
+    isAppReady = true;
+    const globalLoader = document.getElementById('global-loader');
+    if (globalLoader) {
+      globalLoader.style.opacity = '0';
+      setTimeout(() => (globalLoader.style.display = 'none'), 300);
+    }
+  }
+
   const month = getCurrentMonth();
   if (!month) {
     if (summaryIncomeInline) {
@@ -2513,11 +2532,6 @@ FinanceAPI.onAuthStateChanged(async (user) => {
   const biometricOverlay = document.getElementById('biometric-overlay');
   const globalLoader = document.getElementById('global-loader');
 
-  if (globalLoader) {
-    globalLoader.style.opacity = '0';
-    setTimeout(() => (globalLoader.style.display = 'none'), 300);
-  }
-
   if (user) {
     loginOverlay.style.display = 'none';
     btnLogout.style.display = 'block';
@@ -2544,6 +2558,10 @@ FinanceAPI.onAuthStateChanged(async (user) => {
     initAppUI();
     console.log('Usuário logado e verificado:', user.email);
   } else {
+    if (globalLoader) {
+      globalLoader.style.opacity = '0';
+      setTimeout(() => (globalLoader.style.display = 'none'), 300);
+    }
     loginOverlay.style.display = 'flex';
     btnLogout.style.display = 'none';
     if (userDisplay) userDisplay.textContent = '';

@@ -1092,6 +1092,10 @@ function renderPlannedItemsList(month) {
             ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px; vertical-align: middle;">Evento</span>'
             : '';
 
+          const isIncome = p.amount < 0;
+          const amountColor = isIncome ? '#62c462' : '#ff7b7b';
+          const displayAmount = isIncome ? `+ ${formatCurrency(Math.abs(p.amount))}` : `- ${formatCurrency(Math.abs(p.amount))}`;
+
           item.innerHTML = `
           <div class="receipt-main">
             <div class="receipt-line">${p.description}${annualBadge}</div>
@@ -1099,7 +1103,7 @@ function renderPlannedItemsList(month) {
             <div class="receipt-meta" style="margin-top: 2px;">${dateStr}Resp: ${p.owner}${payStr}${p.fixed ? (p.isStatic ? ' • Fixo & Estático' : ' • Fixo') : ''}</div>
           </div>
           <div class="receipt-right">
-            <div class="receipt-amount">${formatCurrency(p.amount)}</div>
+            <div class="receipt-amount" style="color: ${amountColor};">${displayAmount}</div>
             <div class="receipt-actions">
               <button class="action-btn" onclick="startEditPlanned('${p.id}')">Editar</button>
               <button class="action-btn danger" onclick="deletePlanned('${p.id}')">Excluir</button>
@@ -1318,7 +1322,8 @@ function updateReceiptsView() {
           const payStr = ` • ${getPaymentName(r.paymentMethodId)}`;
 
           const isReimb = r.isReimbursement || r.amount < 0;
-          const amountColor = isReimb ? '#62c462' : '#f5f5f5';
+          const amountColor = isReimb ? '#62c462' : '#ff7b7b';
+          const displayAmount = isReimb ? `+ ${formatCurrency(Math.abs(r.amount))}` : `- ${formatCurrency(Math.abs(r.amount))}`;
           const reimbBadge = isReimb ? ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Reembolso)</span>' : '';
 
           const btnReembolsoHtml = !isReimb ? `<button class="action-btn" style="color: #62c462; border: 1px solid rgba(98, 196, 98, 0.3);" onclick="startReimbursement('${r.id}')" title="Reembolsar esta nota">🔄</button>` : '';
@@ -1330,7 +1335,7 @@ function updateReceiptsView() {
             <div class="receipt-meta" style="margin-top: 2px;">${r.date.split('-').reverse().join('/')} • ${r.owner}${payStr}${r.isStatic ? ' • Estático' : ''}</div>
           </div>
           <div class="receipt-right">
-            <div class="receipt-amount" style="color: ${amountColor};">${formatCurrency(r.amount)}</div>
+            <div class="receipt-amount" style="color: ${amountColor};">${displayAmount}</div>
             <div class="receipt-actions">
               ${btnReembolsoHtml}
               <button class="action-btn" onclick="startEditReceipt('${r.id}')">Editar</button>

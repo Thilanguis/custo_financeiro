@@ -3169,11 +3169,27 @@ window.launchAnnualToBudget = async function (eventId, targetMonthStr) {
   }
 };
 
-// ===== PWA e Service Worker =====
+// ===== PWA e Service Worker (Versão Consolidada com Auto-Update) =====
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./service-worker.js').catch((err) => console.error('Falha no Service Worker:', err));
+    navigator.serviceWorker
+      .register('./service-worker.js')
+      .then((reg) => {
+        // O navegador checa automaticamente se o service-worker.js no servidor mudou
+        reg.onupdatefound = () => {
+          const installingWorker = reg.installing;
+          installingWorker.onstatechange = () => {
+            if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              // Se o controller existe, significa que não é a primeira instalação, mas sim uma atualização
+              if (confirm('Nova versão disponível! Deseja carregar as atualizações agora?')) {
+                window.location.reload();
+              }
+            }
+          };
+        };
+      })
+      .catch((err) => console.error('Falha no Service Worker:', err));
   });
 }
 

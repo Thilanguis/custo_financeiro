@@ -1529,13 +1529,13 @@ function updateGlobalSummaries() {
   const elExpense = document.getElementById('summary-expense-inline');
   elExpense.textContent = formatCurrency(netActualExpense);
   document.getElementById('summary-planned-expense').textContent = formatCurrency(netPlannedExpense).replace('CAD ', '');
-  elExpense.className = netActualExpense > netPlannedExpense ? 'status-danger' : 'status-warning';
+  elExpense.className = netActualExpense > totalIncomeReal ? 'status-danger' : netActualExpense > netPlannedExpense ? 'status-warning' : 'status-success';
 
   // UI - Livre (Saldo final)
   const elLivre = document.getElementById('summary-saldo-livre');
   elLivre.textContent = formatCurrency(saldoReal);
   document.getElementById('summary-saldo-previsto').textContent = formatCurrency(saldoPrevisto).replace('CAD ', '');
-  elLivre.className = saldoReal >= saldoPrevisto ? 'status-success' : 'status-danger';
+  elLivre.className = saldoReal < 0 ? 'status-danger' : saldoReal < saldoPrevisto ? 'status-warning' : 'status-success';
 
   renderPlannedItemsList(month);
 }
@@ -1774,15 +1774,17 @@ function updateDashboardView() {
   const mapCat = {};
 
   plannedForMonth.forEach((p) => {
-    if (!mapCat[p.category]) mapCat[p.category] = { planned: 0, actual: 0, items: new Map() };
+    if (!mapCat[p.category]) mapCat[p.category] = { planned: 0, actual: 0, items: new Map(), hasReimbursement: false, hasIncome: false };
     mapCat[p.category].planned += p.amount;
+    if (p.amount < 0) mapCat[p.category].hasIncome = true;
 
     const key = makeKey(p.category, p.description, p.owner);
     if (!mapCat[p.category].items.has(key)) {
-      mapCat[p.category].items.set(key, { name: p.description, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: p.date || '', isAnnual: false, annualEventsData: [] });
+      mapCat[p.category].items.set(key, { name: p.description, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: p.date || '', isAnnual: false, annualEventsData: [], hasReimbursement: false, hasIncome: false });
     }
     const item = mapCat[p.category].items.get(key);
     item.planned += p.amount;
+    if (p.amount < 0) item.hasIncome = true;
     if (p.owner) item.owners.add(p.owner);
     if (p.date && (!item.maxDate || p.date > item.maxDate)) item.maxDate = p.date;
     if (p.linkedAnnualId) {
@@ -1795,15 +1797,19 @@ function updateDashboardView() {
   });
 
   receiptsForMonth.forEach((r) => {
-    if (!mapCat[r.category]) mapCat[r.category] = { planned: 0, actual: 0, items: new Map() };
+    if (!mapCat[r.category]) mapCat[r.category] = { planned: 0, actual: 0, items: new Map(), hasReimbursement: false, hasIncome: false };
     mapCat[r.category].actual += r.amount;
+    if (r.isReimbursement) mapCat[r.category].hasReimbursement = true;
+    if (r.amount < 0 && !r.isReimbursement) mapCat[r.category].hasIncome = true;
 
     const key = makeKey(r.category, r.merchant, r.owner);
     if (!mapCat[r.category].items.has(key)) {
-      mapCat[r.category].items.set(key, { name: r.merchant, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: r.date || '', isAnnual: false, annualObs: new Set() });
+      mapCat[r.category].items.set(key, { name: r.merchant, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: r.date || '', isAnnual: false, annualObs: new Set(), hasReimbursement: false, hasIncome: false });
     }
     const item = mapCat[r.category].items.get(key);
     item.actual += r.amount;
+    if (r.isReimbursement) item.hasReimbursement = true;
+    if (r.amount < 0 && !r.isReimbursement) item.hasIncome = true;
     if (r.owner) item.owners.add(r.owner);
     if (r.date && (!item.maxDate || r.date > item.maxDate)) item.maxDate = r.date;
 
@@ -1856,7 +1862,9 @@ function updateDashboardView() {
     catTitle.style.display = 'flex';
     catTitle.style.alignItems = 'center';
     const catBadge = hasEvent ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px;">Evento</span>' : '';
-    catTitle.innerHTML = `<span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}${catBadge}`;
+    const reimbCatBadge =
+      data.hasReimbursement || data.hasIncome ? ' <span style="background: rgba(98, 196, 98, 0.15); color: #62c462; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(98, 196, 98, 0.3); margin-left: 6px;">+</span>' : '';
+    catTitle.innerHTML = `<span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}${catBadge}${reimbCatBadge}`;
     catContainer.appendChild(catTitle);
 
     let percent = 0;
@@ -1885,7 +1893,9 @@ function updateDashboardView() {
 
     const tdCatPrev = document.createElement('td');
     tdCatPrev.className = 'numeric';
-    tdCatPrev.textContent = formatCurrency(data.planned);
+    const isCatPrevIncome = data.planned < 0;
+    tdCatPrev.style.color = data.planned === 0 ? '#f5f5f5' : isCatPrevIncome ? '#62c462' : '#f5f5f5';
+    tdCatPrev.textContent = data.planned === 0 ? formatCurrency(0) : isCatPrevIncome ? `+ ${formatCurrency(Math.abs(data.planned))}` : formatCurrency(data.planned);
 
     const tdCatReal = document.createElement('td');
     tdCatReal.className = 'numeric';
@@ -2039,12 +2049,16 @@ function updateDashboardView() {
             item.isAnnual && !hasRenderedAnnualChild
               ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px; vertical-align: middle;">Evento</span>'
               : '';
+          const itemReimbBadgeGroup =
+            item.hasReimbursement || item.hasIncome
+              ? ' <span style="background: rgba(98, 196, 98, 0.15); color: #62c462; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(98, 196, 98, 0.3); margin-left: 6px; vertical-align: middle;">+</span>'
+              : '';
 
           tdItemName.innerHTML = `
             <details style="cursor: pointer; margin: 2px 0;">
               <summary style="outline: none; user-select: none; color: #fddf7b;">
                 <div style="display: inline-block;">
-                  <span style="color: #f5f5f5;">${item.name}</span>${parentAnnualBadge}
+                  <span style="color: #f5f5f5;">${item.name}</span>${parentAnnualBadge}${itemReimbBadgeGroup}
                   <span style="font-size: 0.6rem; background: rgba(74, 144, 226, 0.15); color: #4a90e2; padding: 2px 6px; border-radius: 6px; margin-left: 4px; border: 1px solid rgba(74, 144, 226, 0.3); white-space: nowrap; vertical-align: middle;">${totalItems} itens</span>
                 </div>
                 <div style="font-size: 0.72rem; color: #8e8eab; margin-top: 2px; line-height: 1.3;">${metaText}</div>
@@ -2063,8 +2077,8 @@ function updateDashboardView() {
           let reimbBadge = '';
           let payStr = '';
           if (singleTx) {
-            if (singleTx.isReimbursement) reimbBadge = ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold; margin-left: 4px;">(Reemb.)</span>';
-            else if (singleTx.amount < 0) reimbBadge = ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold; margin-left: 4px;">(Entrada)</span>';
+            if (singleTx.isReimbursement || singleTx.amount < 0)
+              reimbBadge = ' <span style="background: rgba(98, 196, 98, 0.15); color: #62c462; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(98, 196, 98, 0.3); margin-left: 6px; vertical-align: middle;">+</span>';
 
             payStr = getPaymentName(singleTx.paymentMethodId);
           }
@@ -2082,7 +2096,9 @@ function updateDashboardView() {
 
         const tdItemPrev = document.createElement('td');
         tdItemPrev.className = 'numeric';
-        tdItemPrev.textContent = formatCurrency(item.planned);
+        const isItemPrevIncome = item.planned < 0;
+        tdItemPrev.style.color = item.planned === 0 ? '#f5f5f5' : isItemPrevIncome ? '#62c462' : '#f5f5f5';
+        tdItemPrev.textContent = item.planned === 0 ? formatCurrency(0) : isItemPrevIncome ? `+ ${formatCurrency(Math.abs(item.planned))}` : formatCurrency(item.planned);
 
         const tdItemReal = document.createElement('td');
         tdItemReal.className = 'numeric';

@@ -2772,9 +2772,6 @@ function syncData(month) {
 
   FinanceAPI.clearListeners();
 
-  btnLoadMonth.textContent = 'Sincronizando...';
-  btnLoadMonth.disabled = true;
-
   FinanceAPI.listenPaymentMethods((methods) => {
     paymentMethods = methods || [];
     renderPaymentMethodsList();
@@ -2820,9 +2817,6 @@ function syncData(month) {
     }
     receipts.push(...rItems);
     refreshAll();
-
-    btnLoadMonth.textContent = 'Carregar';
-    btnLoadMonth.disabled = false;
   });
 
   // 2. Escuta as notas do Mês Anterior (Exclusivo para plugar os dados na Fatura do Cartão)
@@ -2887,6 +2881,13 @@ async function verifyBiometrics() {
   if (!credIdStr) return true;
 
   const biometricOverlay = document.getElementById('biometric-overlay');
+
+  // Pula a biometria se já foi validada nesta sessão (evita pedir de novo no F5 ou atualização)
+  if (sessionStorage.getItem('biometria_ok') === 'true') {
+    if (biometricOverlay) biometricOverlay.style.display = 'none';
+    return true;
+  }
+
   biometricOverlay.style.display = 'flex';
 
   try {
@@ -2899,6 +2900,7 @@ async function verifyBiometrics() {
 
     await navigator.credentials.get({ publicKey: options });
     biometricOverlay.style.display = 'none';
+    sessionStorage.setItem('biometria_ok', 'true');
     return true;
   } catch (err) {
     console.error('Falha na biometria:', err);
@@ -2969,6 +2971,7 @@ formLogin.addEventListener('submit', async (e) => {
 });
 
 btnLogout.addEventListener('click', async () => {
+  sessionStorage.removeItem('biometria_ok');
   await FinanceAPI.logout();
 });
 
@@ -3398,21 +3401,79 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker
       .register('./service-worker.js')
       .then((reg) => {
-        // O navegador checa automaticamente se o service-worker.js no servidor mudou
         reg.onupdatefound = () => {
           const installingWorker = reg.installing;
           installingWorker.onstatechange = () => {
             if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
-              // Se o controller existe, significa que não é a primeira instalação, mas sim uma atualização
-              if (confirm('Nova versão disponível! Deseja carregar as atualizações agora?')) {
-                window.location.reload();
-              }
+              showUpdatePrompt();
             }
           };
         };
       })
       .catch((err) => console.error('Falha no Service Worker:', err));
   });
+}
+
+function showUpdatePrompt() {
+  const overlay = document.createElement('div');
+  overlay.className = 'custom-modal-overlay active';
+  overlay.style.zIndex = '9999999';
+  overlay.innerHTML = `
+    <div class="custom-modal" style="text-align: center; padding: 30px 20px;">
+      <div style="font-size: 2.5rem; margin-bottom: 12px;">✨</div>
+      <h2 style="margin: 0 0 10px 0; color: #fddf7b;">Atualização Disponível</h2>
+      <p style="color: #a6a6c0; font-size: 0.95rem; margin-bottom: 24px;">Uma nova versão do Controle Financeiro está pronta. Deseja atualizar agora?</p>
+      <div class="custom-modal-actions" style="justify-content: center;">
+        <button class="custom-modal-btn cancel" id="btn-update-later">Depois</button>
+        <button class="custom-modal-btn confirm" id="btn-update-now">Atualizar</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  document.getElementById('btn-update-later').onclick = () => overlay.remove();
+
+  document.getElementById('btn-update-now').onclick = () => {
+    overlay.innerHTML = `
+      <div class="custom-modal" style="text-align: center; padding: 30px 20px; width: 90%; max-width: 320px;">
+        <h2 style="margin: 0 0 16px 0; color: #fddf7b; font-size: 1.1rem;">Baixando atualização...</h2>
+        
+        <div style="width: 100%; background: #27273a; border-radius: 8px; height: 10px; overflow: hidden; margin-bottom: 8px; border: 1px solid #35354a;">
+          <div id="update-progress-bar" style="width: 0%; height: 100%; background: #62c462; transition: width 0.15s linear;"></div>
+        </div>
+        
+        <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: #a6a6c0;">
+          <span id="update-status-text">Conectando...</span>
+          <span id="update-percent">0%</span>
+        </div>
+      </div>
+    `;
+
+    let progress = 0;
+    const bar = document.getElementById('update-progress-bar');
+    const percentText = document.getElementById('update-percent');
+    const statusText = document.getElementById('update-status-text');
+
+    const interval = setInterval(() => {
+      progress += Math.floor(Math.random() * 12) + 4;
+
+      if (progress >= 100) {
+        progress = 100;
+        clearInterval(interval);
+        statusText.textContent = 'Instalação concluída!';
+        statusText.style.color = '#62c462';
+        bar.style.background = '#fddf7b';
+        percentText.textContent = '100%';
+
+        setTimeout(() => window.location.reload(), 500);
+      } else {
+        bar.style.width = progress + '%';
+        percentText.textContent = progress + '%';
+        if (progress > 30) statusText.textContent = 'Baixando módulos...';
+        if (progress > 70) statusText.textContent = 'Atualizando cache...';
+      }
+    }, 200);
+  };
 }
 
 let deferredPrompt;

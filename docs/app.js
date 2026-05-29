@@ -985,7 +985,7 @@ let plannedSortOrder = 'desc';
 let receiptsSortType = 'date';
 let receiptsSortOrder = 'desc';
 
-let dashSortType = 'actual';
+let dashSortType = 'date'; // Sincronizado com o HTML
 let dashSortOrder = 'desc';
 
 document.getElementById('sort-planned-type')?.addEventListener('change', (e) => {

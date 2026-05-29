@@ -42,7 +42,22 @@
         <h1 style="text-align: center">Controle Financeiro</h1>
         <div style="display: flex; align-items: center; gap: 12px; justify-content: center">
           <span id="user-display" style="color: #a6a6c0; font-size: 0.9rem; font-weight: 500"></span>
+          <button id="btn-history" class="action-btn" style="padding: 4px 8px; font-size: 0.9rem; position: relative" title="Histórico de Atividades">
+            📋
+            <span id="history-badge" style="display: none; position: absolute; top: -5px; right: -5px; background: #ff7b7b; color: #12121c; font-size: 0.65rem; font-weight: bold; padding: 2px 5px; border-radius: 50%; z-index: 10">0</span>
+          </button>
           <button id="btn-logout" class="action-btn danger" style="display: none; padding: 4px 12px; font-size: 0.8rem">Sair</button>
+        </div>
+
+        <!-- Modal de Histórico -->
+        <div id="history-overlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(11, 11, 16, 0.85); z-index: 10000; align-items: center; justify-content: center; backdrop-filter: blur(3px)">
+          <div class="card" style="width: 90%; max-width: 400px; max-height: 80vh; display: flex; flex-direction: column">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px">
+              <h2 style="margin: 0">Histórico de Atividades</h2>
+              <button id="btn-close-history" class="action-btn" style="padding: 4px 10px">✕</button>
+            </div>
+            <div id="history-list" class="receipts-list" style="overflow-y: auto; flex: 1"></div>
+          </div>
         </div>
 
         <div id="biometric-overlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #0b0b10; z-index: 10000; flex-direction: column; align-items: center; justify-content: center; color: #f5f5f5">
@@ -96,10 +111,17 @@
           <div class="field-row" style="align-items: flex-end">
             <div class="field" style="flex: 1">
               <label>Mês de referência</label>
-              <input type="month" id="current-month" />
+              <div style="display: flex; gap: 4px; align-items: center">
+                <input type="month" id="current-month" style="flex: 1" />
+                <div style="display: flex; flex-direction: column; gap: 2px">
+                  <button type="button" id="btn-next-month" class="action-btn" style="height: 18px; padding: 0 8px; line-height: 10px" title="Próximo Mês">▲</button>
+                  <button type="button" id="btn-prev-month" class="action-btn" style="height: 18px; padding: 0 8px; line-height: 10px" title="Mês Anterior">▼</button>
+                </div>
+                <button type="button" id="btn-home-month" class="action-btn" style="height: 38px; padding: 0 12px; font-size: 0.7rem" title="Mês Atual">🏠</button>
+              </div>
             </div>
             <div style="display: flex; gap: 8px">
-              <button id="btn-load-month" class="action-btn" style="height: 35px; padding: 0 15px">Carregar</button>
+              <button id="btn-load-month" class="action-btn" style="height: 37px; padding: 0 15px">Carregar</button>
               <button id="btn-toggle-income" class="action-btn" style="height: 35px; padding: 0 12px" title="Editar Rendas">⚙️ Rendas</button>
               <button id="btn-toggle-payments" class="action-btn" style="height: 35px; padding: 0 12px" title="Gerenciar Cartões">💳 Cartões</button>
               <button id="btn-toggle-reimbursement" class="action-btn" style="height: 35px; padding: 0 12px" title="Lançar Reembolso">🔄 Reembolso</button>

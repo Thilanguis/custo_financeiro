@@ -1,5 +1,140 @@
 // ===== UI: Notificações e Modais Customizados =====
 
+let lastReadHistory = null;
+let unsubscribeLogs = null;
+
+async function logActivity(action, details) {
+  if (!window.FinanceAPI || !window.FinanceAPI.familyId) return;
+  const user = window.auth && window.auth.currentUser ? window.auth.currentUser.displayName || window.auth.currentUser.email.split('@')[0] : 'Usuário';
+
+  try {
+    await window.db.collection('familias').doc(window.FinanceAPI.familyId).collection('logs').add({
+      user,
+      action,
+      details,
+      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (err) {
+    console.error('Erro ao salvar log:', err);
+  }
+}
+
+async function deleteLog(logId) {
+  if (!(await showConfirm('Deseja excluir este registro do histórico?', true))) return;
+  try {
+    await window.db.collection('familias').doc(window.FinanceAPI.familyId).collection('logs').doc(logId).delete();
+    showToast('Log excluído.', 'success');
+  } catch (err) {
+    showToast('Erro ao excluir log.', 'error');
+  }
+}
+
+function listenToLogs() {
+  if (!window.FinanceAPI || !window.FinanceAPI.familyId) return;
+  const currentUser = window.auth && window.auth.currentUser ? window.auth.currentUser.displayName || window.auth.currentUser.email.split('@')[0] : 'Usuário';
+  const prefsRef = window.db.collection('familias').doc(window.FinanceAPI.familyId).collection('user_prefs').doc(currentUser);
+
+  // Busca a última vez que o usuário visualizou o painel
+  prefsRef.get().then((doc) => {
+    lastReadHistory = doc.exists && doc.data().lastRead ? doc.data().lastRead.toMillis() : 0;
+
+    if (unsubscribeLogs) unsubscribeLogs();
+
+    // Mantém escuta ativa nos últimos 30 logs para gerar notificações e atualizar lista
+    unsubscribeLogs = window.db
+      .collection('familias')
+      .doc(window.FinanceAPI.familyId)
+      .collection('logs')
+      .orderBy('timestamp', 'desc')
+      .limit(30)
+      .onSnapshot((snap) => {
+        let unreadCount = 0;
+        const list = document.getElementById('history-list');
+        const overlay = document.getElementById('history-overlay');
+        const isOverlayOpen = overlay && overlay.style.display === 'flex';
+
+        if (isOverlayOpen && list) list.innerHTML = '';
+
+        if (snap.empty && isOverlayOpen && list) {
+          list.innerHTML = '<p class="hint" style="text-align: center;">Nenhuma atividade recente.</p>';
+          return;
+        }
+
+        snap.forEach((docSnap) => {
+          const data = docSnap.data();
+          const logId = docSnap.id;
+          const logTime = data.timestamp ? data.timestamp.toMillis() : Date.now();
+
+          // Incrementa badge apenas se o log for novo E feito pelo outro usuário
+          if (logTime > lastReadHistory && data.user !== currentUser) {
+            unreadCount++;
+          }
+
+          if (isOverlayOpen && list) {
+            const date = data.timestamp ? data.timestamp.toDate().toLocaleString('pt-BR') : 'Agora';
+            const el = document.createElement('div');
+            el.className = 'receipt-item';
+
+            let actionColor = '#f5f5f5';
+            if (data.action === 'Adicionou') actionColor = '#62c462';
+            else if (data.action === 'Editou') actionColor = '#f7c84a';
+            else if (data.action === 'Excluiu') actionColor = '#ff7b7b';
+
+            el.innerHTML = `
+              <div class="receipt-main" style="width: 100%;">
+                <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: #a6a6c0; margin-bottom: 4px;">
+                  <span>${data.user}</span>
+                  <span>${date}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: flex-end;">
+                  <div class="receipt-line" style="white-space: normal; line-height: 1.4; flex: 1;">
+                    <span style="color: ${actionColor}; font-weight: 600; font-size: 0.8rem; margin-right: 4px;">[${data.action}]</span>
+                    <span style="font-size: 0.85rem; color: #f5f5f5;">${data.details}</span>
+                  </div>
+                  <button class="action-btn danger" style="padding: 4px 8px; margin-left: 8px;" onclick="deleteLog('${logId}')" title="Excluir log">🗑️</button>
+                </div>
+              </div>
+            `;
+            list.appendChild(el);
+          }
+        });
+
+        const badge = document.getElementById('history-badge');
+        if (badge) {
+          if (unreadCount > 0) {
+            badge.textContent = unreadCount;
+            badge.style.display = 'block';
+          } else {
+            badge.style.display = 'none';
+          }
+        }
+      });
+  });
+}
+
+document.getElementById('btn-history')?.addEventListener('click', async () => {
+  const overlay = document.getElementById('history-overlay');
+  const list = document.getElementById('history-list');
+  overlay.style.display = 'flex';
+  list.innerHTML = '<p class="hint" style="text-align: center; margin-top: 20px;">Carregando...</p>';
+
+  const currentUser = window.auth && window.auth.currentUser ? window.auth.currentUser.displayName || window.auth.currentUser.email.split('@')[0] : 'Usuário';
+  const prefsRef = window.db.collection('familias').doc(window.FinanceAPI.familyId).collection('user_prefs').doc(currentUser);
+
+  // Zera as notificações registrando o clique no banco
+  await prefsRef.set({ lastRead: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+  lastReadHistory = Date.now();
+
+  const badge = document.getElementById('history-badge');
+  if (badge) badge.style.display = 'none';
+
+  listenToLogs();
+});
+
+document.getElementById('btn-close-history')?.addEventListener('click', () => {
+  document.getElementById('history-overlay').style.display = 'none';
+});
+
 function showToast(message, type = 'info') {
   const container = document.getElementById('toast-container');
   if (!container) return;
@@ -238,6 +373,7 @@ formReimbursement.addEventListener('submit', async (e) => {
   };
 
   await FinanceAPI.saveReceipt(inputMonth, itemData);
+  logActivity('Adicionou', `Reembolso: ${merchant} - ${formatCurrency(Math.abs(amount))}`);
 
   submitBtn.textContent = 'Salvar Reembolso';
   submitBtn.disabled = false;
@@ -296,6 +432,7 @@ formPayment.addEventListener('submit', async (e) => {
   paySubmitBtn.disabled = true;
 
   await FinanceAPI.savePaymentMethods(updatedMethods);
+  logActivity(editingPaymentId ? 'Editou' : 'Adicionou', `Cartão/Método: ${name}`);
 
   resetPaymentForm();
   showToast('Cartão salvo com sucesso!', 'success');
@@ -332,8 +469,10 @@ function startEditPayment(id) {
 
 async function deletePaymentMethod(id) {
   if (!(await showConfirm('Excluir este método de pagamento? Lançamentos antigos manterão o registro em texto.', true))) return;
+  const methodToDelete = paymentMethods.find((m) => m.id === id);
   const updatedMethods = paymentMethods.filter((m) => m.id !== id);
   await FinanceAPI.savePaymentMethods(updatedMethods);
+  if (methodToDelete) logActivity('Excluiu', `Cartão/Método: ${methodToDelete.name}`);
   showToast('Método de pagamento excluído.', 'success');
 }
 
@@ -540,6 +679,7 @@ btnSaveIncome.addEventListener('click', async () => {
   btnSaveIncome.disabled = true;
 
   await FinanceAPI.saveIncome(month, luana, gabriel);
+  logActivity('Editou', `Rendas de ${month} - Luana: CAD ${luana} / Gabriel: CAD ${gabriel}`);
 
   const index = incomes.findIndex((i) => i.month === month);
   if (index !== -1) {
@@ -574,6 +714,39 @@ monthInput.addEventListener('change', () => {
 
   if (plannedDateInput && !editingPlannedId) {
     plannedDateInput.value = newDefaultDate;
+  }
+});
+
+function changeMonthBy(offset) {
+  const current = monthInput.value;
+  if (!current) return;
+
+  const [year, month] = current.split('-').map(Number);
+  const date = new Date(year, month - 1 + offset, 1);
+  const newYear = date.getFullYear();
+  const newMonth = String(date.getMonth() + 1).padStart(2, '0');
+
+  monthInput.value = `${newYear}-${newMonth}`;
+  monthInput.dispatchEvent(new Event('change'));
+}
+
+document.getElementById('btn-prev-month')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  changeMonthBy(-1);
+});
+
+document.getElementById('btn-next-month')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  changeMonthBy(1);
+});
+
+document.getElementById('btn-home-month')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  const todayMonth = getCurrentMonthISO();
+  // Só recarrega se o mês selecionado for diferente do mês atual
+  if (monthInput.value !== todayMonth) {
+    monthInput.value = todayMonth;
+    monthInput.dispatchEvent(new Event('change'));
   }
 });
 
@@ -808,6 +981,7 @@ formPlanned.addEventListener('submit', async (e) => {
   if (editingPlannedId !== null) itemData.id = editingPlannedId;
 
   await FinanceAPI.savePlanned(month, itemData);
+  logActivity(editingPlannedId ? 'Editou' : 'Adicionou', `Previsto: ${description} - ${formatCurrency(amount)}`);
 
   if (editingPlannedId === null) {
     if (isStatic) {
@@ -905,6 +1079,7 @@ async function deletePlanned(id) {
 
   const month = getCurrentMonth();
   await FinanceAPI.deletePlanned(month, id);
+  logActivity('Excluiu', `Previsto: ${p.description} - ${formatCurrency(Math.abs(p.amount))}`);
 
   if (p.isStatic) {
     const receiptToDelete = receipts.find((r) => {
@@ -963,6 +1138,7 @@ async function deleteReceipt(id) {
 
   const month = r.date.substring(0, 7);
   await FinanceAPI.deleteReceipt(month, id);
+  logActivity('Excluiu', `Real/Nota: ${r.merchant} - ${formatCurrency(Math.abs(r.amount))}`);
 
   if (r.isStatic) {
     const plannedToDelete = plannedItems.find((p) => {
@@ -1288,6 +1464,7 @@ formActual.addEventListener('submit', async (e) => {
   if (editingReceiptId !== null) itemData.id = editingReceiptId;
 
   await FinanceAPI.saveReceipt(month, itemData);
+  logActivity(editingReceiptId ? 'Editou' : 'Adicionou', `Real: ${merchant} - ${formatCurrency(finalAmount)}`);
 
   if (oldReceipt && oldReceipt.isStatic) {
     const linkedPlanned = plannedItems.find((p) => {
@@ -1606,6 +1783,7 @@ async function initAppUI() {
   }
 
   syncData(m);
+  listenToLogs();
 }
 
 // ===== Dashboard Unificado (Sanfona) =====
@@ -2877,6 +3055,7 @@ if (formAnnual) {
       }
 
       await FinanceAPI.saveAnnualEvent(itemData);
+      logActivity(editingAnnualId && !isInstallment ? 'Editou' : 'Adicionou', `Evento Anual: ${currentName} - ${formatCurrency(amount)}`);
     }
 
     annualSubmitBtn.textContent = 'Salvar Evento Anual';
@@ -2940,7 +3119,9 @@ function startEditAnnual(id) {
 
 async function deleteAnnual(id) {
   if (!(await showConfirm('Excluir este evento do planejamento anual?', true))) return;
+  const ev = annualEvents.find((a) => a.id === id);
   await FinanceAPI.deleteAnnualEvent(id);
+  if (ev) logActivity('Excluiu', `Evento Anual: ${ev.name} - ${formatCurrency(Math.abs(ev.amount))}`);
   if (editingAnnualId === id) resetAnnualForm();
   showToast('Evento excluído.', 'success');
 }
@@ -3176,9 +3357,11 @@ window.launchAnnualToBudget = async function (eventId, targetMonthStr) {
   };
 
   await FinanceAPI.savePlanned(targetMonthStr, itemData);
+  logActivity('Adicionou', `Previsto (via Evento): ${ev.name} - ${formatCurrency(Math.abs(ev.amount))}`);
 
   if (ev.isOneOff) {
     await FinanceAPI.deleteAnnualEvent(eventId);
+    logActivity('Excluiu', `Evento Anual (Único): ${ev.name}`);
     showToast('Lançado no Orçamento e removido dos pendentes!', 'success');
   } else {
     showToast('Lançado com sucesso no Orçamento!', 'success');

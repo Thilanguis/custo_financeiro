@@ -311,11 +311,28 @@ const paymentsPanel = document.getElementById('payments-panel');
 const btnToggleReimbursement = document.getElementById('btn-toggle-reimbursement');
 const reimbursementPanel = document.getElementById('reimbursement-panel');
 
+window.updateToggleButtonsState = function (activeBtn) {
+  const btns = [btnToggleIncome, btnTogglePayments, btnToggleReimbursement];
+  btns.forEach((btn) => {
+    if (btn) {
+      btn.style.background = '';
+      btn.style.color = '';
+      btn.style.fontWeight = '';
+    }
+  });
+  if (activeBtn) {
+    activeBtn.style.background = '#fddf7b';
+    activeBtn.style.color = '#12121c';
+    activeBtn.style.fontWeight = 'bold';
+  }
+};
+
 btnToggleIncome.addEventListener('click', () => {
   paymentsPanel.style.display = 'none';
   reimbursementPanel.style.display = 'none';
   const isHidden = incomePanel.style.display === 'none';
   incomePanel.style.display = isHidden ? 'block' : 'none';
+  window.updateToggleButtonsState(isHidden ? btnToggleIncome : null);
 });
 
 btnTogglePayments.addEventListener('click', () => {
@@ -323,6 +340,7 @@ btnTogglePayments.addEventListener('click', () => {
   reimbursementPanel.style.display = 'none';
   const isHidden = paymentsPanel.style.display === 'none';
   paymentsPanel.style.display = isHidden ? 'block' : 'none';
+  window.updateToggleButtonsState(isHidden ? btnTogglePayments : null);
 });
 
 btnToggleReimbursement.addEventListener('click', () => {
@@ -330,6 +348,7 @@ btnToggleReimbursement.addEventListener('click', () => {
   paymentsPanel.style.display = 'none';
   const isHidden = reimbursementPanel.style.display === 'none';
   reimbursementPanel.style.display = isHidden ? 'block' : 'none';
+  window.updateToggleButtonsState(isHidden ? btnToggleReimbursement : null);
 });
 
 // === LÓGICA DE REEMBOLSO ===
@@ -2655,6 +2674,10 @@ function startReimbursement(id) {
   document.getElementById('income-panel').style.display = 'none';
   document.getElementById('payments-panel').style.display = 'none';
   document.getElementById('reimbursement-panel').style.display = 'block';
+
+  if (window.updateToggleButtonsState) {
+    window.updateToggleButtonsState(document.getElementById('btn-toggle-reimbursement'));
+  }
 
   document.getElementById('reimb-date').value = r.date;
   document.getElementById('reimb-category').value = r.category;

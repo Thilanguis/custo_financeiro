@@ -2428,62 +2428,53 @@ function updateHistoricalChart() {
   clearTimeout(historyDebounceTimer);
   historyDebounceTimer = setTimeout(async () => {
     try {
-      const db = window.db;
-      const familyId = window.FinanceAPI.familyId;
+      const limit = historyMonthsSelect.value;
+      const currentMonth = getCurrentMonth();
+      if (!currentMonth) return;
 
-      const mesesSnap = await db.collection('familias').doc(familyId).collection('meses').get();
+      // 1. Gera as datas exatas matematicamente a partir do mês selecionado
+      let targetMonths = [];
+      const [currYear, currMonthNum] = currentMonth.split('-').map(Number);
+
+      // Se for 'all', busca os últimos 24 meses para garantir o histórico sem travar o Firebase
+      const monthsCount = limit === 'all' ? 24 : parseInt(limit);
+
+      for (let i = monthsCount - 1; i >= 0; i--) {
+        const d = new Date(currYear, currMonthNum - 1 - i, 1);
+        targetMonths.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+      }
+
       let allMonthsData = [];
 
-      for (const doc of mesesSnap.docs) {
-        const monthStr = doc.id;
-        if (!/^\d{4}-\d{2}$/.test(monthStr)) continue;
+      // Memória: Mês atual e anterior já estão no 'receipts' devido ao syncData
+      const prevD = new Date(currYear, currMonthNum - 2, 1);
+      const prevMonthStr = prevD.getFullYear() + '-' + String(prevD.getMonth() + 1).padStart(2, '0');
 
-        const incData = doc.data();
-        const income = (incData.luana || 0) + (incData.gabriel || 0);
-
-        const notasSnap = await doc.ref.collection('notas_fiscais').get();
+      // 2. Busca exata e forçada para cada mês gerado no array
+      for (const monthStr of targetMonths) {
+        let income = getIncomeTotalForMonth(monthStr);
         let expense = 0;
-        notasSnap.forEach((n) => {
-          expense += n.data().amount || 0;
-        });
+
+        if (monthStr === currentMonth || monthStr === prevMonthStr) {
+          // Otimização: Lê direto da memória local se for o mês atual ou anterior
+          expense = receipts.filter((r) => r.date.startsWith(monthStr)).reduce((acc, r) => acc + r.amount, 0);
+        } else {
+          // Força o Firebase a procurar as notas, mesmo se não houver renda salva naquele mês
+          const notasSnap = await window.db.collection('familias').doc(window.FinanceAPI.familyId).collection('meses').doc(monthStr).collection('notas_fiscais').get();
+
+          notasSnap.forEach((n) => {
+            expense += n.data().amount || 0;
+          });
+        }
 
         allMonthsData.push({ month: monthStr, income, expense });
-      }
-
-      // INJEÇÃO DA MEMÓRIA: Garante que o mês atual sempre apareça no gráfico,
-      // mesmo que o documento ainda não tenha sido criado no Firebase
-      const currentMonth = getCurrentMonth();
-      if (currentMonth) {
-        const currentIncome = getIncomeTotalForMonth(currentMonth);
-        const currentExpense = receipts.filter((r) => r.date.startsWith(currentMonth)).reduce((s, r) => s + r.amount, 0);
-
-        const existingIdx = allMonthsData.findIndex((d) => d.month === currentMonth);
-        if (existingIdx !== -1) {
-          allMonthsData[existingIdx].income = currentIncome;
-          allMonthsData[existingIdx].expense = currentExpense;
-        } else {
-          allMonthsData.push({ month: currentMonth, income: currentIncome, expense: currentExpense });
-        }
-      }
-
-      if (allMonthsData.length === 0) {
-        if (historyChart) historyChart.destroy();
-        return;
-      }
-
-      allMonthsData.sort((a, b) => a.month.localeCompare(b.month));
-
-      let displayData = allMonthsData;
-      const limit = historyMonthsSelect.value;
-      if (limit !== 'all') {
-        displayData = displayData.slice(-parseInt(limit));
       }
 
       const labels = [];
       const monthlyBalances = [];
       let selectedPeriodTotal = 0;
 
-      displayData.forEach((d) => {
+      allMonthsData.forEach((d) => {
         const bal = d.income - d.expense;
         labels.push(d.month);
         monthlyBalances.push(bal);

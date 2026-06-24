@@ -253,7 +253,11 @@ function getCategories() {
 
 // ===== Utilitários =====
 
-function formatCurrency(value) {
+let isPrivacyMode = false;
+
+function formatCurrency(value, isIncome = false) {
+  // Passa a ocultar de forma cirúrgica apenas os dados classificados como renda
+  if (isPrivacyMode && isIncome) return 'CAD ••••';
   const n = Number(value) || 0;
   const fixed = n.toFixed(2);
   const [intPart, decPart] = fixed.split('.');
@@ -1363,7 +1367,8 @@ function renderPlannedItemsList(month) {
 
           const isIncome = p.amount < 0;
           const amountColor = isIncome ? '#62c462' : '#ff7b7b';
-          const displayAmount = isIncome ? `+ ${formatCurrency(Math.abs(p.amount))}` : `- ${formatCurrency(Math.abs(p.amount))}`;
+          // Repassa a validação da categoria atual do laço
+          const displayAmount = isIncome ? `+ ${formatCurrency(Math.abs(p.amount), cat.toLowerCase() === 'salário')}` : `- ${formatCurrency(Math.abs(p.amount), cat.toLowerCase() === 'salário')}`;
           const incomeBadge = isIncome ? ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold; margin-left: 4px;">(Entrada)</span>' : '';
 
           // Mostra o "+" amarelo apenas se estiver pendente E for um evento (Anual ou Situacional)
@@ -1603,9 +1608,9 @@ function updateReceiptsView() {
       const headerDiv = document.createElement('div');
       headerDiv.className = 'group-header-div';
 
-      // Trata o total se for entrada/saldo líquido negativo
       const isCatIncome = catTotal < 0;
-      const displayedCatTotal = isCatIncome ? `+ ${formatCurrency(Math.abs(catTotal))}` : formatCurrency(catTotal);
+      // Aplica a condicional do grupo para filtrar a visualização se for o grupo Salário
+      const displayedCatTotal = isCatIncome ? `+ ${formatCurrency(Math.abs(catTotal), cat.toLowerCase() === 'salário')}` : formatCurrency(catTotal, cat.toLowerCase() === 'salário');
 
       headerDiv.innerHTML = `
       <span style="color: #f5f5f5;"><span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}</span>
@@ -1630,8 +1635,8 @@ function updateReceiptsView() {
 
           const isIncomeOrReimb = r.isReimbursement || r.amount < 0;
           const amountColor = isIncomeOrReimb ? '#62c462' : '#ff7b7b';
-          const displayAmount = isIncomeOrReimb ? `+ ${formatCurrency(Math.abs(r.amount))}` : `- ${formatCurrency(Math.abs(r.amount))}`;
-
+          // Repassa a validação da categoria atual do laço
+          const displayAmount = isIncomeOrReimb ? `+ ${formatCurrency(Math.abs(r.amount), cat.toLowerCase() === 'salário')}` : `- ${formatCurrency(Math.abs(r.amount), cat.toLowerCase() === 'salário')}`;
           let reimbBadge = '';
           if (r.isReimbursement) reimbBadge = ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Reembolso)</span>';
           else if (r.amount < 0) reimbBadge = ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Entrada)</span>';
@@ -1724,8 +1729,8 @@ function updateGlobalSummaries() {
   const saldoPrevisto = totalIncomePlanned - netPlannedExpense;
   const saldoReal = totalIncomeReal - netActualExpense;
 
-  // UI - Renda (Mostra a Renda Total real)
-  document.getElementById('summary-income-inline').textContent = formatCurrency(totalIncomeReal);
+  /// UI - Renda (Mostra a Renda Total real) - Identificado como true para o modo seletivo
+  document.getElementById('summary-income-inline').textContent = formatCurrency(totalIncomeReal, true);
 
   // UI - Gasto (Gasto Líquido: Gastos - Reembolsos)
   const elExpense = document.getElementById('summary-expense-inline');
@@ -1940,7 +1945,8 @@ function updateDashboardView() {
           <div style="cursor: pointer; padding-bottom: ${isDetailsOpen ? '16px' : '0'}; border-bottom: ${isDetailsOpen ? '1px solid rgba(255,255,255,0.05)' : 'none'}; transition: all 0.2s ease;" onclick="window.isConsumptionDetailsOpen = !${isDetailsOpen}; updateDashboardView();">
             <div style="margin-bottom: 6px; text-align: center;">
               <span style="font-weight: 600; font-size: 0.95rem; color: #62c462;">
-                <span style="font-size: 0.75rem; vertical-align: middle; display: inline-block; width: 14px; text-align: left;">${isDetailsOpen ? '▼' : '▶'}</span> Renda Total: ${formatCurrency(totalIncome)}
+                
+                <span style="font-size: 0.75rem; vertical-align: middle; display: inline-block; width: 14px; text-align: left;">${isDetailsOpen ? '▼' : '▶'}</span> Renda Total: ${formatCurrency(totalIncome, true)}
               </span>
             </div>
             
@@ -2094,6 +2100,9 @@ function updateDashboardView() {
     const diffCat = Math.round((data.planned - data.actual) * 100) / 100;
     const isOpen = openDashboardCats.has(cat);
 
+    // Detecta se a linha atual processada corresponde à categoria protegida de salário
+    const isSalarioCat = cat.toLowerCase() === 'salário';
+
     const trCat = document.createElement('tr');
     trCat.className = 'dashboard-group-header';
     trCat.onclick = () => {
@@ -2144,17 +2153,17 @@ function updateDashboardView() {
     tdCatPrev.className = 'numeric';
     const isCatPrevIncome = data.planned < 0;
     tdCatPrev.style.color = data.planned === 0 ? '#f5f5f5' : isCatPrevIncome ? '#62c462' : '#f5f5f5';
-    tdCatPrev.textContent = data.planned === 0 ? formatCurrency(0) : isCatPrevIncome ? `+ ${formatCurrency(Math.abs(data.planned))}` : formatCurrency(data.planned);
+    tdCatPrev.textContent = data.planned === 0 ? formatCurrency(0, isSalarioCat) : isCatPrevIncome ? `+ ${formatCurrency(Math.abs(data.planned), isSalarioCat)}` : formatCurrency(data.planned, isSalarioCat);
 
     const tdCatReal = document.createElement('td');
     tdCatReal.className = 'numeric';
     const isCatIncome = data.actual < 0;
     tdCatReal.style.color = data.actual === 0 ? '#f5f5f5' : isCatIncome ? '#62c462' : '#ff7b7b';
-    tdCatReal.textContent = data.actual === 0 ? formatCurrency(0) : isCatIncome ? `+ ${formatCurrency(Math.abs(data.actual))}` : `- ${formatCurrency(Math.abs(data.actual))}`;
+    tdCatReal.textContent = data.actual === 0 ? formatCurrency(0, isSalarioCat) : isCatIncome ? `+ ${formatCurrency(Math.abs(data.actual), isSalarioCat)}` : `- ${formatCurrency(Math.abs(data.actual), isSalarioCat)}`;
 
     const tdCatDiff = document.createElement('td');
     tdCatDiff.className = 'numeric ' + (diffCat > 0 ? 'positive' : diffCat === 0 ? 'neutral' : 'negative');
-    tdCatDiff.textContent = formatCurrency(diffCat);
+    tdCatDiff.textContent = formatCurrency(diffCat, isSalarioCat);
 
     trCat.appendChild(tdCatName);
     trCat.appendChild(tdCatPrev);
@@ -2256,7 +2265,8 @@ function updateDashboardView() {
 
               const isIncomeOrReimb = t.isReimbursement || t.amount < 0;
               const amountColor = isIncomeOrReimb ? '#62c462' : '#ff7b7b';
-              const displayAmount = isIncomeOrReimb ? `+ ${formatCurrency(Math.abs(t.amount))}` : `- ${formatCurrency(Math.abs(t.amount))}`;
+              // Protege os balões internos de observações expandidas
+              const displayAmount = isIncomeOrReimb ? `+ ${formatCurrency(Math.abs(t.amount), isSalarioCat)}` : `- ${formatCurrency(Math.abs(t.amount), isSalarioCat)}`;
 
               let reimbBadge = '';
               if (t.isReimbursement) reimbBadge = ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Reemb.)</span>';
@@ -2347,17 +2357,18 @@ function updateDashboardView() {
         tdItemPrev.className = 'numeric';
         const isItemPrevIncome = item.planned < 0;
         tdItemPrev.style.color = item.planned === 0 ? '#f5f5f5' : isItemPrevIncome ? '#62c462' : '#f5f5f5';
-        tdItemPrev.textContent = item.planned === 0 ? formatCurrency(0) : isItemPrevIncome ? `+ ${formatCurrency(Math.abs(item.planned))}` : formatCurrency(item.planned);
+        // Aplica a flag de categoria para proteger os sub-itens do Salário
+        tdItemPrev.textContent = item.planned === 0 ? formatCurrency(0, isSalarioCat) : isItemPrevIncome ? `+ ${formatCurrency(Math.abs(item.planned), isSalarioCat)}` : formatCurrency(item.planned, isSalarioCat);
 
         const tdItemReal = document.createElement('td');
         tdItemReal.className = 'numeric';
         const isItemIncome = item.actual < 0;
         tdItemReal.style.color = item.actual === 0 ? '#f5f5f5' : isItemIncome ? '#62c462' : '#ff7b7b';
-        tdItemReal.textContent = item.actual === 0 ? formatCurrency(0) : isItemIncome ? `+ ${formatCurrency(Math.abs(item.actual))}` : `- ${formatCurrency(Math.abs(item.actual))}`;
+        tdItemReal.textContent = item.actual === 0 ? formatCurrency(0, isSalarioCat) : isItemIncome ? `+ ${formatCurrency(Math.abs(item.actual), isSalarioCat)}` : `- ${formatCurrency(Math.abs(item.actual), isSalarioCat)}`;
 
         const tdItemDiff = document.createElement('td');
         tdItemDiff.className = 'numeric ' + (diffItem > 0 ? 'positive' : diffItem === 0 ? 'neutral' : 'negative');
-        tdItemDiff.textContent = formatCurrency(diffItem);
+        tdItemDiff.textContent = formatCurrency(diffItem, isSalarioCat);
 
         trItem.appendChild(tdItemName);
         trItem.appendChild(tdItemPrev);
@@ -2452,7 +2463,13 @@ function updateChartsView() {
             ctx.fillStyle = '#c3c3d5';
           }
 
-          const text = Math.round(value).toLocaleString('pt-BR');
+          // Mascara o texto do topo das barras se a privacidade estiver ativa
+          // Verifica se a barra atual pertence à categoria de Salário
+          const isSalarioCat = labels[index] && labels[index].toLowerCase() === 'salário';
+
+          // Mascara apenas se for a coluna de Salário, caso contrário exibe o valor real
+          const text = isPrivacyMode && isSalarioCat ? '••••' : Math.round(value).toLocaleString('pt-BR');
+
           ctx.fillText(text, bar.x, yPos);
           ctx.restore();
         });
@@ -2479,12 +2496,53 @@ function updateChartsView() {
           bottom: 10,
         },
       },
+      plugins: {
+        tooltip: {
+          callbacks: {
+            // Filtra o balão de texto do mouse para mascarar somente o bloco de receita do salário
+            label: function (context) {
+              if (isPrivacyMode && context.datasetIndex === 2 && context.label.toLowerCase() === 'salário') {
+                return context.dataset.label + ': ••••';
+              }
+              return context.dataset.label + ': ' + context.raw.toLocaleString('pt-BR');
+            },
+          },
+        },
+      },
       scales: {
-        y: { beginAtZero: true },
+        y: {
+          beginAtZero: true,
+          ticks: {
+            // Deixa o eixo Y livre para leitura já que os gastos normais estão visíveis
+            callback: function (value) {
+              return value;
+            },
+          },
+        },
       },
     },
   });
 }
+
+document.getElementById('btn-privacy')?.addEventListener('click', (e) => {
+  isPrivacyMode = !isPrivacyMode;
+  e.target.textContent = isPrivacyMode ? '🙈' : '👁️';
+
+  // Captura o display do menu de usuário da foto e mascara cirurgicamente
+  const userDisplay = document.getElementById('user-display');
+  if (userDisplay) {
+    if (isPrivacyMode) {
+      userDisplay.setAttribute('data-name-backup', userDisplay.textContent);
+      userDisplay.textContent = '👤 ••••';
+    } else {
+      const backup = userDisplay.getAttribute('data-name-backup');
+      if (backup) userDisplay.textContent = backup;
+    }
+  }
+
+  refreshAll();
+  showToast(isPrivacyMode ? 'Modo privacidade ativado!' : 'Modo privacidade desativado.', 'info');
+});
 
 // ===== Gráfico Histórico (Evolução) =====
 

@@ -1285,18 +1285,19 @@ function renderPlannedItemsList(month) {
       const groupItems = grouped[cat].sort((a, b) => {
         let valA, valB;
 
-        if (receiptsSortType === 'amount') {
+        // Corrigido para usar as variáveis do orçamento (plannedSortType) e o campo correto (.description)
+        if (plannedSortType === 'amount') {
           valA = a.amount;
           valB = b.amount;
-        } else if (receiptsSortType === 'date') {
-          valA = a.date;
-          valB = b.date;
+        } else if (plannedSortType === 'date') {
+          valA = a.date || '';
+          valB = b.date || '';
         } else {
-          valA = a.merchant.toLowerCase();
-          valB = b.merchant.toLowerCase();
+          valA = (a.description || '').toLowerCase();
+          valB = (b.description || '').toLowerCase();
         }
 
-        if (receiptsSortOrder === 'asc') return valA > valB ? 1 : -1;
+        if (plannedSortOrder === 'asc') return valA > valB ? 1 : -1;
         return valA < valB ? 1 : -1;
       });
       const isOpen = openPlannedCats.has(cat);
@@ -1601,9 +1602,14 @@ function updateReceiptsView() {
 
       const headerDiv = document.createElement('div');
       headerDiv.className = 'group-header-div';
+
+      // Trata o total se for entrada/saldo líquido negativo
+      const isCatIncome = catTotal < 0;
+      const displayedCatTotal = isCatIncome ? `+ ${formatCurrency(Math.abs(catTotal))}` : formatCurrency(catTotal);
+
       headerDiv.innerHTML = `
       <span style="color: #f5f5f5;"><span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}</span>
-      <span style="color:#a6a6c0; font-size:0.85rem; font-weight:normal;">${formatCurrency(catTotal)}</span>
+      <span style="color:#a6a6c0; font-size:0.85rem; font-weight:normal;">${displayedCatTotal}</span>
     `;
 
       headerDiv.onclick = () => {
@@ -1820,12 +1826,10 @@ function updateDashboardView() {
   const plannedForMonth = plannedItems.filter((p) => p.month === month);
   const receiptsForMonth = receipts.filter((r) => r.date.startsWith(month));
 
-  const totalIncome = getIncomeTotalForMonth(month);
-
   if (ownerContainer) {
     const categoriasEssenciais = ['Contas', 'Supermercado', 'Transporte', 'Combustível', 'Saúde', 'Casa', 'Pets', 'Educação', 'Cuidados pessoais'];
 
-    let totalReal = 0;
+    let rExtraInc = 0; // Armazena entradas/saldos extras do mês
     let totEss = 0,
       gabEss = 0,
       luaEss = 0,
@@ -1840,24 +1844,72 @@ function updateDashboardView() {
 
     receiptsForMonth.forEach((r) => {
       const owner = r.owner || 'Ambos';
-      totalReal += r.amount;
+      const isEssencial = categoriasEssenciais.includes(r.category);
 
-      if (owner === 'Gabriel') gabTotal += r.amount;
-      else if (owner === 'Luana') luaTotal += r.amount;
-      else ambTotal += r.amount;
-
-      if (categoriasEssenciais.includes(r.category)) {
-        totEss += r.amount;
-        if (owner === 'Gabriel') gabEss += r.amount;
-        else if (owner === 'Luana') luaEss += r.amount;
-        else ambEss += r.amount;
+      if (r.amount > 0) {
+        // 1. Gasto Real Normal
+        if (isEssencial) {
+          totEss += r.amount;
+          if (owner === 'Gabriel') {
+            gabEss += r.amount;
+            gabTotal += r.amount;
+          } else if (owner === 'Luana') {
+            luaEss += r.amount;
+            luaTotal += r.amount;
+          } else {
+            ambEss += r.amount;
+            ambTotal += r.amount;
+          }
+        } else {
+          totLaz += r.amount;
+          if (owner === 'Gabriel') {
+            gabLaz += r.amount;
+            gabTotal += r.amount;
+          } else if (owner === 'Luana') {
+            luaLaz += r.amount;
+            luaTotal += r.amount;
+          } else {
+            ambLaz += r.amount;
+            ambTotal += r.amount;
+          }
+        }
+      } else if (r.isReimbursement) {
+        // 2. Reembolso Real: Abate direto do grupo e do responsável
+        const absAmt = Math.abs(r.amount);
+        if (isEssencial) {
+          totEss -= absAmt;
+          if (owner === 'Gabriel') {
+            gabEss -= absAmt;
+            gabTotal -= absAmt;
+          } else if (owner === 'Luana') {
+            luaEss -= absAmt;
+            luaTotal -= absAmt;
+          } else {
+            ambEss -= absAmt;
+            ambTotal -= absAmt;
+          }
+        } else {
+          totLaz -= absAmt;
+          if (owner === 'Gabriel') {
+            gabLaz -= absAmt;
+            gabTotal -= absAmt;
+          } else if (owner === 'Luana') {
+            luaLaz -= absAmt;
+            luaTotal -= absAmt;
+          } else {
+            ambLaz -= absAmt;
+            ambTotal -= absAmt;
+          }
+        }
       } else {
-        totLaz += r.amount;
-        if (owner === 'Gabriel') gabLaz += r.amount;
-        else if (owner === 'Luana') luaLaz += r.amount;
-        else ambLaz += r.amount;
+        // 3. Ganho Extra / Saldo (+): Computa na receita total do card
+        rExtraInc += Math.abs(r.amount);
       }
     });
+
+    // Recalcula a Renda Real Total e o Gasto Líquido perfeitamente
+    const totalIncome = getIncomeTotalForMonth(month) + rExtraInc;
+    const totalReal = totEss + totLaz;
 
     if (totalIncome === 0 && totalReal === 0) {
       ownerContainer.innerHTML = "<p class='hint small' style='margin-top: 8px;'>Nenhum dado para este mês.</p>";
@@ -2342,18 +2394,28 @@ function updateChartsView() {
   const actualForMonth = receipts.filter((r) => r.date.startsWith(month));
 
   const mapCat = {};
+
+  // Removemos totalmente a lógica de planejar entradas
   plannedForMonth.forEach((p) => {
-    if (!mapCat[p.category]) mapCat[p.category] = { planned: 0, actual: 0 };
-    mapCat[p.category].planned += p.amount;
+    if (!mapCat[p.category]) {
+      mapCat[p.category] = { plannedGasto: 0, actualGasto: 0, actualEntrada: 0 };
+    }
+    if (p.amount > 0) mapCat[p.category].plannedGasto += p.amount;
   });
+
   actualForMonth.forEach((r) => {
-    if (!mapCat[r.category]) mapCat[r.category] = { planned: 0, actual: 0 };
-    mapCat[r.category].actual += r.amount;
+    if (!mapCat[r.category]) {
+      mapCat[r.category] = { plannedGasto: 0, actualGasto: 0, actualEntrada: 0 };
+    }
+    if (r.amount > 0) mapCat[r.category].actualGasto += r.amount;
+    else mapCat[r.category].actualEntrada += Math.abs(r.amount);
   });
 
   const labels = Object.keys(mapCat).sort((a, b) => a.localeCompare(b));
-  const plannedData = labels.map((cat) => mapCat[cat].planned);
-  const actualData = labels.map((cat) => mapCat[cat].actual);
+
+  const plannedGastoData = labels.map((cat) => mapCat[cat].plannedGasto);
+  const actualGastoData = labels.map((cat) => mapCat[cat].actualGasto);
+  const actualEntradaData = labels.map((cat) => mapCat[cat].actualEntrada);
 
   if (categoriesChart) {
     categoriesChart.destroy();
@@ -2370,14 +2432,27 @@ function updateChartsView() {
           if (value === 0) return;
 
           ctx.save();
-          ctx.fillStyle = '#c3c3d5';
           ctx.font = '11px system-ui, sans-serif';
           ctx.textAlign = 'center';
-          ctx.textBaseline = value >= 0 ? 'bottom' : 'top';
 
-          const yPos = value >= 0 ? bar.y - 5 : bar.y + 5;
+          // Agora temos apenas 3 datasets: 0 = Prev Gasto, 1 = Real Gasto, 2 = Real Entrada
+          const isRealGasto = i === 1;
+          const hasRealEntradaEmpilhada = chart.data.datasets[2] && chart.data.datasets[2].data[index] > 0;
+
+          let yPos;
+          if (isRealGasto && hasRealEntradaEmpilhada) {
+            // Se houver entrada real por cima do gasto real, joga o texto do gasto para dentro do bloco vermelho
+            ctx.textBaseline = 'top';
+            yPos = bar.y + 6;
+            ctx.fillStyle = '#ffffff';
+          } else {
+            // Rótulo normal no topo externo para colunas livres de empilhamento
+            ctx.textBaseline = 'bottom';
+            yPos = bar.y - 5;
+            ctx.fillStyle = '#c3c3d5';
+          }
+
           const text = Math.round(value).toLocaleString('pt-BR');
-
           ctx.fillText(text, bar.x, yPos);
           ctx.restore();
         });
@@ -2390,8 +2465,9 @@ function updateChartsView() {
     data: {
       labels,
       datasets: [
-        { label: 'Previsto', data: plannedData },
-        { label: 'Real', data: actualData },
+        { label: 'Prev. Gasto', data: plannedGastoData, backgroundColor: '#2b6cb0', stack: 'Previsto' },
+        { label: 'Real Gasto', data: actualGastoData, backgroundColor: '#ff7b7b', stack: 'Real' },
+        { label: 'Real Entrada', data: actualEntradaData, backgroundColor: '#62c462', stack: 'Real' },
       ],
     },
     plugins: [valueLabelsPlugin],

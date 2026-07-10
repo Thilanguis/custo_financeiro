@@ -2635,6 +2635,16 @@ function updateDashboardView() {
 let categoriesChart = null;
 const chartsCanvas = document.getElementById('chart-categories');
 
+function formatChartValueLabel(value) {
+  const valueInCents = Math.round(Number(value) * 100) / 100;
+  const hasCents = Math.abs(valueInCents - Math.trunc(valueInCents)) > 0.000001;
+
+  return valueInCents.toLocaleString('pt-BR', {
+    minimumFractionDigits: hasCents ? 2 : 0,
+    maximumFractionDigits: 2,
+  });
+}
+
 function updateChartsView() {
   const month = getCurrentMonth();
   if (!month || !chartsCanvas) return;
@@ -2681,7 +2691,7 @@ function updateChartsView() {
           if (value === 0) return;
 
           ctx.save();
-          ctx.font = '11px system-ui, sans-serif';
+          ctx.font = '10px system-ui, sans-serif';
           ctx.textAlign = 'center';
 
           // Agora temos apenas 3 datasets: 0 = Prev Gasto, 1 = Real Gasto, 2 = Real Entrada
@@ -2706,7 +2716,7 @@ function updateChartsView() {
           const isSalarioCat = labels[index] && labels[index].toLowerCase() === 'salário';
 
           // Mascara apenas se for a coluna de Salário, caso contrário exibe o valor real
-          const text = isPrivacyMode && isSalarioCat ? '••••' : Math.round(value).toLocaleString('pt-BR');
+          const text = isPrivacyMode && isSalarioCat ? '••••' : formatChartValueLabel(value);
 
           ctx.fillText(text, bar.x, yPos);
           ctx.restore();
@@ -2742,7 +2752,7 @@ function updateChartsView() {
               if (isPrivacyMode && context.datasetIndex === 2 && context.label.toLowerCase() === 'salário') {
                 return context.dataset.label + ': ••••';
               }
-              return context.dataset.label + ': ' + context.raw.toLocaleString('pt-BR');
+              return context.dataset.label + ': ' + formatChartValueLabel(context.raw);
             },
           },
         },
@@ -2875,12 +2885,12 @@ function updateHistoricalChart() {
 
               ctx.save();
               ctx.fillStyle = '#c3c3d5';
-              ctx.font = '11px system-ui, sans-serif';
+              ctx.font = '10px system-ui, sans-serif';
               ctx.textAlign = 'center';
               ctx.textBaseline = value >= 0 ? 'bottom' : 'top';
 
               const yPos = value >= 0 ? bar.y - 5 : bar.y + 5;
-              const text = Math.round(value).toLocaleString('pt-BR');
+              const text = formatChartValueLabel(value);
 
               ctx.fillText(text, bar.x, yPos);
               ctx.restore();

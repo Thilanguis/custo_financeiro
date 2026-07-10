@@ -86,7 +86,7 @@
           <strong id="summary-expense-inline">CAD 0,00</strong>
         </div>
 
-        <div class="dash-item">
+        <div class="dash-item dash-item-free">
           <span class="dash-label">
             LIVRE
             <small>
@@ -95,7 +95,12 @@
               )
             </small>
           </span>
-          <strong id="summary-saldo-livre">CAD 0,00</strong>
+          <div id="summary-free-projection-toggle" class="dash-free-real-row" role="button" tabindex="0" aria-expanded="false" aria-disabled="true" title="Ver fixos pendentes">
+            <span id="summary-free-projection-arrow" class="toggle-icon" aria-hidden="true">▶</span>
+            <strong id="summary-saldo-livre">CAD 0,00</strong>
+          </div>
+          <small id="summary-free-after-fixed" class="dash-free-after-fixed"></small>
+          <div id="summary-fixed-details" class="dash-free-details"></div>
         </div>
       </div>
     </header>

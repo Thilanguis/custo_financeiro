@@ -605,6 +605,23 @@ const summarySaldoLivre = document.getElementById('summary-saldo-livre');
 const summarySaldoPrevisto = document.getElementById('summary-saldo-previsto');
 const summarySaldoReal = document.getElementById('summary-saldo-real');
 const summaryDiffSaldo = document.getElementById('summary-diff-saldo');
+const summaryFreeProjectionToggle = document.getElementById('summary-free-projection-toggle');
+
+let isFreeProjectionExpanded = false;
+
+function toggleFreeProjectionDetails() {
+  if (!summaryFreeProjectionToggle || summaryFreeProjectionToggle.getAttribute('aria-disabled') === 'true') return;
+  isFreeProjectionExpanded = !isFreeProjectionExpanded;
+  updateGlobalSummaries();
+}
+
+summaryFreeProjectionToggle?.addEventListener('click', toggleFreeProjectionDetails);
+summaryFreeProjectionToggle?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    toggleFreeProjectionDetails();
+  }
+});
 
 function getCurrentMonth() {
   return monthInput.value;
@@ -1684,6 +1701,131 @@ function updateReceiptsView() {
 
 // ===== Resumo Global =====
 
+// Um custo fixo não estático só entra no Real quando for efetivamente lançado.
+// Enquanto isso, ele precisa continuar reservado para que o "Livre" não pareça maior
+// do que o valor realmente disponível. Itens estáticos ficam de fora pois já foram
+// espelhados automaticamente nas Notas.
+function getPendingFixedExpenses(month) {
+  // Um mês já encerrado não deve continuar reservando valores: nele, o Livre
+  // representa o resultado real final. A projeção vale apenas no mês atual e futuros.
+  if (month < getCurrentMonthISO()) return [];
+
+  const fixedByCategory = new Map();
+
+  // Usa a mesma leitura do comparativo Orçamento x Real: previsto e realizado
+  // são agrupados pela categoria, mesmo que os nomes dos estabelecimentos variem.
+  plannedItems
+    .filter((item) => item.month === month && item.fixed && !item.isStatic && item.amount > 0)
+    .forEach((item) => {
+      if (!fixedByCategory.has(item.category)) {
+        fixedByCategory.set(item.category, { category: item.category, amount: 0, dates: [], hasUndatedItem: false });
+      }
+
+      const group = fixedByCategory.get(item.category);
+      group.amount += item.amount;
+      if (item.date && item.date.startsWith(month)) group.dates.push(item.date);
+      else group.hasUndatedItem = true;
+    });
+
+  return Array.from(fixedByCategory.values())
+    .map((group) => {
+      const actualAmount = receipts
+        .filter((receipt) => receipt.date.startsWith(month) && receipt.amount > 0 && !receipt.isReimbursement && receipt.category === group.category)
+        .reduce((total, receipt) => total + receipt.amount, 0);
+      const remainingAmount = Math.max(group.amount - actualAmount, 0);
+      const sortedDates = group.dates.sort();
+      return {
+        category: group.category,
+        description: group.category,
+        amount: group.amount,
+        actualAmount,
+        remainingAmount,
+        date: group.hasUndatedItem ? '' : sortedDates[sortedDates.length - 1] || '',
+      };
+    })
+    .filter((item) => item.remainingAmount > 0.005);
+}
+
+function getPendingFixedProjectionEnd(month, pendingItems) {
+  const datedItems = pendingItems.map((item) => item.date).filter((date) => date && date.startsWith(month));
+
+  // Sem uma data definida, a reserva vale até o fim do mês selecionado.
+  if (datedItems.length !== pendingItems.length) {
+    const [year, monthNumber] = month.split('-').map(Number);
+    const lastDay = new Date(year, monthNumber, 0).getDate();
+    return `${month}-${String(lastDay).padStart(2, '0')}`;
+  }
+
+  const sortedDates = datedItems.sort();
+  return sortedDates[sortedDates.length - 1];
+}
+
+function formatShortDate(date) {
+  return date.split('-').reverse().slice(0, 2).join('/');
+}
+
+function renderFreeProjectionDetails(month, pendingItems, projectedBalance) {
+  const details = document.getElementById('summary-fixed-details');
+  const freeCard = document.querySelector('.dash-item-free');
+  const arrow = document.getElementById('summary-free-projection-arrow');
+  const afterFixed = document.getElementById('summary-free-after-fixed');
+  const hasPendingItems = pendingItems.length > 0;
+
+  if (!summaryFreeProjectionToggle || !details || !freeCard || !arrow) return;
+
+  if (!hasPendingItems) isFreeProjectionExpanded = false;
+
+  summaryFreeProjectionToggle.classList.toggle('is-available', hasPendingItems);
+  summaryFreeProjectionToggle.setAttribute('aria-disabled', String(!hasPendingItems));
+  summaryFreeProjectionToggle.setAttribute('aria-expanded', String(hasPendingItems && isFreeProjectionExpanded));
+  arrow.textContent = isFreeProjectionExpanded ? '▼' : '▶';
+  if (afterFixed) {
+    afterFixed.textContent = hasPendingItems ? `Após fixos: ${formatCurrency(projectedBalance)}` : '';
+    afterFixed.classList.toggle('visible', hasPendingItems);
+  }
+
+  if (!hasPendingItems || !isFreeProjectionExpanded) {
+    details.innerHTML = '';
+    details.classList.remove('visible');
+    freeCard.classList.remove('is-expanded');
+    return;
+  }
+
+  const projectionEnd = getPendingFixedProjectionEnd(month, pendingItems);
+  const rows = [...pendingItems]
+    .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+    .map((item) => {
+      const percent = (item.actualAmount / item.amount) * 100;
+      const visualPercent = Math.min(percent, 100);
+      const roundedPercent = Math.round(percent * 100) / 100;
+      const progressClass = roundedPercent < 100 ? 'progress-safe' : roundedPercent === 100 ? 'progress-warning' : 'progress-danger';
+      const differenceAmount = Math.round((item.amount - item.actualAmount) * 100) / 100;
+      const differenceClass = differenceAmount > 0 ? 'positive' : differenceAmount === 0 ? 'neutral' : 'negative';
+      const actualDisplay = item.actualAmount === 0 ? formatCurrency(0) : `- ${formatCurrency(item.actualAmount)}`;
+      return `
+        <tr>
+          <td class="dash-fixed-name">
+            <span>${escapeCardDetail(item.description)}</span>
+            <div class="dash-fixed-progress"><span class="${progressClass}" style="width: ${visualPercent}%;"></span></div>
+          </td>
+          <td>${formatCurrency(item.amount)}</td>
+          <td class="dash-fixed-real ${item.actualAmount === 0 ? 'is-zero' : ''}">${actualDisplay}</td>
+          <td class="dash-fixed-difference ${differenceClass}">${formatCurrency(differenceAmount)}</td>
+        </tr>`;
+    })
+    .join('');
+
+  details.innerHTML = `
+    <div class="dash-free-details-title">Fixos pendentes até ${formatShortDate(projectionEnd)}</div>
+    <table class="dash-fixed-table">
+      <thead><tr><th>Fixo</th><th>Prev.</th><th>Real</th><th>Diferença</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+  details.classList.add('visible');
+  freeCard.classList.add('is-expanded');
+}
+
 function updateGlobalSummaries() {
   const month = getCurrentMonth();
   if (!month) return;
@@ -1728,6 +1870,9 @@ function updateGlobalSummaries() {
 
   const saldoPrevisto = totalIncomePlanned - netPlannedExpense;
   const saldoReal = totalIncomeReal - netActualExpense;
+  const pendingFixedItems = getPendingFixedExpenses(month);
+  const pendingFixedExpense = pendingFixedItems.reduce((total, item) => total + item.remainingAmount, 0);
+  const saldoAfterPendingFixed = saldoReal - pendingFixedExpense;
 
   /// UI - Renda (Mostra a Renda Total real) - Identificado como true para o modo seletivo
   document.getElementById('summary-income-inline').textContent = formatCurrency(totalIncomeReal, true);
@@ -1738,11 +1883,14 @@ function updateGlobalSummaries() {
   document.getElementById('summary-planned-expense').textContent = formatCurrency(netPlannedExpense).replace('CAD ', '');
   elExpense.className = netActualExpense > totalIncomeReal ? 'status-danger' : netActualExpense > netPlannedExpense ? 'status-warning' : 'status-success';
 
-  // UI - Livre (Saldo final)
+  // UI - Livre: mantém Real e Previsto; os fixos pendentes aparecem no detalhe expansível.
   const elLivre = document.getElementById('summary-saldo-livre');
   elLivre.textContent = formatCurrency(saldoReal);
-  document.getElementById('summary-saldo-previsto').textContent = formatCurrency(saldoPrevisto).replace('CAD ', '');
+  const plannedBalanceEl = document.getElementById('summary-saldo-previsto');
+  if (plannedBalanceEl) plannedBalanceEl.textContent = formatCurrency(saldoPrevisto).replace('CAD ', '');
   elLivre.className = saldoReal < 0 ? 'status-danger' : saldoReal < saldoPrevisto ? 'status-warning' : 'status-success';
+
+  renderFreeProjectionDetails(month, pendingFixedItems, saldoAfterPendingFixed);
 
   renderPlannedItemsList(month);
 }
@@ -2681,6 +2829,18 @@ function updateHistoricalChart() {
 }
 
 // ===== Dashboard de Cartões de Crédito =====
+const openCreditCardDetails = new Set();
+
+function escapeCardDetail(value) {
+  return String(value || '').replace(/[&<>'"]/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    "'": '&#39;',
+    '"': '&quot;',
+  })[character]);
+}
+
 function updateCreditCardsDashboard() {
   const month = getCurrentMonth();
   const container = document.getElementById('credit-cards-dashboard-list');
@@ -2711,6 +2871,8 @@ function updateCreditCardsDashboard() {
     let monthSpend = 0;
     let prevRollover = 0;
     let currentMonthInsideInvoice = 0;
+    const currentInvoiceEntries = [];
+    const nextInvoiceEntries = [];
 
     const cardCurrentReceipts = currentMonthReceipts.filter((r) => r.paymentMethodId === card.id);
     cardCurrentReceipts.forEach((r) => {
@@ -2719,9 +2881,11 @@ function updateCreditCardsDashboard() {
 
       if (card.closing && rDay > card.closing) {
         nextInvoice += r.amount;
+        nextInvoiceEntries.push({ receipt: r, source: 'Lançado após o fechamento' });
       } else {
         currentInvoice += r.amount;
         currentMonthInsideInvoice += r.amount;
+        currentInvoiceEntries.push({ receipt: r, source: 'Lançado neste mês' });
       }
     });
 
@@ -2731,6 +2895,7 @@ function updateCreditCardsDashboard() {
       if (card.closing && rDay > card.closing) {
         currentInvoice += r.amount;
         prevRollover += r.amount;
+        currentInvoiceEntries.push({ receipt: r, source: 'Mês anterior, após o fechamento' });
       }
     });
 
@@ -2738,14 +2903,36 @@ function updateCreditCardsDashboard() {
 
     if (visualTotal > 0 || monthSpend > 0) {
       hasAnySpending = true;
+      const isExpanded = openCreditCardDetails.has(card.id);
       const pPrev = visualTotal > 0 ? (prevRollover / visualTotal) * 100 : 0;
       const pCurr = visualTotal > 0 ? (currentMonthInsideInvoice / visualTotal) * 100 : 0;
       const pNext = visualTotal > 0 ? (nextInvoice / visualTotal) * 100 : 0;
+      const currentInvoiceRows = currentInvoiceEntries
+        .sort((a, b) => b.receipt.date.localeCompare(a.receipt.date))
+        .map(({ receipt, source }) => {
+          const observation = receipt.observation ? `<div class="credit-card-detail-observation">↳ ${escapeCardDetail(receipt.observation)}</div>` : '';
+          return `
+            <div class="credit-card-detail-row">
+              <div>
+                <strong>${escapeCardDetail(receipt.merchant)}</strong>
+                <span>${receipt.date.split('-').reverse().join('/')} · ${escapeCardDetail(receipt.category)} · ${escapeCardDetail(source)}</span>
+                ${observation}
+              </div>
+              <b>${formatCurrency(receipt.amount)}</b>
+            </div>
+          `;
+        })
+        .join('');
+      const nextInvoiceSummary =
+        nextInvoiceEntries.length > 0
+          ? `<div class="credit-card-next-invoice">Próxima fatura: ${formatCurrency(nextInvoice)} em ${nextInvoiceEntries.length} lançamento${nextInvoiceEntries.length > 1 ? 's' : ''}.</div>`
+          : '';
 
       html += `
-        <div style="background: linear-gradient(145deg, #1a1a2e, #12121c); border: 1px solid #35354a; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px;">
-          <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div class="credit-card-card ${isExpanded ? 'is-expanded' : ''}">
+          <div class="credit-card-summary" data-credit-card-id="${card.id}" role="button" tabindex="0" aria-expanded="${isExpanded}" title="${isExpanded ? 'Fechar detalhes da fatura' : 'Ver lançamentos da fatura'}">
             <div style="display: flex; align-items: center; gap: 10px;">
+              <span class="toggle-icon credit-card-toggle-icon" aria-hidden="true">${isExpanded ? '&#9660;' : '&#9654;'}</span>
               <span style="background: rgba(253, 223, 123, 0.1); color: #fddf7b; padding: 6px; border-radius: 8px; font-size: 1.1rem; border: 1px solid rgba(253, 223, 123, 0.2);">💳</span>
               <div>
                 <div style="font-weight: 600; color: #f5f5f5; font-size: 0.95rem;">${card.name}</div>
@@ -2778,6 +2965,15 @@ function updateCreditCardsDashboard() {
           `
               : ''
           }
+          ${
+            isExpanded
+              ? `<div class="credit-card-details">
+                  <div class="credit-card-details-title"><span>Composição da fatura atual</span><strong>${formatCurrency(currentInvoice)}</strong></div>
+                  ${currentInvoiceRows || '<p class="hint">Nenhum lançamento compõe esta fatura.</p>'}
+                  ${nextInvoiceSummary}
+                </div>`
+              : ''
+          }
         </div>
       `;
     }
@@ -2785,6 +2981,22 @@ function updateCreditCardsDashboard() {
 
   if (hasAnySpending) {
     container.innerHTML = html;
+    container.querySelectorAll('.credit-card-summary').forEach((summary) => {
+      const toggleDetails = () => {
+        const cardId = summary.dataset.creditCardId;
+        if (openCreditCardDetails.has(cardId)) openCreditCardDetails.delete(cardId);
+        else openCreditCardDetails.add(cardId);
+        updateCreditCardsDashboard();
+      };
+
+      summary.addEventListener('click', toggleDetails);
+      summary.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          toggleDetails();
+        }
+      });
+    });
     cardWrapper.style.display = 'block';
   } else {
     cardWrapper.style.display = 'none';
@@ -2852,6 +3064,26 @@ function refreshAll() {
       summarySaldoPrevisto.textContent = 'CAD 0,00';
       summarySaldoPrevisto.className = '';
     }
+    isFreeProjectionExpanded = false;
+    const fixedDetails = document.getElementById('summary-fixed-details');
+    const freeCard = document.querySelector('.dash-item-free');
+    const freeProjectionArrow = document.getElementById('summary-free-projection-arrow');
+    const freeAfterFixed = document.getElementById('summary-free-after-fixed');
+    if (summaryFreeProjectionToggle) {
+      summaryFreeProjectionToggle.classList.remove('is-available');
+      summaryFreeProjectionToggle.setAttribute('aria-disabled', 'true');
+      summaryFreeProjectionToggle.setAttribute('aria-expanded', 'false');
+    }
+    if (freeProjectionArrow) freeProjectionArrow.textContent = '▶';
+    if (freeAfterFixed) {
+      freeAfterFixed.textContent = '';
+      freeAfterFixed.classList.remove('visible');
+    }
+    if (fixedDetails) {
+      fixedDetails.innerHTML = '';
+      fixedDetails.classList.remove('visible');
+    }
+    if (freeCard) freeCard.classList.remove('is-expanded');
     if (summarySaldoReal) {
       summarySaldoReal.textContent = 'CAD 0,00';
       summarySaldoReal.className = '';
@@ -3519,27 +3751,71 @@ window.launchAnnualToBudget = async function (eventId, targetMonthStr) {
   }
 };
 
-// ===== PWA e Service Worker (Versão Consolidada com Auto-Update) =====
+// ===== PWA e Service Worker (Atualizações Consolidadas) =====
+const SERVICE_WORKER_VERSION_KEY = 'controle_financeiro_current_version';
+let updatePromptVisible = false;
+
+async function getAvailableServiceWorkerVersion() {
+  try {
+    const response = await fetch('./service-worker.js', { cache: 'no-store' });
+    const source = await response.text();
+    const match = source.match(/CACHE_NAME\s*=\s*['"`]controle-financeiro-v(\d+)['"`]/);
+    return match ? parseInt(match[1], 10) : null;
+  } catch (error) {
+    console.error('Não foi possível consultar a versão da atualização:', error);
+    return null;
+  }
+}
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker
       .register('./service-worker.js')
-      .then((reg) => {
-        reg.onupdatefound = () => {
-          const installingWorker = reg.installing;
+      .then(async (registration) => {
+        const newVersion = await getAvailableServiceWorkerVersion();
+        if (!newVersion) return;
+
+        const savedVersion = parseInt(localStorage.getItem(SERVICE_WORKER_VERSION_KEY), 10);
+        // Primeiro uso deste fluxo: registra a versão atual como base para contar
+        // corretamente todas as atualizações que forem adiadas daqui em diante.
+        const oldVersion = Number.isFinite(savedVersion) ? savedVersion : newVersion;
+        if (!Number.isFinite(savedVersion)) localStorage.setItem(SERVICE_WORKER_VERSION_KEY, String(newVersion));
+        const totalUpdates = Math.max(newVersion - oldVersion, 1);
+
+        const handleWaitingWorker = (worker) => {
+          if (newVersion > oldVersion) showUpdatePrompt(worker, totalUpdates, newVersion);
+          else worker.postMessage('skipWaiting');
+        };
+
+        if (registration.waiting) handleWaitingWorker(registration.waiting);
+
+        registration.onupdatefound = () => {
+          const installingWorker = registration.installing;
+          if (!installingWorker) return;
+
           installingWorker.onstatechange = () => {
             if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
-              showUpdatePrompt();
+              handleWaitingWorker(installingWorker);
             }
           };
         };
       })
-      .catch((err) => console.error('Falha no Service Worker:', err));
+      .catch((error) => console.error('Falha no Service Worker:', error));
+
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!refreshing) {
+        refreshing = true;
+        window.location.reload();
+      }
+    });
   });
 }
 
-function showUpdatePrompt() {
+function showUpdatePrompt(worker, totalUpdates, newVersion) {
+  if (updatePromptVisible) return;
+  updatePromptVisible = true;
+
   const overlay = document.createElement('div');
   overlay.className = 'custom-modal-overlay active';
   overlay.style.zIndex = '9999999';
@@ -3547,7 +3823,7 @@ function showUpdatePrompt() {
     <div class="custom-modal" style="text-align: center; padding: 30px 20px;">
       <div style="font-size: 2.5rem; margin-bottom: 12px;">✨</div>
       <h2 style="margin: 0 0 10px 0; color: #fddf7b;">Atualização Disponível</h2>
-      <p style="color: #a6a6c0; font-size: 0.95rem; margin-bottom: 24px;">Uma nova versão do Controle Financeiro está pronta. Deseja atualizar agora?</p>
+      <p style="color: #a6a6c0; font-size: 0.95rem; margin-bottom: 24px;">${totalUpdates} ${totalUpdates > 1 ? 'atualizações acumuladas estão prontas' : 'atualização acumulada está pronta'}. Deseja aplicar agora?</p>
       <div class="custom-modal-actions" style="justify-content: center;">
         <button class="custom-modal-btn cancel" id="btn-update-later">Depois</button>
         <button class="custom-modal-btn confirm" id="btn-update-now">Atualizar</button>
@@ -3556,7 +3832,10 @@ function showUpdatePrompt() {
   `;
   document.body.appendChild(overlay);
 
-  document.getElementById('btn-update-later').onclick = () => overlay.remove();
+  document.getElementById('btn-update-later').onclick = () => {
+    updatePromptVisible = false;
+    overlay.remove();
+  };
 
   document.getElementById('btn-update-now').onclick = () => {
     overlay.innerHTML = `
@@ -3575,12 +3854,16 @@ function showUpdatePrompt() {
     `;
 
     let progress = 0;
+    let currentStep = 1;
     const bar = document.getElementById('update-progress-bar');
     const percentText = document.getElementById('update-percent');
     const statusText = document.getElementById('update-status-text');
 
     const interval = setInterval(() => {
-      progress += Math.floor(Math.random() * 12) + 4;
+      const stepTarget = (currentStep / totalUpdates) * 100;
+      progress = Math.min(progress + Math.floor(Math.random() * 12) + 4, stepTarget);
+
+      if (progress >= stepTarget && currentStep < totalUpdates) currentStep++;
 
       if (progress >= 100) {
         progress = 100;
@@ -3589,13 +3872,17 @@ function showUpdatePrompt() {
         statusText.style.color = '#62c462';
         bar.style.background = '#fddf7b';
         percentText.textContent = '100%';
+        localStorage.setItem(SERVICE_WORKER_VERSION_KEY, String(newVersion));
 
-        setTimeout(() => window.location.reload(), 500);
+        setTimeout(() => {
+          worker.postMessage('skipWaiting');
+          // Fallback para navegadores que não disparem controllerchange nesta aba.
+          setTimeout(() => window.location.reload(), 1000);
+        }, 500);
       } else {
         bar.style.width = progress + '%';
         percentText.textContent = progress + '%';
-        if (progress > 30) statusText.textContent = 'Baixando módulos...';
-        if (progress > 70) statusText.textContent = 'Atualizando cache...';
+        statusText.textContent = `Consolidando atualizações (${currentStep}/${totalUpdates})...`;
       }
     }, 200);
   };

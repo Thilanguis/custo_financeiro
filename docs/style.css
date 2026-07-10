@@ -64,6 +64,161 @@ body {
   font-weight: 700;
 }
 
+.dash-free-real-row {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 2px;
+  user-select: none;
+}
+
+.dash-free-real-row .toggle-icon {
+  display: none;
+  width: 12px;
+  font-size: 0.7rem;
+}
+
+.dash-free-real-row.is-available {
+  cursor: pointer;
+}
+
+.dash-free-real-row.is-available .toggle-icon {
+  display: inline-block;
+}
+
+.dash-free-real-row:focus-visible {
+  outline: 1px solid #fddf7b;
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.dash-free-after-fixed {
+  display: none;
+  margin-top: 2px;
+  color: #f7c84a;
+  font-size: 0.58rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.dash-free-after-fixed.visible {
+  display: block;
+}
+
+.dash-free-details {
+  display: none;
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(247, 200, 74, 0.35);
+  text-align: left;
+}
+
+.dash-free-details.visible {
+  display: block;
+}
+
+.dash-free-details-title {
+  color: #fddf7b;
+  font-size: 0.65rem;
+  margin-bottom: 6px;
+}
+
+.dash-fixed-table {
+  width: 100%;
+  border-collapse: collapse;
+  color: #c3c3d5;
+  font-size: 0.65rem;
+}
+
+.dash-fixed-table th,
+.dash-fixed-table td {
+  padding: 6px 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  vertical-align: middle;
+}
+
+.dash-fixed-table th {
+  padding-top: 0;
+  color: #a6a6c0;
+  font-size: 0.56rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  text-align: right;
+}
+
+.dash-fixed-table th:first-child {
+  width: 52%;
+  text-align: left;
+}
+
+.dash-fixed-table td:not(:first-child) {
+  color: #f5f5f5;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.dash-fixed-table td.dash-fixed-real {
+  color: #ff7b7b;
+}
+
+.dash-fixed-table td.dash-fixed-real.is-zero {
+  color: #f5f5f5;
+}
+
+.dash-fixed-table .dash-fixed-difference {
+  font-weight: 700;
+}
+
+.dash-fixed-table .dash-fixed-difference.positive {
+  color: #7cff7c;
+}
+
+.dash-fixed-table .dash-fixed-difference.neutral {
+  color: #f7c84a;
+}
+
+.dash-fixed-table .dash-fixed-difference.negative {
+  color: #ff7b7b;
+}
+
+.dash-fixed-name > span,
+.dash-fixed-name > small {
+  display: block;
+}
+
+.dash-fixed-name > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dash-fixed-name small {
+  margin-top: 1px;
+  color: #a6a6c0;
+  font-size: 0.58rem;
+}
+
+.dash-fixed-progress {
+  width: 100%;
+  height: 4px;
+  margin-top: 4px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: #27273a;
+}
+
+.dash-fixed-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+
+@media (max-width: 600px) {
+  .dash-item-free.is-expanded {
+    grid-column: 1 / -1;
+  }
+}
+
 /* CLASSES DE STATUS PARA O JS */
 .status-danger {
   color: #ff7b7b !important;
@@ -204,6 +359,102 @@ body {
   margin-top: 0;
   font-size: 1rem;
   color: #f7c84a;
+}
+
+/* Cartões: o resumo permanece compacto e abre a composição da fatura ao clique. */
+.credit-card-card {
+  background: linear-gradient(145deg, #1a1a2e, #12121c);
+  border: 1px solid #35354a;
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.credit-card-card.is-expanded {
+  border-color: rgba(253, 223, 123, 0.55);
+}
+
+.credit-card-summary {
+  width: 100%;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  text-align: left;
+}
+
+.credit-card-summary:focus-visible {
+  outline: 2px solid #fddf7b;
+  outline-offset: 5px;
+  border-radius: 6px;
+}
+
+.credit-card-toggle-icon {
+  color: #fddf7b;
+  display: inline-block;
+  margin-right: 2px;
+  font-size: 0.72rem;
+}
+
+.credit-card-details {
+  border-top: 1px solid #35354a;
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.credit-card-details-title,
+.credit-card-detail-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.credit-card-details-title {
+  color: #c3c3d5;
+  font-size: 0.78rem;
+}
+
+.credit-card-details-title strong {
+  color: #62c462;
+}
+
+.credit-card-detail-row {
+  align-items: flex-start;
+  padding: 8px 0;
+  border-top: 1px solid rgba(53, 53, 74, 0.6);
+  font-size: 0.8rem;
+}
+
+.credit-card-detail-row > div {
+  min-width: 0;
+}
+
+.credit-card-detail-row strong,
+.credit-card-detail-row span {
+  display: block;
+}
+
+.credit-card-detail-row span,
+.credit-card-detail-observation {
+  color: #a6a6c0;
+  font-size: 0.72rem;
+  margin-top: 2px;
+}
+
+.credit-card-detail-row b {
+  color: #f5f5f5;
+  white-space: nowrap;
+}
+
+.credit-card-next-invoice {
+  margin-top: 2px;
+  color: #f7c84a;
+  font-size: 0.75rem;
 }
 
 h2 {

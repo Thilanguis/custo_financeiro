@@ -230,7 +230,8 @@ let paymentMethods = [];
 const openPlannedCats = new Set();
 const openReceiptCats = new Set();
 const openDashboardCats = new Set();
-const openOwnerCats = new Set();
+const openOwnerCats = new Set(['Gabriel', 'Luana', 'Ambos']);
+const openOwnerExpenseGroups = new Set();
 
 let nextId = 1;
 const getNextId = () => nextId++;
@@ -2145,12 +2146,45 @@ function updateDashboardView() {
 
       const pGastoTotal = baseBarWidth > 0 ? (totalReal / baseBarWidth) * 100 : 0;
       const pLivreTotal = baseBarWidth > 0 ? Math.max((freeReal / baseBarWidth) * 100, 0) : 0;
+      const pendingFixedExpense = getPendingFixedExpenses(month).reduce((total, item) => total + item.remainingAmount, 0);
+      const freeAfterFixed = freeReal - pendingFixedExpense;
+      const visibleFreeTotal = Math.max(freeReal, 0);
+      const visiblePendingFixed = Math.min(pendingFixedExpense, visibleFreeTotal);
+      const visibleFreeAfterFixed = Math.max(freeAfterFixed, 0);
+      const gabrielPercentOfIncome = baseBarWidth > 0 ? (Math.max(gabTotal, 0) / baseBarWidth) * 100 : 0;
+      const luanaPercentOfIncome = baseBarWidth > 0 ? (Math.max(luaTotal, 0) / baseBarWidth) * 100 : 0;
+      const bothPercentOfIncome = baseBarWidth > 0 ? (Math.max(ambTotal, 0) / baseBarWidth) * 100 : 0;
+      const gabrielShareOfExpense = totalReal > 0 ? Math.max((gabTotal / totalReal) * 100, 0) : 0;
+      const luanaShareOfExpense = totalReal > 0 ? Math.max((luaTotal / totalReal) * 100, 0) : 0;
+      const bothShareOfExpense = totalReal > 0 ? Math.max((ambTotal / totalReal) * 100, 0) : 0;
+      const pendingFixedPercentOfIncome = baseBarWidth > 0 ? (visiblePendingFixed / baseBarWidth) * 100 : 0;
+      const afterFixedPercentOfIncome = baseBarWidth > 0 ? (visibleFreeAfterFixed / baseBarWidth) * 100 : 0;
+      const getOwnerComposition = (essential, leisure) => {
+        const positiveEssential = Math.max(essential, 0);
+        const positiveLeisure = Math.max(leisure, 0);
+        const total = positiveEssential + positiveLeisure;
+        return {
+          essential: total > 0 ? (positiveEssential / total) * 100 : 0,
+          leisure: total > 0 ? (positiveLeisure / total) * 100 : 0,
+        };
+      };
+      const gabrielComposition = getOwnerComposition(gabEss, gabLaz);
+      const luanaComposition = getOwnerComposition(luaEss, luaLaz);
+      const bothComposition = getOwnerComposition(ambEss, ambLaz);
+      const overviewExpenseComposition = getOwnerComposition(totEss, totLaz);
 
       const isDetailsOpen = window.isConsumptionDetailsOpen || false;
 
       window.toggleOwnerCat = function (owner) {
         if (openOwnerCats.has(owner)) openOwnerCats.delete(owner);
         else openOwnerCats.add(owner);
+        updateDashboardView();
+      };
+
+      window.toggleOwnerExpenseGroup = function (owner, group) {
+        const key = `${owner}|${group}`;
+        if (openOwnerExpenseGroups.has(key)) openOwnerExpenseGroups.delete(key);
+        else openOwnerExpenseGroups.add(key);
         updateDashboardView();
       };
 
@@ -2161,13 +2195,20 @@ function updateDashboardView() {
             <div style="margin-bottom: 6px; text-align: center;">
               <span style="font-weight: 600; font-size: 0.95rem; color: #62c462;">
                 
-                <span style="font-size: 0.75rem; vertical-align: middle; display: inline-block; width: 14px; text-align: left;">${isDetailsOpen ? '▼' : '▶'}</span> Renda Total: ${formatCurrency(totalIncome, true)}
+                Renda Total: ${formatCurrency(totalIncome, true)}
               </span>
             </div>
             
-            <div style="display: flex; height: 14px; border-radius: 7px; overflow: hidden; margin-bottom: 4px; background: #27273a; border: 1px solid #35354a;">
-              ${pEss > 0 ? `<div style="width: ${pEss}%; background: #f7c84a;" title="Essenciais: ${formatCurrency(totEss)}"></div>` : ''}
-              ${pLaz > 0 ? `<div style="width: ${pLaz}%; background: #ff7b7b;" title="Lazer e Outros: ${formatCurrency(totLaz)}"></div>` : ''}
+            <div class="income-overview-bar">
+              ${
+                pGastoTotal > 0
+                  ? `<div class="overview-expense" style="width: ${pGastoTotal}%;" title="Gasto: ${formatCurrency(totalReal)}">
+                      ${totEss > 0 ? `<i class="overview-essential" style="width: ${overviewExpenseComposition.essential}%;" title="Essenciais: ${formatCurrency(totEss)}"></i>` : ''}
+                      ${totLaz > 0 ? `<i class="overview-leisure" style="width: ${overviewExpenseComposition.leisure}%;" title="Lazer e Outros: ${formatCurrency(totLaz)}"></i>` : ''}
+                    </div>`
+                  : ''
+              }
+              ${pendingFixedPercentOfIncome > 0 ? `<div class="overview-pending" style="width: ${pendingFixedPercentOfIncome}%;" title="Fixos pendentes: ${formatCurrency(pendingFixedExpense)}"></div>` : ''}
             </div>
 
             <div style="display: flex; width: 100%;">
@@ -2188,51 +2229,121 @@ function updateDashboardView() {
             <div style="display: flex; gap: 16px; font-size: 0.75rem; color: #a6a6c0; flex-wrap: wrap; align-items: center; justify-content: center; margin-bottom: ${isDetailsOpen ? '0' : '8px'};">
               ${totEss > 0 ? `<span><strong style="color: #f7c84a;">■</strong> Essenciais: <span style="color:#f5f5f5">${formatCurrency(totEss)}</span> <span style="opacity:0.6; font-size:0.65rem">(${tEss}%)</span></span>` : ''}
               ${totLaz > 0 ? `<span><strong style="color: #ff7b7b;">■</strong> Lazer: <span style="color:#f5f5f5">${formatCurrency(totLaz)}</span> <span style="opacity:0.6; font-size:0.65rem">(${tLaz}%)</span></span>` : ''}
+              ${pendingFixedExpense > 0 ? `<span><strong class="overview-pending-key" aria-hidden="true"></strong> Fixos: <span class="overview-pending-value">${formatCurrency(pendingFixedExpense)}</span></span>` : ''}
             </div>
+            ${
+              !isDetailsOpen
+                ? `<div class="consumption-closed-preview">
+                    <span>Gabriel ${gabrielShareOfExpense.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</span>
+                    <span>Luana ${luanaShareOfExpense.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</span>
+                    <span>Ambos ${bothShareOfExpense.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</span>
+                    <strong>Ver detalhes ▼</strong>
+                  </div>`
+                : ''
+            }
           </div>
 
-          <div style="display: ${isDetailsOpen ? 'block' : 'none'}; margin-top: 16px; margin-bottom: 12px; padding-left: 12px; border-left: 2px solid #35354a; animation: fadeIn 0.15s ease-out;">
-            <div style="margin-bottom: 16px;">
-              <span style="font-weight: 500; font-size: 0.85rem; color: #c3c3d5;">↳ Detalhamento de Responsáveis</span>
+          <div class="owner-breakdown-section" style="display: ${isDetailsOpen ? 'block' : 'none'};">
+            <div class="owner-breakdown-toggle owner-breakdown-heading">
+              <span>Gastos por responsável</span>
+              <small>Gabriel, Luana e Ambos</small>
             </div>
+            <div class="owner-breakdown-content">
+              <div class="owner-scale-caption">Mesma escala da Renda Total</div>
+              <div class="income-breakdown-bar" title="Renda total: ${formatCurrency(totalIncome, true)}">
+                ${gabrielPercentOfIncome > 0 ? `<span class="income-owner-segment" style="width: ${gabrielPercentOfIncome}%" title="Gabriel: ${formatCurrency(gabTotal)}"><i class="is-essential" style="width: ${gabrielComposition.essential}%"></i><i class="is-leisure" style="width: ${gabrielComposition.leisure}%"></i></span>` : ''}
+                ${luanaPercentOfIncome > 0 ? `<span class="income-owner-segment" style="width: ${luanaPercentOfIncome}%" title="Luana: ${formatCurrency(luaTotal)}"><i class="is-essential" style="width: ${luanaComposition.essential}%"></i><i class="is-leisure" style="width: ${luanaComposition.leisure}%"></i></span>` : ''}
+                ${bothPercentOfIncome > 0 ? `<span class="income-owner-segment" style="width: ${bothPercentOfIncome}%" title="Ambos: ${formatCurrency(ambTotal)}"><i class="is-essential" style="width: ${bothComposition.essential}%"></i><i class="is-leisure" style="width: ${bothComposition.leisure}%"></i></span>` : ''}
+                ${pendingFixedPercentOfIncome > 0 ? `<span class="is-pending" style="width: ${pendingFixedPercentOfIncome}%" title="Fixos pendentes: ${formatCurrency(pendingFixedExpense)}"></span>` : ''}
+                ${afterFixedPercentOfIncome > 0 ? `<span class="is-available" style="width: ${afterFixedPercentOfIncome}%" title="Após fixos: ${formatCurrency(freeAfterFixed)}"></span>` : ''}
+              </div>
+              <div class="income-breakdown-segment-labels">
+                ${gabrielPercentOfIncome > 0 ? `<span style="width: ${gabrielPercentOfIncome}%"><b>Gabriel</b><abbr>G</abbr></span>` : ''}
+                ${luanaPercentOfIncome > 0 ? `<span style="width: ${luanaPercentOfIncome}%"><b>Luana</b><abbr>L</abbr></span>` : ''}
+                ${bothPercentOfIncome > 0 ? `<span style="width: ${bothPercentOfIncome}%"><b>Ambos</b><abbr>A</abbr></span>` : ''}
+                ${pendingFixedPercentOfIncome > 0 ? `<span class="is-pending" style="width: ${pendingFixedPercentOfIncome}%"><b>Fixos</b><abbr>F</abbr><small>${formatCurrency(pendingFixedExpense)}</small></span>` : ''}
+                ${afterFixedPercentOfIncome > 0 ? `<span class="is-available ${freeAfterFixed < 0 ? 'is-negative' : ''}" style="width: ${afterFixedPercentOfIncome}%"><b>Após fixos</b><abbr>AF</abbr><small>${formatCurrency(freeAfterFixed)}</small></span>` : ''}
+              </div>
+              <div class="income-breakdown-mobile-legend">
+                ${gabrielPercentOfIncome > 0 ? '<span><b>G</b> Gabriel</span>' : ''}
+                ${luanaPercentOfIncome > 0 ? '<span><b>L</b> Luana</span>' : ''}
+                ${bothPercentOfIncome > 0 ? '<span><b>A</b> Ambos</span>' : ''}
+                ${pendingFixedPercentOfIncome > 0 ? '<span class="is-pending"><b>F</b> Fixos</span>' : ''}
+                ${afterFixedPercentOfIncome > 0 ? '<span class="is-available"><b>AF</b> Após fixos</span>' : ''}
+              </div>
       `;
 
       const ownersArray = [
-        { name: 'Gabriel', total: gabTotal, ess: gabEss, laz: gabLaz },
-        { name: 'Luana', total: luaTotal, ess: luaEss, laz: luaLaz },
-        { name: 'Ambos', total: ambTotal, ess: ambEss, laz: ambLaz },
+        { name: 'Gabriel', total: gabTotal, ess: gabEss, laz: gabLaz, share: gabrielShareOfExpense },
+        { name: 'Luana', total: luaTotal, ess: luaEss, laz: luaLaz, share: luanaShareOfExpense },
+        { name: 'Ambos', total: ambTotal, ess: ambEss, laz: ambLaz, share: bothShareOfExpense },
       ];
+
+      const renderOwnerExpenseItems = (ownerName, essentialGroup) => {
+        const items = receiptsForMonth
+          .filter((receipt) => {
+            const receiptOwner = receipt.owner || 'Ambos';
+            const isExpenseMovement = receipt.amount > 0 || receipt.isReimbursement;
+            return receiptOwner === ownerName && isExpenseMovement && categoriasEssenciais.includes(receipt.category) === essentialGroup;
+          })
+          .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+        if (!items.length) return '<div class="owner-expense-empty">Nenhum lançamento neste grupo.</div>';
+
+        return items
+          .map((receipt) => {
+            const isReimbursement = receipt.isReimbursement;
+            const amountText = `${isReimbursement ? '+' : '-'} ${formatCurrency(Math.abs(receipt.amount))}`;
+            const observation = receipt.observation ? `<small>↳ ${escapeCardDetail(receipt.observation)}</small>` : '';
+            const merchant = receipt.merchant || 'Sem nome';
+            const category = receipt.category || 'Sem categoria';
+            const receiptDate = receipt.date ? receipt.date.split('-').reverse().join('/') : 'Sem data';
+            return `<div class="owner-expense-item">
+              <span><b>${escapeCardDetail(merchant)}</b><em>${escapeCardDetail(category)} · ${receiptDate}</em>${observation}</span>
+              <strong class="${isReimbursement ? 'positive' : 'negative'}">${amountText}</strong>
+            </div>`;
+          })
+          .join('');
+      };
 
       ownersArray.forEach((owner) => {
         if (owner.total === 0) return;
         const isOpen = openOwnerCats.has(owner.name);
+        const ownerShareText = owner.share.toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+        const essentialKey = `${owner.name}|essential`;
+        const leisureKey = `${owner.name}|leisure`;
+        const isEssentialOpen = openOwnerExpenseGroups.has(essentialKey);
+        const isLeisureOpen = openOwnerExpenseGroups.has(leisureKey);
 
         html += `
-          <div class="group-header-div" style="display: block; padding: 12px; margin-top: 8px;" onclick="window.toggleOwnerCat('${owner.name}')">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <span style="font-weight: 600; color: #fddf7b;">${isOpen ? '▼' : '▶'} ${owner.name}</span>
-              <span style="font-size: 0.95rem; color: #f5f5f5;">${formatCurrency(owner.total)}</span>
-            </div>
-          </div>
+          <button type="button" class="owner-summary-card ${isOpen ? 'is-open' : ''}" onclick="window.toggleOwnerCat('${owner.name}')" aria-expanded="${isOpen}">
+            <span class="owner-summary-line">
+              <span class="owner-summary-name"><span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${owner.name}</span>
+              <span class="owner-summary-values"><strong>${formatCurrency(owner.total)}</strong><small>${ownerShareText}% do gasto</small></span>
+            </span>
+          </button>
         `;
 
         if (isOpen) {
           html += `
-            <div style="background: #141423; padding: 8px 12px; border-radius: 0 0 6px 6px; margin-bottom: 6px; margin-top: -2px; font-size: 0.85rem;">
-              <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                <span style="color: #c3c3d5;">↳ Essenciais</span>
-                <span style="color: #f5f5f5; font-weight: 500;">${formatCurrency(owner.ess)}</span>
-              </div>
-              <div style="display: flex; justify-content: space-between;">
-                <span style="color: #c3c3d5;">↳ Lazer e Outros</span>
-                <span style="color: #f7c84a; font-weight: 500;">${formatCurrency(owner.laz)}</span>
-              </div>
+            <div class="owner-summary-details">
+              <button type="button" class="owner-expense-toggle" onclick="window.toggleOwnerExpenseGroup('${owner.name}', 'essential')" aria-expanded="${isEssentialOpen}">
+                <span><span class="toggle-icon">${isEssentialOpen ? '▼' : '▶'}</span><i class="is-essential"></i> Essenciais</span>
+                <strong>${formatCurrency(owner.ess)}</strong>
+              </button>
+              ${isEssentialOpen ? `<div class="owner-expense-items">${renderOwnerExpenseItems(owner.name, true)}</div>` : ''}
+              <button type="button" class="owner-expense-toggle" onclick="window.toggleOwnerExpenseGroup('${owner.name}', 'leisure')" aria-expanded="${isLeisureOpen}">
+                <span><span class="toggle-icon">${isLeisureOpen ? '▼' : '▶'}</span><i class="is-leisure"></i> Lazer e Outros</span>
+                <strong>${formatCurrency(owner.laz)}</strong>
+              </button>
+              ${isLeisureOpen ? `<div class="owner-expense-items">${renderOwnerExpenseItems(owner.name, false)}</div>` : ''}
             </div>
           `;
         }
       });
 
       html += `
+            </div>
           </div>
         </div>
       `;

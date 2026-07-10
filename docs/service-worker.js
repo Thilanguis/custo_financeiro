@@ -1,5 +1,5 @@
 // docs/service-worker.js
-const CACHE_NAME = 'controle-financeiro-v49';
+const CACHE_NAME = 'controle-financeiro-v50';
 // Migração única: clientes anteriores não conhecem o fluxo de confirmação por mensagem.
 const AUTO_ACTIVATE_MIGRATION_CACHE = 'controle-financeiro-v46';
 

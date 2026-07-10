@@ -1514,7 +1514,7 @@ formActual.addEventListener('submit', async (e) => {
   const isIncomeChecked = document.getElementById('actual-is-income')?.checked || false;
   const isReimb = oldReceipt ? oldReceipt.isReimbursement || false : false;
 
-  // Se o usuário marcou "Saldo (+)", garantimos que isReimbursement seja false
+  // Se o usuário marcou "Entrada (+)", garantimos que isReimbursement seja false
   const finalIsReimbursement = isReimb && !isIncomeChecked;
   const finalAmount = isReimb || isIncomeChecked ? -Math.abs(amount) : Math.abs(amount);
 
@@ -1532,6 +1532,10 @@ formActual.addEventListener('submit', async (e) => {
 
   if (oldReceipt && oldReceipt.staticSyncId) {
     itemData.staticSyncId = oldReceipt.staticSyncId;
+  }
+
+  if (oldReceipt && oldReceipt.linkedPlannedId) {
+    itemData.linkedPlannedId = oldReceipt.linkedPlannedId;
   }
 
   // Se o lançamento veio pelo botão +, salva o vínculo forte
@@ -1623,6 +1627,24 @@ function startEditReceipt(id) {
   actualSubmitBtn.textContent = 'Salvar alterações';
 }
 
+function renderFinancialFlowBadges(entry) {
+  const incomeBadge = entry.hasActualIncome ? '<span class="financial-flow-badge is-income">Entrada</span>' : '';
+  const reimbursementBadge = entry.hasReimbursement ? '<span class="financial-flow-badge is-reimbursement">Reembolso</span>' : '';
+  return `${incomeBadge}${reimbursementBadge}`;
+}
+
+function isReceiptFromEvent(receipt) {
+  if (receipt.category === 'Eventos') return true;
+  if (!receipt.linkedPlannedId) return false;
+
+  const linkedPlanned = plannedItems.find((planned) => planned.id === receipt.linkedPlannedId);
+  return Boolean(linkedPlanned && (linkedPlanned.linkedAnnualId || linkedPlanned.category === 'Eventos'));
+}
+
+function renderFinancialEventBadge() {
+  return '<span class="financial-event-badge">Evento</span>';
+}
+
 function updateReceiptsView() {
   const month = getCurrentMonth();
   receiptsList.innerHTML = '';
@@ -1660,6 +1682,11 @@ function updateReceiptsView() {
       });
       const isOpen = isSearching || openReceiptCats.has(cat);
       const catTotal = groupItems.reduce((acc, curr) => acc + curr.amount, 0);
+      const flowBadges = renderFinancialFlowBadges({
+        hasActualIncome: groupItems.some((receipt) => receipt.amount < 0 && !receipt.isReimbursement),
+        hasReimbursement: groupItems.some((receipt) => receipt.isReimbursement),
+      });
+      const eventBadge = groupItems.some((receipt) => isReceiptFromEvent(receipt)) ? renderFinancialEventBadge() : '';
 
       const headerDiv = document.createElement('div');
       headerDiv.className = 'group-header-div';
@@ -1669,8 +1696,8 @@ function updateReceiptsView() {
       const displayedCatTotal = isCatIncome ? `+ ${formatCurrency(Math.abs(catTotal), cat.toLowerCase() === 'salário')}` : formatCurrency(catTotal, cat.toLowerCase() === 'salário');
 
       headerDiv.innerHTML = `
-      <span style="color: #f5f5f5;"><span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}</span>
-      <span style="color:#a6a6c0; font-size:0.85rem; font-weight:normal;">${displayedCatTotal}</span>
+      <span class="receipt-group-title" style="color: #f5f5f5;"><span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}${eventBadge}${flowBadges}</span>
+      <span class="receipt-group-total" style="color:#a6a6c0; font-size:0.85rem; font-weight:normal;">${displayedCatTotal}</span>
     `;
 
       headerDiv.onclick = () => {
@@ -1694,15 +1721,17 @@ function updateReceiptsView() {
           const amountColor = isIncomeOrReimb ? '#62c462' : '#ff7b7b';
           // Repassa a validação da categoria atual do laço
           const displayAmount = isIncomeOrReimb ? `+ ${formatCurrency(Math.abs(r.amount), cat.toLowerCase() === 'salário')}` : `- ${formatCurrency(Math.abs(r.amount), cat.toLowerCase() === 'salário')}`;
-          let reimbBadge = '';
-          if (r.isReimbursement) reimbBadge = ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Reembolso)</span>';
-          else if (r.amount < 0) reimbBadge = ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Entrada)</span>';
+          const flowBadge = renderFinancialFlowBadges({
+            hasActualIncome: r.amount < 0 && !r.isReimbursement,
+            hasReimbursement: r.isReimbursement,
+          });
+          const eventBadge = isReceiptFromEvent(r) ? renderFinancialEventBadge() : '';
 
           const btnReembolsoHtml = !isIncomeOrReimb ? `<button class="action-btn" style="color: #62c462; border: 1px solid rgba(98, 196, 98, 0.3);" onclick="startReimbursement('${r.id}')" title="Reembolsar esta nota">🔄</button>` : '';
 
           item.innerHTML = `
           <div class="receipt-main">
-            <div class="receipt-line">${r.merchant} • ${r.category}${reimbBadge}</div>
+            <div class="receipt-line">${r.merchant} • ${r.category}${eventBadge}${flowBadge}</div>
             ${obsHtml}
             <div class="receipt-meta" style="margin-top: 2px;">${r.date.split('-').reverse().join('/')} • ${r.owner}${payStr}${r.isStatic ? ' • Estático' : ''}</div>
           </div>
@@ -2093,7 +2122,7 @@ function updateDashboardView() {
           }
         }
       } else {
-        // 3. Ganho Extra / Saldo (+): Computa na receita total do card
+        // 3. Entrada (+): computa na receita total do card
         rExtraInc += Math.abs(r.amount);
       }
     });
@@ -2215,17 +2244,15 @@ function updateDashboardView() {
   const mapCat = {};
 
   plannedForMonth.forEach((p) => {
-    if (!mapCat[p.category]) mapCat[p.category] = { planned: 0, actual: 0, items: new Map(), hasReimbursement: false, hasIncome: false };
+    if (!mapCat[p.category]) mapCat[p.category] = { planned: 0, actual: 0, items: new Map(), hasReimbursement: false, hasActualIncome: false };
     mapCat[p.category].planned += p.amount;
-    if (p.amount < 0) mapCat[p.category].hasIncome = true;
 
     const key = makeKey(p.category, p.description, p.owner);
     if (!mapCat[p.category].items.has(key)) {
-      mapCat[p.category].items.set(key, { name: p.description, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: p.date || '', isAnnual: false, annualEventsData: [], hasReimbursement: false, hasIncome: false });
+      mapCat[p.category].items.set(key, { name: p.description, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: p.date || '', isAnnual: false, annualEventsData: [], hasReimbursement: false, hasActualIncome: false });
     }
     const item = mapCat[p.category].items.get(key);
     item.planned += p.amount;
-    if (p.amount < 0) item.hasIncome = true;
     if (p.owner) item.owners.add(p.owner);
     if (p.date && (!item.maxDate || p.date > item.maxDate)) item.maxDate = p.date;
     if (p.linkedAnnualId) {
@@ -2238,19 +2265,19 @@ function updateDashboardView() {
   });
 
   receiptsForMonth.forEach((r) => {
-    if (!mapCat[r.category]) mapCat[r.category] = { planned: 0, actual: 0, items: new Map(), hasReimbursement: false, hasIncome: false };
+    if (!mapCat[r.category]) mapCat[r.category] = { planned: 0, actual: 0, items: new Map(), hasReimbursement: false, hasActualIncome: false };
     mapCat[r.category].actual += r.amount;
     if (r.isReimbursement) mapCat[r.category].hasReimbursement = true;
-    if (r.amount < 0 && !r.isReimbursement) mapCat[r.category].hasIncome = true;
+    if (r.amount < 0 && !r.isReimbursement) mapCat[r.category].hasActualIncome = true;
 
     const key = makeKey(r.category, r.merchant, r.owner);
     if (!mapCat[r.category].items.has(key)) {
-      mapCat[r.category].items.set(key, { name: r.merchant, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: r.date || '', isAnnual: false, annualObs: new Set(), hasReimbursement: false, hasIncome: false });
+      mapCat[r.category].items.set(key, { name: r.merchant, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: r.date || '', isAnnual: false, annualObs: new Set(), hasReimbursement: false, hasActualIncome: false });
     }
     const item = mapCat[r.category].items.get(key);
     item.actual += r.amount;
     if (r.isReimbursement) item.hasReimbursement = true;
-    if (r.amount < 0 && !r.isReimbursement) item.hasIncome = true;
+    if (r.amount < 0 && !r.isReimbursement) item.hasActualIncome = true;
     if (r.owner) item.owners.add(r.owner);
     if (r.date && (!item.maxDate || r.date > item.maxDate)) item.maxDate = r.date;
 
@@ -2302,19 +2329,21 @@ function updateDashboardView() {
     catContainer.className = 'cat-name-container';
 
     const hasEvent = Array.from(data.items.values()).some((item) => item.isAnnual);
+    const isUnbudgetedExpense = data.planned === 0 && data.actual > 0;
+    const isUnplannedCredit = data.planned === 0 && data.actual < 0 && (data.hasActualIncome || data.hasReimbursement);
     const catTitle = document.createElement('span');
+    catTitle.className = 'dashboard-category-title';
     catTitle.style.display = 'flex';
     catTitle.style.alignItems = 'center';
     const catBadge = hasEvent ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px;">Evento</span>' : '';
-    const reimbCatBadge =
-      data.hasReimbursement || data.hasIncome ? ' <span style="background: rgba(98, 196, 98, 0.15); color: #62c462; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(98, 196, 98, 0.3); margin-left: 6px;">+</span>' : '';
-    catTitle.innerHTML = `<span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}${catBadge}${reimbCatBadge}`;
+    const flowBadges = renderFinancialFlowBadges(data);
+    catTitle.innerHTML = `<span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}${catBadge}${flowBadges}`;
     catContainer.appendChild(catTitle);
 
     let percent = 0;
     if (data.planned > 0) {
       percent = (data.actual / data.planned) * 100;
-    } else if (data.actual > 0) {
+    } else if (isUnbudgetedExpense) {
       percent = 100;
     }
 
@@ -2322,16 +2351,45 @@ function updateDashboardView() {
     progressContainer.className = 'progress-bar-container';
     const progressFill = document.createElement('div');
     progressFill.className = 'progress-bar-fill';
-    progressFill.style.width = Math.min(percent, 100) + '%';
+    progressFill.style.width = Math.max(0, Math.min(percent, 100)) + '%';
 
     const roundedPercent = Math.round(percent * 100) / 100;
 
-    if (roundedPercent < 100) progressFill.classList.add('progress-safe');
-    else if (roundedPercent === 100) progressFill.classList.add('progress-warning');
+    if (isUnbudgetedExpense) progressFill.classList.add('progress-danger');
+    else if (roundedPercent <= 75) progressFill.classList.add('progress-safe');
+    else if (roundedPercent <= 100) progressFill.classList.add('progress-warning');
     else progressFill.classList.add('progress-danger');
 
+    let usageText = null;
+    if (isUnbudgetedExpense) {
+      trCat.classList.add('is-unbudgeted', 'budget-critical');
+      const unbudgetedBadge = document.createElement('span');
+      unbudgetedBadge.className = 'budget-unbudgeted-badge';
+      unbudgetedBadge.textContent = 'Não orçado';
+      catTitle.appendChild(unbudgetedBadge);
+
+      usageText = document.createElement('span');
+      usageText.className = 'progress-usage-text is-unbudgeted';
+      usageText.textContent = 'Gasto sem previsão';
+    } else if (data.planned > 0 && data.actual >= 0) {
+      if (roundedPercent > 100) {
+        trCat.classList.add('is-over-budget', 'budget-critical');
+        const overBudgetBadge = document.createElement('span');
+        overBudgetBadge.className = 'budget-over-badge';
+        overBudgetBadge.textContent = 'Estourado';
+        catTitle.appendChild(overBudgetBadge);
+      } else if (roundedPercent > 75) {
+        trCat.classList.add('is-warning');
+      }
+
+      usageText = document.createElement('span');
+      usageText.className = 'progress-usage-text';
+      usageText.textContent = `${roundedPercent.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% usado`;
+    }
+
     progressContainer.appendChild(progressFill);
-    catContainer.appendChild(progressContainer);
+    if (!isUnplannedCredit) catContainer.appendChild(progressContainer);
+    if (usageText) catContainer.appendChild(usageText);
 
     tdCatName.appendChild(catContainer);
 
@@ -2475,12 +2533,12 @@ function updateDashboardView() {
                 : '';
 
               return `
-                <div style="margin-top: 8px; margin-bottom: 8px; border-left: 2px solid #27273a; padding-left: 8px;">
-                  <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 4px;">
-                    <span style="color: #c3c3d5; font-size: 0.8rem; line-height: 1.3;">${t.text}${reimbBadge}${txAnnualBadge}</span>
-                    <span style="color: ${amountColor}; font-size: 0.75rem; font-weight: 600; white-space: nowrap; margin-left: 4px;">${displayAmount}</span>
+                <div class="dashboard-transaction-detail" style="margin-top: 8px; margin-bottom: 8px; border-left: 2px solid #27273a; padding-left: 8px;">
+                  <div class="dashboard-transaction-main" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 4px;">
+                    <span class="dashboard-transaction-note" style="color: #c3c3d5; font-size: 0.8rem; line-height: 1.3;">${t.text}${reimbBadge}${txAnnualBadge}</span>
+                    <span class="dashboard-transaction-amount" style="color: ${amountColor}; font-size: 0.75rem; font-weight: 600; white-space: nowrap; margin-left: 4px;">${displayAmount}</span>
                   </div>
-                  <div style="font-size: 0.7rem; color: #8e8eab; margin-top: 3px; display: flex; flex-wrap: wrap; gap: 4px;">
+                  <div class="dashboard-transaction-meta" style="font-size: 0.7rem; color: #8e8eab; margin-top: 3px; display: flex; flex-wrap: wrap; gap: 4px;">
                     <span>(${t.owner})</span>
                     <span>• ${payStr}</span>
                     ${dateStr ? `<span>• ${dateStr}</span>` : ''}
@@ -2494,16 +2552,13 @@ function updateDashboardView() {
             item.isAnnual && !hasRenderedAnnualChild
               ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px; vertical-align: middle;">Evento</span>'
               : '';
-          const itemReimbBadgeGroup =
-            item.hasReimbursement || item.hasIncome
-              ? ' <span style="background: rgba(98, 196, 98, 0.15); color: #62c462; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(98, 196, 98, 0.3); margin-left: 6px; vertical-align: middle;">+</span>'
-              : '';
+          const itemFlowBadges = renderFinancialFlowBadges(item);
 
           tdItemName.innerHTML = `
             <details style="cursor: pointer; margin: 2px 0;">
               <summary style="outline: none; user-select: none; color: #fddf7b;">
                 <div style="display: inline-block;">
-                  <span style="color: #f5f5f5;">${item.name}</span>${parentAnnualBadge}${itemReimbBadgeGroup}
+                  <span style="color: #f5f5f5;">${item.name}</span>${parentAnnualBadge}${itemFlowBadges}
                   <span style="font-size: 0.6rem; background: rgba(74, 144, 226, 0.15); color: #4a90e2; padding: 2px 6px; border-radius: 6px; margin-left: 4px; border: 1px solid rgba(74, 144, 226, 0.3); white-space: nowrap; vertical-align: middle;">${totalItems} itens</span>
                 </div>
                 <div style="font-size: 0.72rem; color: #8e8eab; margin-top: 2px; line-height: 1.3;">${metaText}</div>
@@ -2519,12 +2574,8 @@ function updateDashboardView() {
             singleTx = obsArray[0].transactions[0];
           }
 
-          let reimbBadge = '';
           let payStr = '';
           if (singleTx) {
-            if (singleTx.isReimbursement || singleTx.amount < 0)
-              reimbBadge = ' <span style="background: rgba(98, 196, 98, 0.15); color: #62c462; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(98, 196, 98, 0.3); margin-left: 6px; vertical-align: middle;">+</span>';
-
             payStr = getPaymentName(singleTx.paymentMethodId);
           }
 
@@ -2532,9 +2583,10 @@ function updateDashboardView() {
           const parentAnnualBadge = item.isAnnual
             ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px; vertical-align: middle;">Evento</span>'
             : '';
+          const itemFlowBadges = renderFinancialFlowBadges(item);
 
           tdItemName.innerHTML = `
-            <div style="color: #f5f5f5;">${item.name}${parentAnnualBadge}${reimbBadge}</div>
+            <div style="color: #f5f5f5;">${item.name}${parentAnnualBadge}${itemFlowBadges}</div>
             <div style="font-size: 0.72rem; color: #8e8eab; margin-top: 2px; line-height: 1.3;">${singleMetaText}</div>
           `;
         }
@@ -2972,28 +3024,28 @@ function updateCreditCardsDashboard() {
           <div class="credit-card-summary" data-credit-card-id="${card.id}" role="button" tabindex="0" aria-expanded="${isExpanded}" title="${isExpanded ? 'Fechar detalhes da fatura' : 'Ver lançamentos da fatura'}">
             <div style="display: flex; align-items: center; gap: 10px;">
               <span class="toggle-icon credit-card-toggle-icon" aria-hidden="true">${isExpanded ? '&#9660;' : '&#9654;'}</span>
-              <span style="background: rgba(253, 223, 123, 0.1); color: #fddf7b; padding: 6px; border-radius: 8px; font-size: 1.1rem; border: 1px solid rgba(253, 223, 123, 0.2);">💳</span>
+              <span class="credit-card-brand-icon" style="background: rgba(253, 223, 123, 0.1); color: #fddf7b; padding: 6px; border-radius: 8px; font-size: 1.1rem; border: 1px solid rgba(253, 223, 123, 0.2);">💳</span>
               <div>
                 <div style="font-weight: 600; color: #f5f5f5; font-size: 0.95rem;">${card.name}</div>
-                <div style="font-size: 0.72rem; color: #a6a6c0;">Fecha dia ${card.closing || '?'} • Vence dia ${card.due || '?'}</div>
+                <div class="credit-card-dates" style="font-size: 0.72rem; color: #a6a6c0;">Fecha dia ${card.closing || '?'} • Vence dia ${card.due || '?'}</div>
               </div>
             </div>
-            <div style="text-align: right;">
+            <div class="credit-card-invoice" style="text-align: right;">
               <div style="font-size: 0.72rem; color: #a6a6c0; text-transform: uppercase; font-weight: 600;">Fatura Atual</div>
-              <div style="font-weight: 800; color: #62c462; font-size: 1.25rem; letter-spacing: -0.5px;">${formatCurrency(currentInvoice)}</div>
+              <div class="credit-card-invoice-value" style="font-weight: 800; color: #62c462; font-size: 1.25rem; letter-spacing: -0.5px;">${formatCurrency(currentInvoice)}</div>
             </div>
           </div>
           
           ${
             card.closing
               ? `
-          <div style="display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: #0b0b10; margin-top: 4px; border: 1px solid #27273a;">
+          <div class="credit-card-composition-bar" style="display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: #0b0b10; margin-top: 4px; border: 1px solid #27273a;">
             ${pPrev > 0 ? `<div style="width: ${pPrev}%; background: #4a90e2;" title="Mês Passado"></div>` : ''}
             ${pCurr > 0 ? `<div style="width: ${pCurr}%; background: #62c462;" title="Fatura Atual (Este Mês)"></div>` : ''}
             ${pNext > 0 ? `<div style="width: ${pNext}%; background: #f7c84a;" title="Próxima Fatura"></div>` : ''}
           </div>
           
-          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem; color: #a6a6c0; margin-top: 4px;">
+          <div class="credit-card-composition-legend" style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem; color: #a6a6c0; margin-top: 4px;">
             <span style="display: flex; align-items: center; gap: 6px;">
               <span><strong style="color: #4a90e2;">■</strong> Passado: <span style="color: #c3c3d5;">${formatCurrency(prevRollover)}</span></span>
               <span style="color: #4a4a6a;">|</span>
@@ -3655,7 +3707,7 @@ function updateBudgetBadge() {
   if (!navBtnBudget) return;
 
   if (!month) {
-    navBtnBudget.innerHTML = '1. Orçamento';
+    navBtnBudget.innerHTML = '📋 1. Orçamento';
     return;
   }
 
@@ -3676,9 +3728,9 @@ function updateBudgetBadge() {
   });
 
   if (pendingCount > 0) {
-    navBtnBudget.innerHTML = `1. Orçamento <span style="background: #f7c84a; color: #12121c; border-radius: 50%; padding: 2px 6px; font-size: 0.7rem; font-weight: bold; margin-left: 4px;">${pendingCount}</span>`;
+    navBtnBudget.innerHTML = `Orçamento <span style="background: #f7c84a; color: #12121c; border-radius: 50%; padding: 2px 6px; font-size: 0.7rem; font-weight: bold; margin-left: 4px;">${pendingCount}</span>`;
   } else {
-    navBtnBudget.innerHTML = '1. Orçamento';
+    navBtnBudget.innerHTML = 'Orçamento';
   }
 }
 

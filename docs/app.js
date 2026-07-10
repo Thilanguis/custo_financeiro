@@ -1197,12 +1197,46 @@ async function deleteReceipt(id) {
 // ===== Estado de Ordenação Dinâmica =====
 let plannedSortType = 'date';
 let plannedSortOrder = 'desc';
+let plannedSearchTerm = '';
 
 let receiptsSortType = 'date';
 let receiptsSortOrder = 'desc';
+let receiptsSearchTerm = '';
 
 let dashSortType = 'date'; // Sincronizado com o HTML
 let dashSortOrder = 'desc';
+
+function normalizeSearchText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function matchesFinancialSearch(item, term, descriptionField) {
+  const normalizedTerm = normalizeSearchText(term);
+  if (!normalizedTerm) return true;
+
+  const searchableText = [item.category, item[descriptionField], item.owner].map(normalizeSearchText).join(' ');
+  if (searchableText.includes(normalizedTerm)) return true;
+
+  const digits = normalizedTerm.replace(/\D/g, '');
+  const amountDigits = Math.abs(item.amount || 0)
+    .toFixed(2)
+    .replace(/\D/g, '');
+  return digits.length > 0 && amountDigits.includes(digits);
+}
+
+document.getElementById('search-planned')?.addEventListener('input', (event) => {
+  plannedSearchTerm = event.target.value;
+  renderPlannedItemsList(getCurrentMonth());
+});
+
+document.getElementById('search-receipts')?.addEventListener('input', (event) => {
+  receiptsSearchTerm = event.target.value;
+  updateReceiptsView();
+});
 
 document.getElementById('sort-planned-type')?.addEventListener('change', (e) => {
   plannedSortType = e.target.value;
@@ -1285,10 +1319,12 @@ btnCollapseReceipts.addEventListener('click', () => {
 
 function renderPlannedItemsList(month) {
   plannedItemsList.innerHTML = '';
-  const items = plannedItems.filter((p) => p.month === month);
+  const allItems = plannedItems.filter((p) => p.month === month);
+  const isSearching = Boolean(normalizeSearchText(plannedSearchTerm));
+  const items = allItems.filter((p) => matchesFinancialSearch(p, plannedSearchTerm, 'description'));
 
   if (!items.length) {
-    plannedItemsList.innerHTML = "<p class='hint'>Nenhum item de orçamento cadastrado para este mês.</p>";
+    plannedItemsList.innerHTML = isSearching ? "<p class='hint'>Nenhum resultado encontrado.</p>" : "<p class='hint'>Nenhum item de orçamento cadastrado para este mês.</p>";
     return;
   }
 
@@ -1321,7 +1357,7 @@ function renderPlannedItemsList(month) {
         if (plannedSortOrder === 'asc') return valA > valB ? 1 : -1;
         return valA < valB ? 1 : -1;
       });
-      const isOpen = openPlannedCats.has(cat);
+      const isOpen = isSearching || openPlannedCats.has(cat);
       const catTotal = groupItems.reduce((acc, curr) => acc + curr.amount, 0);
 
       // Verifica se há pelo menos 1 item nesta categoria que seja EVENTO (Anual ou Situacional) e esteja pendente
@@ -1356,6 +1392,7 @@ function renderPlannedItemsList(month) {
     `;
 
       headerDiv.onclick = () => {
+        if (isSearching) return;
         if (openPlannedCats.has(cat)) openPlannedCats.delete(cat);
         else openPlannedCats.add(cat);
         renderPlannedItemsList(month);
@@ -1413,7 +1450,7 @@ function renderPlannedItemsList(month) {
 
   const footerDiv = document.createElement('div');
   footerDiv.className = 'list-footer-total';
-  footerDiv.innerHTML = `<span>TOTAL PREVISTO</span><span>${formatCurrency(grandTotal)}</span>`;
+  footerDiv.innerHTML = `<span>${isSearching ? 'TOTAL ENCONTRADO' : 'TOTAL PREVISTO'}</span><span>${formatCurrency(grandTotal)}</span>`;
   plannedItemsList.appendChild(footerDiv);
 }
 
@@ -1591,10 +1628,12 @@ function updateReceiptsView() {
   receiptsList.innerHTML = '';
   if (!month) return;
 
-  const list = receipts.filter((r) => r.date.startsWith(month));
+  const allReceipts = receipts.filter((r) => r.date.startsWith(month));
+  const isSearching = Boolean(normalizeSearchText(receiptsSearchTerm));
+  const list = allReceipts.filter((r) => matchesFinancialSearch(r, receiptsSearchTerm, 'merchant'));
 
   if (!list.length) {
-    receiptsList.innerHTML = "<p class='hint'>Nenhum lançamento para este mês.</p>";
+    receiptsList.innerHTML = isSearching ? "<p class='hint'>Nenhum resultado encontrado.</p>" : "<p class='hint'>Nenhum lançamento para este mês.</p>";
     return;
   }
 
@@ -1619,7 +1658,7 @@ function updateReceiptsView() {
         if (valA > valB) return receiptsSortOrder === 'asc' ? 1 : -1;
         return 0;
       });
-      const isOpen = openReceiptCats.has(cat);
+      const isOpen = isSearching || openReceiptCats.has(cat);
       const catTotal = groupItems.reduce((acc, curr) => acc + curr.amount, 0);
 
       const headerDiv = document.createElement('div');
@@ -1635,6 +1674,7 @@ function updateReceiptsView() {
     `;
 
       headerDiv.onclick = () => {
+        if (isSearching) return;
         if (openReceiptCats.has(cat)) openReceiptCats.delete(cat);
         else openReceiptCats.add(cat);
         updateReceiptsView();
@@ -1695,7 +1735,7 @@ function updateReceiptsView() {
 
   const footerDiv = document.createElement('div');
   footerDiv.className = 'list-footer-total';
-  footerDiv.innerHTML = `<span>TOTAL REAL ACUMULADO</span><span>${formatCurrency(grandTotal)}</span>`;
+  footerDiv.innerHTML = `<span>${isSearching ? 'TOTAL ENCONTRADO' : 'TOTAL REAL ACUMULADO'}</span><span>${formatCurrency(grandTotal)}</span>`;
   receiptsList.appendChild(footerDiv);
 }
 
@@ -1729,9 +1769,7 @@ function getPendingFixedExpenses(month) {
 
   return Array.from(fixedByCategory.values())
     .map((group) => {
-      const actualAmount = receipts
-        .filter((receipt) => receipt.date.startsWith(month) && receipt.amount > 0 && !receipt.isReimbursement && receipt.category === group.category)
-        .reduce((total, receipt) => total + receipt.amount, 0);
+      const actualAmount = receipts.filter((receipt) => receipt.date.startsWith(month) && receipt.amount > 0 && !receipt.isReimbursement && receipt.category === group.category).reduce((total, receipt) => total + receipt.amount, 0);
       const remainingAmount = Math.max(group.amount - actualAmount, 0);
       const sortedDates = group.dates.sort();
       return {
@@ -2832,13 +2870,17 @@ function updateHistoricalChart() {
 const openCreditCardDetails = new Set();
 
 function escapeCardDetail(value) {
-  return String(value || '').replace(/[&<>'"]/g, (character) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    "'": '&#39;',
-    '"': '&quot;',
-  })[character]);
+  return String(value || '').replace(
+    /[&<>'"]/g,
+    (character) =>
+      ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        "'": '&#39;',
+        '"': '&quot;',
+      })[character],
+  );
 }
 
 function updateCreditCardsDashboard() {
@@ -2923,10 +2965,7 @@ function updateCreditCardsDashboard() {
           `;
         })
         .join('');
-      const nextInvoiceSummary =
-        nextInvoiceEntries.length > 0
-          ? `<div class="credit-card-next-invoice">Próxima fatura: ${formatCurrency(nextInvoice)} em ${nextInvoiceEntries.length} lançamento${nextInvoiceEntries.length > 1 ? 's' : ''}.</div>`
-          : '';
+      const nextInvoiceSummary = nextInvoiceEntries.length > 0 ? `<div class="credit-card-next-invoice">Próxima fatura: ${formatCurrency(nextInvoice)} em ${nextInvoiceEntries.length} lançamento${nextInvoiceEntries.length > 1 ? 's' : ''}.</div>` : '';
 
       html += `
         <div class="credit-card-card ${isExpanded ? 'is-expanded' : ''}">

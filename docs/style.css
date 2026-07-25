@@ -858,6 +858,18 @@ button:active {
   font-weight: 600;
 }
 
+.chip[data-company-drop-category]:not(.active) {
+  border-color: rgba(74, 144, 226, 0.24);
+  background: linear-gradient(145deg, rgba(38, 49, 72, 0.62), rgba(27, 30, 49, 0.72));
+  color: #cbd8eb;
+}
+
+.chip[data-company-drop-category]:not(.active):hover {
+  border-color: rgba(74, 144, 226, 0.52);
+  background: linear-gradient(145deg, rgba(46, 62, 91, 0.72), rgba(31, 36, 59, 0.82));
+  color: #e4ecf8;
+}
+
 .inline-form {
   margin-top: 4px;
   margin-bottom: 6px;
@@ -966,17 +978,21 @@ button:active {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  background: transparent;
-  border: 1px solid #4a4a6a;
-  color: #c3c3d5;
+  background: linear-gradient(145deg, rgba(47, 40, 70, 0.48), rgba(28, 27, 47, 0.68));
+  border: 1px solid rgba(155, 123, 232, 0.3);
+  color: #d1c9e7;
   font-style: normal;
   border-radius: 6px; /* Formato quadrado arredondado para contrastar com a categoria */
   padding: 4px 10px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
 
 .chip-company.is-favorite {
-  border-color: rgba(247, 200, 74, 0.48);
-  background: rgba(247, 200, 74, 0.075);
+  border-color: rgba(247, 200, 74, 0.42);
+  background: linear-gradient(145deg, rgba(88, 72, 35, 0.2), rgba(38, 32, 45, 0.72));
+  box-shadow: inset 0 0 0 1px rgba(247, 200, 74, 0.035);
 }
 
 .chip-company.is-filtered-out {
@@ -985,6 +1001,26 @@ button:active {
 
 .company-chip-name {
   min-width: 0;
+}
+
+.company-drag-handle {
+  display: inline-grid;
+  width: 7px;
+  height: 14px;
+  flex: 0 0 7px;
+  align-self: center;
+  place-items: center;
+  margin-left: -4px;
+  color: rgba(253, 223, 123, 0.58);
+  font-size: 0.78rem;
+  line-height: 1;
+  transform: translateY(1px);
+  transition: color 0.15s ease;
+}
+
+.chip-company:hover .company-drag-handle,
+.company-chip-dragging-source .company-drag-handle {
+  color: var(--gold);
 }
 
 .company-favorite-button {
@@ -1015,15 +1051,64 @@ button:active {
   box-shadow: none;
 }
 
-.chip-company.active,
-.chip-company:hover {
+.company-chip-dragging-source {
+  opacity: 0.3;
+}
+
+body.company-chip-drag-active,
+body.company-chip-drag-active * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
+.company-chip-drag-ghost {
+  position: fixed !important;
+  z-index: 1000002;
+  pointer-events: none;
+  margin: 0 !important;
+  opacity: 0.96;
+  border-color: var(--gold-strong) !important;
+  background: linear-gradient(145deg, rgba(61, 57, 43, 0.98), rgba(27, 27, 42, 0.98)) !important;
+  color: var(--gold) !important;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38), 0 0 0 1px rgba(247, 200, 74, 0.16);
+  transform: scale(1.03);
+}
+
+[data-company-drop-category] {
+  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease, transform 0.14s ease, box-shadow 0.14s ease;
+}
+
+[data-company-drop-category].is-company-drag-over {
+  border-color: var(--green-bright) !important;
+  background: rgba(98, 196, 98, 0.17) !important;
+  color: var(--green-bright) !important;
+  box-shadow: 0 0 0 2px rgba(98, 196, 98, 0.14), 0 5px 16px rgba(0, 0, 0, 0.22);
+  transform: translateY(-2px);
+}
+
+.chip-company.active {
   border-color: #f7c84a;
-  background: rgba(247, 200, 74, 0.1);
+  background: linear-gradient(145deg, rgba(247, 200, 74, 0.17), rgba(83, 68, 32, 0.2));
   color: #fddf7b;
+  box-shadow: inset 0 0 0 1px rgba(247, 200, 74, 0.08);
+}
+
+.chip-company:hover:not(.active) {
+  border-color: rgba(155, 123, 232, 0.62);
+  background: linear-gradient(145deg, rgba(68, 54, 94, 0.62), rgba(37, 32, 59, 0.78));
+  color: #eee9fb;
 }
 
 .companies-row {
   display: flex;
+  align-items: flex-start;
+}
+
+.companies-row .chip-company,
+.company-chip-filter-wrap {
+  box-sizing: border-box;
+  height: 28px;
+  min-height: 28px;
 }
 
 .company-chip-filter-wrap {
@@ -1033,7 +1118,7 @@ button:active {
   flex: 1 0 100%;
   align-items: center;
   gap: 6px;
-  margin-bottom: 2px;
+  margin-bottom: 0;
   padding: 5px 9px;
   border: 1px solid var(--border);
   border-radius: 9px;
@@ -1043,6 +1128,7 @@ button:active {
 
 .company-chip-filter {
   width: 100%;
+  height: 100%;
   min-width: 0;
   padding: 0;
   border: 0;
@@ -2679,5 +2765,103 @@ button:focus-visible,
 @media (max-width: 390px) {
   .owner-breakdown-toggle small {
     display: none;
+  }
+}
+
+/* Planejamento anual — arrastar eventos entre meses */
+.annual-drag-handle {
+  align-self: stretch;
+  flex: 0 0 28px;
+  display: grid;
+  place-items: center;
+  margin: -4px 3px -4px -4px;
+  padding: 0;
+  border: 0;
+  border-right: 1px solid rgba(247, 200, 74, 0.16);
+  border-radius: 8px 0 0 8px;
+  background: transparent;
+  color: rgba(253, 223, 123, 0.58);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: grab;
+  touch-action: none;
+  transition: color 0.16s ease, background 0.16s ease;
+}
+
+.annual-drag-handle:hover,
+.annual-drag-handle:focus-visible {
+  background: rgba(247, 200, 74, 0.08);
+  color: var(--gold);
+  outline: none;
+}
+
+.annual-drag-handle:active {
+  cursor: grabbing;
+}
+
+.annual-event-item {
+  justify-content: flex-start;
+  gap: 7px;
+}
+
+.annual-event-item .receipt-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: flex-start;
+  text-align: left;
+}
+
+.annual-event-item .receipt-right {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+body.annual-drag-active {
+  user-select: none;
+  cursor: grabbing;
+}
+
+.annual-dragging-source {
+  opacity: 0.32;
+}
+
+.annual-drag-ghost {
+  position: fixed !important;
+  z-index: 1000002;
+  max-width: calc(100vw - 24px);
+  margin: 0 !important;
+  pointer-events: none;
+  opacity: 0.94;
+  transform: rotate(0.6deg) scale(0.99);
+  border: 1px solid rgba(247, 200, 74, 0.72) !important;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.52), 0 0 18px rgba(247, 200, 74, 0.12);
+}
+
+.annual-month-drop-zone,
+.annual-month-items-drop-zone {
+  transition: background 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+}
+
+.annual-empty-month-drop-zone {
+  display: none;
+}
+
+body.annual-drag-active .annual-empty-month-drop-zone {
+  display: block;
+  min-height: 38px;
+  border: 1px dashed rgba(247, 200, 74, 0.24);
+  opacity: 0.64;
+}
+
+.annual-month-drop-zone.is-drag-over,
+.annual-month-items-drop-zone.is-drag-over {
+  background: linear-gradient(90deg, rgba(247, 200, 74, 0.2), rgba(247, 200, 74, 0.06)) !important;
+  box-shadow: inset 0 0 0 2px rgba(247, 200, 74, 0.76), 0 0 16px rgba(247, 200, 74, 0.12);
+}
+
+@media (max-width: 600px) {
+  .annual-drag-handle {
+    flex-basis: 25px;
+    margin-left: -5px;
   }
 }

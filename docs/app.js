@@ -241,7 +241,7 @@ const companyDirectory = {
   Supermercado: ['MARCHE SA', 'WALMART', 'SUPER C', 'MAXI', 'MARCHE DOMAINE', 'IGA', 'COSTCO', 'PROVIGO', 'SAQ', 'MARCHE BRESILIEN', 'BULKBARN', 'METRO', 'ADONIS', 'T&T', 'KIMPHAY', 'MERCADO'],
   Contas: ['HIPOTECA', 'LUZ', 'VIRGEM', 'IPTU', 'TAXA MUNICIPAL', 'CONDÔMINO', 'CARTÃO CRÉDITO', 'CARTÃO ZOO', 'H. EXTR. ANUAL', 'VIDEOTRON'],
   Eventos: ['MOOSE BAWR', 'YATAI', 'POTAGER MONT-ROUGE', 'BIXI', 'AIRBNB', 'ESTACIONAMENTO', 'ZOO', 'CENTRE BELL', 'CINEMA'],
-  'Jantar fora': ['CAFÉ', 'TIM HORTONS', 'PRESOTEA', 'KETTLEMANS BAGEL', 'SUSHI', 'BOSTON', 'PIZZA', 'McDonalds', 'LA CAGE', 'THE KEG', 'SUBWAY', 'REFEITÓRIO DESJARDINS', 'RESTAURANTE'],
+  'Jantar fora': ['CAFÉ', 'TIM HORTONS', 'PRESOTEA', 'KETTLEMANS BAGEL', 'SUSHI', 'BOSTON', 'PIZZA', 'LA CAGE', 'THE KEG', 'SUBWAY', 'REFEITÓRIO DESJARDINS', 'RESTAURANTE'],
   Lojas: ['CDN TIRE', 'SHEIN', 'DOLLARAMA', 'AMAZON', 'MINISO', 'URBAN PLANET', 'JOGOS ONLINE', 'HP', 'ZARA', 'WINNERS', 'ARDENE', 'IKEA', 'AVIZOO'],
   Assinaturas: ['MICROSOFT', 'NETFLIX', 'ICI TOUT TELE', 'MY FAMILY', 'DISNEY', 'AMAZON PRIME', 'HBO', 'APPLE TV', 'CHATGPT', 'YOUTUBE', 'SPOTIFY'],
   Combustível: ['PETRO CANADA', 'COSTCO GASOLINA', 'ESSO'],
@@ -250,6 +250,41 @@ const companyDirectory = {
 
 function compareFinancialNames(a, b) {
   return String(a || '').localeCompare(String(b || ''), 'pt-BR', { sensitivity: 'base', numeric: true });
+}
+
+function normalizeCompanyNameKey(value) {
+  return String(value || '')
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .toLocaleUpperCase('pt-BR');
+}
+
+function getUniqueCompanyNames(items = []) {
+  const seen = new Set();
+  return items.reduce((unique, item) => {
+    const name = String(item || '').trim();
+    const key = normalizeCompanyNameKey(name);
+    if (!key || seen.has(key)) return unique;
+    seen.add(key);
+    unique.push(name);
+    return unique;
+  }, []);
+}
+
+function normalizeCompanyDirectorySnapshot(directory = {}) {
+  const normalizedDirectory = {};
+  let changed = false;
+
+  Object.entries(directory).forEach(([category, items]) => {
+    const originalItems = Array.isArray(items) ? items : [];
+    const uniqueItems = getUniqueCompanyNames(originalItems);
+    normalizedDirectory[category] = uniqueItems;
+    if (uniqueItems.length !== originalItems.length || uniqueItems.some((item, index) => item !== originalItems[index])) changed = true;
+  });
+
+  return { normalizedDirectory, changed };
 }
 
 function getCategories() {
@@ -726,7 +761,13 @@ btnLoadMonth.addEventListener('click', async () => {
             owner: item.owner,
             paymentMethodId: item.paymentMethodId || 'dinheiro',
             isStatic: true,
+            staticSyncId: newItem.staticSyncId,
           };
+          if (item.isBiweeklyConverted) {
+            receiptData.isBiweeklyConverted = true;
+            receiptData.biweeklyAmount = item.biweeklyAmount;
+            receiptData.biweeklyMonthlyAmount = item.amount;
+          }
           await FinanceAPI.saveReceipt(targetMonth, receiptData);
         }
       }
@@ -854,19 +895,30 @@ let selectedReceiptType = getCategories()[0];
 let isEditMode = false;
 const COMPANY_FAVORITE_SEPARATOR = '\u001f';
 const favoriteCompanyKeys = new Set();
+let companyDragState = null;
+let companyDragSuppressClickUntil = 0;
 
 function makeCompanyFavoriteKey(category, company) {
   return `${category}${COMPANY_FAVORITE_SEPARATOR}${company}`;
 }
 
+function getMatchingCompanyFavoriteKeys(category, company) {
+  const companyKey = normalizeCompanyNameKey(company);
+  return [...favoriteCompanyKeys].filter((key) => {
+    const [favoriteCategory, favoriteCompany] = key.split(COMPANY_FAVORITE_SEPARATOR);
+    return favoriteCategory === category && normalizeCompanyNameKey(favoriteCompany) === companyKey;
+  });
+}
+
 function isFavoriteCompany(category, company) {
-  return favoriteCompanyKeys.has(makeCompanyFavoriteKey(category, company));
+  return getMatchingCompanyFavoriteKeys(category, company).length > 0;
 }
 
 async function toggleFavoriteCompany(category, company) {
   const key = makeCompanyFavoriteKey(category, company);
-  const wasFavorite = favoriteCompanyKeys.has(key);
-  if (wasFavorite) favoriteCompanyKeys.delete(key);
+  const matchingKeys = getMatchingCompanyFavoriteKeys(category, company);
+  const wasFavorite = matchingKeys.length > 0;
+  if (wasFavorite) matchingKeys.forEach((matchingKey) => favoriteCompanyKeys.delete(matchingKey));
   else favoriteCompanyKeys.add(key);
 
   updatePlannedChips();
@@ -875,12 +927,157 @@ async function toggleFavoriteCompany(category, company) {
   try {
     await FinanceAPI.saveCompanyFavorites([...favoriteCompanyKeys].sort(compareFinancialNames));
   } catch (error) {
-    if (wasFavorite) favoriteCompanyKeys.add(key);
+    if (wasFavorite) matchingKeys.forEach((matchingKey) => favoriteCompanyKeys.add(matchingKey));
     else favoriteCompanyKeys.delete(key);
     updatePlannedChips();
     updateReceiptChips();
     showToast('Não foi possível atualizar o favorito.', 'error');
   }
+}
+
+function clearCompanyDragTarget(state) {
+  if (state.target) state.target.classList.remove('is-company-drag-over');
+  state.target = null;
+}
+
+function updateCompanyDragPosition(state, clientX, clientY) {
+  if (!state.active) return;
+
+  const maxLeft = Math.max(window.innerWidth - state.ghost.offsetWidth - 8, 8);
+  const maxTop = Math.max(window.innerHeight - state.ghost.offsetHeight - 8, 8);
+  state.ghost.style.left = `${Math.min(clientX + 12, maxLeft)}px`;
+  state.ghost.style.top = `${Math.min(clientY + 12, maxTop)}px`;
+
+  const target = document.elementFromPoint(clientX, clientY)?.closest('[data-company-drop-category]') || null;
+  if (target !== state.target) {
+    clearCompanyDragTarget(state);
+    state.target = target;
+    if (state.target) state.target.classList.add('is-company-drag-over');
+  }
+}
+
+function startCompanyDrag(state, clientX, clientY) {
+  if (companyDragState !== state) return;
+  state.active = true;
+  state.sourceElement.classList.add('company-chip-dragging-source');
+  document.body.classList.add('company-chip-drag-active');
+
+  const rect = state.sourceElement.getBoundingClientRect();
+  state.ghost = state.sourceElement.cloneNode(true);
+  state.ghost.className = 'chip chip-company company-chip-drag-ghost';
+  state.ghost.style.width = `${rect.width}px`;
+  state.ghost.querySelectorAll('button').forEach((button) => button.remove());
+  document.body.appendChild(state.ghost);
+  if (navigator.vibrate) navigator.vibrate(20);
+  updateCompanyDragPosition(state, clientX, clientY);
+}
+
+function cleanupCompanyDrag(state) {
+  clearTimeout(state.pressTimer);
+  clearCompanyDragTarget(state);
+  state.sourceElement?.classList.remove('company-chip-dragging-source');
+  state.ghost?.remove();
+  document.body.classList.remove('company-chip-drag-active');
+  if (companyDragState === state) companyDragState = null;
+}
+
+async function moveCompanyToCategory(company, sourceCategory, targetCategory) {
+  if (!company || !targetCategory || sourceCategory === targetCategory) return;
+
+  const companyKey = normalizeCompanyNameKey(company);
+  const targetAlreadyContainsCompany = (companyDirectory[targetCategory] || []).some((item) => normalizeCompanyNameKey(item) === companyKey);
+  const mergeNotice = targetAlreadyContainsCompany ? '\n\nA empresa já existe no destino; os dois registros serão unificados.' : '';
+  const confirmed = await showConfirm(
+    `Mover "${company}" de "${sourceCategory}" para "${targetCategory}"?${mergeNotice}\n\nIsso altera apenas a lista de empresas. Lançamentos já cadastrados não serão modificados.`,
+  );
+  if (!confirmed) return;
+
+  const sourceBackup = [...(companyDirectory[sourceCategory] || [])];
+  const targetBackup = [...(companyDirectory[targetCategory] || [])];
+  const favoriteBackup = new Set(favoriteCompanyKeys);
+
+  companyDirectory[sourceCategory] = sourceBackup.filter((item) => normalizeCompanyNameKey(item) !== companyKey);
+  if (!targetAlreadyContainsCompany) companyDirectory[targetCategory] = [...targetBackup, company];
+  const favoritesChanged = remapFavoriteCompanies(sourceCategory, targetCategory, company, company);
+
+  updatePlannedChips();
+  updateReceiptChips();
+
+  try {
+    await FinanceAPI.saveCompanies(companyDirectory);
+    if (favoritesChanged) await FinanceAPI.saveCompanyFavorites([...favoriteCompanyKeys].sort(compareFinancialNames));
+    logActivity('Moveu', `Empresa: ${company} • ${sourceCategory} → ${targetCategory}`);
+    showToast(`${company} movida para ${targetCategory}.`, 'success');
+  } catch (error) {
+    companyDirectory[sourceCategory] = sourceBackup;
+    companyDirectory[targetCategory] = targetBackup;
+    favoriteCompanyKeys.clear();
+    favoriteBackup.forEach((key) => favoriteCompanyKeys.add(key));
+    updatePlannedChips();
+    updateReceiptChips();
+    showToast('Não foi possível mover a empresa.', 'error');
+  }
+}
+
+function enableCompanyChipDrag(chip, category, company) {
+  chip.title = 'Pressione e arraste para mudar de categoria';
+  chip.addEventListener('contextmenu', (event) => event.preventDefault());
+  chip.addEventListener('pointerdown', (event) => {
+    if (event.target.closest('.company-favorite-button')) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    if (companyDragState) return;
+
+    const state = {
+      company,
+      sourceCategory: category,
+      sourceElement: chip,
+      active: false,
+      target: null,
+      ghost: null,
+      lastX: event.clientX,
+      lastY: event.clientY,
+    };
+    companyDragState = state;
+    state.pressTimer = setTimeout(() => startCompanyDrag(state, state.lastX, state.lastY), event.pointerType === 'mouse' ? 140 : 380);
+
+    const onPointerMove = (moveEvent) => {
+      if (moveEvent.pointerId !== event.pointerId) return;
+      state.lastX = moveEvent.clientX;
+      state.lastY = moveEvent.clientY;
+      if (state.active) {
+        moveEvent.preventDefault();
+        updateCompanyDragPosition(state, moveEvent.clientX, moveEvent.clientY);
+      }
+    };
+
+    const finishDrag = (finishEvent) => {
+      if (finishEvent.pointerId !== event.pointerId) return;
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', finishDrag);
+      window.removeEventListener('pointercancel', cancelDrag);
+
+      if (state.active) updateCompanyDragPosition(state, finishEvent.clientX, finishEvent.clientY);
+      const targetCategory = state.target?.dataset.companyDropCategory || null;
+      const wasActive = state.active;
+      cleanupCompanyDrag(state);
+      if (wasActive) companyDragSuppressClickUntil = Date.now() + 450;
+      if (wasActive && targetCategory && targetCategory !== state.sourceCategory) {
+        moveCompanyToCategory(state.company, state.sourceCategory, targetCategory);
+      }
+    };
+
+    const cancelDrag = (cancelEvent) => {
+      if (cancelEvent.pointerId !== event.pointerId) return;
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', finishDrag);
+      window.removeEventListener('pointercancel', cancelDrag);
+      cleanupCompanyDrag(state);
+    };
+
+    window.addEventListener('pointermove', onPointerMove, { passive: false });
+    window.addEventListener('pointerup', finishDrag);
+    window.addEventListener('pointercancel', cancelDrag);
+  });
 }
 
 function renderTypeChips(container, selectedType, onSelect) {
@@ -890,6 +1087,7 @@ function renderTypeChips(container, selectedType, onSelect) {
   categories.forEach((type) => {
     const chip = document.createElement('div');
     chip.className = 'chip' + (type === selectedType ? ' active' : '') + (isEditMode ? ' edit-mode' : '');
+    chip.dataset.companyDropCategory = type;
     chip.textContent = type;
     chip.addEventListener('click', () => {
       if (isEditMode) handleEditCategory(type);
@@ -914,7 +1112,7 @@ function renderTypeChips(container, selectedType, onSelect) {
 
 function renderCompanyChips(container, type, onSelectCompany) {
   container.innerHTML = '';
-  const companies = [...(companyDirectory[type] || [])].sort((a, b) => {
+  const companies = getUniqueCompanyNames(companyDirectory[type] || []).sort((a, b) => {
     const favoriteDifference = Number(isFavoriteCompany(type, b)) - Number(isFavoriteCompany(type, a));
     return favoriteDifference || compareFinancialNames(a, b);
   });
@@ -948,6 +1146,12 @@ function renderCompanyChips(container, type, onSelectCompany) {
     chip.className = 'chip chip-company' + (isEditMode ? ' edit-mode' : '') + (isFavorite ? ' is-favorite' : '');
     chip.dataset.filterText = normalizeSearchText(name);
 
+    const dragHandle = document.createElement('span');
+    dragHandle.className = 'company-drag-handle';
+    dragHandle.textContent = '⠿';
+    dragHandle.setAttribute('aria-hidden', 'true');
+    chip.appendChild(dragHandle);
+
     const nameSpan = document.createElement('span');
     nameSpan.className = 'company-chip-name';
     nameSpan.textContent = name;
@@ -969,9 +1173,15 @@ function renderCompanyChips(container, type, onSelectCompany) {
     }
 
     chip.addEventListener('click', () => {
+      if (Date.now() < companyDragSuppressClickUntil) return;
       if (isEditMode) handleEditCompany(type, name);
-      else onSelectCompany(name);
+      else {
+        container.querySelectorAll('.chip-company.active').forEach((companyChip) => companyChip.classList.remove('active'));
+        chip.classList.add('active');
+        onSelectCompany(name);
+      }
     });
+    enableCompanyChipDrag(chip, type, name);
     container.appendChild(chip);
     renderedChips.push(chip);
   });
@@ -1034,7 +1244,7 @@ function remapFavoriteCompanies(oldCategory, newCategory = null, oldCompany = nu
   let changed = false;
   [...favoriteCompanyKeys].forEach((key) => {
     const [category, company] = key.split(COMPANY_FAVORITE_SEPARATOR);
-    if (category !== oldCategory || (oldCompany !== null && company !== oldCompany)) return;
+    if (category !== oldCategory || (oldCompany !== null && normalizeCompanyNameKey(company) !== normalizeCompanyNameKey(oldCompany))) return;
 
     favoriteCompanyKeys.delete(key);
     if (newCategory !== null) favoriteCompanyKeys.add(makeCompanyFavoriteKey(newCategory, newCompany ?? company));
@@ -1078,13 +1288,17 @@ async function handleEditCompany(category, oldName) {
   let favoritesChanged = false;
   if (trimmed === '') {
     if (await showConfirm(`Excluir a empresa "${oldName}"?`, true)) {
-      companyDirectory[category] = companyDirectory[category].filter((c) => c !== oldName);
+      const oldCompanyKey = normalizeCompanyNameKey(oldName);
+      companyDirectory[category] = companyDirectory[category].filter((company) => normalizeCompanyNameKey(company) !== oldCompanyKey);
       favoritesChanged = remapFavoriteCompanies(category, null, oldName);
       showToast('Empresa excluída.', 'success');
     }
   } else if (trimmed !== oldName) {
-    const idx = companyDirectory[category].indexOf(oldName);
-    if (idx !== -1) companyDirectory[category][idx] = trimmed;
+    const oldCompanyKey = normalizeCompanyNameKey(oldName);
+    const newCompanyKey = normalizeCompanyNameKey(trimmed);
+    const remainingCompanies = companyDirectory[category].filter((company) => normalizeCompanyNameKey(company) !== oldCompanyKey);
+    if (!remainingCompanies.some((company) => normalizeCompanyNameKey(company) === newCompanyKey)) remainingCompanies.push(trimmed);
+    companyDirectory[category] = remainingCompanies;
     favoritesChanged = remapFavoriteCompanies(category, category, oldName, trimmed);
     showToast('Empresa renomeada.', 'success');
   }
@@ -1212,7 +1426,8 @@ async function autoRegisterCompany(type, name) {
     companyDirectory[t] = [];
   }
 
-  if (!companyDirectory[t].includes(n)) {
+  const companyKey = normalizeCompanyNameKey(n);
+  if (!companyDirectory[t].some((company) => normalizeCompanyNameKey(company) === companyKey)) {
     companyDirectory[t].push(n);
     updatePlannedChips();
     updateReceiptChips();
@@ -1276,6 +1491,11 @@ formPlanned.addEventListener('submit', async (e) => {
   if (editingPlannedId === null) {
     if (isStatic) {
       const receiptData = { date: date, category, merchant: description, amount, owner, paymentMethodId, isStatic: true, staticSyncId: syncId };
+      if (isBiweeklyConverted) {
+        receiptData.isBiweeklyConverted = true;
+        receiptData.biweeklyAmount = sourceAmount;
+        receiptData.biweeklyMonthlyAmount = amount;
+      }
       await FinanceAPI.saveReceipt(month, receiptData);
     }
   } else if (oldItem) {
@@ -1298,12 +1518,22 @@ formPlanned.addEventListener('submit', async (e) => {
           isReimbursement: linkedReceipt.isReimbursement || false,
           staticSyncId: syncId,
         };
+        if (isBiweeklyConverted) {
+          updatedReceipt.isBiweeklyConverted = true;
+          updatedReceipt.biweeklyAmount = sourceAmount;
+          updatedReceipt.biweeklyMonthlyAmount = amount;
+        }
         await FinanceAPI.saveReceipt(month, updatedReceipt);
       } else {
         await FinanceAPI.deleteReceipt(month, linkedReceipt.id);
       }
     } else if (isStatic) {
       const receiptData = { date: date, category, merchant: description, amount, owner, paymentMethodId, isStatic: true, staticSyncId: syncId };
+      if (isBiweeklyConverted) {
+        receiptData.isBiweeklyConverted = true;
+        receiptData.biweeklyAmount = sourceAmount;
+        receiptData.biweeklyMonthlyAmount = amount;
+      }
       await FinanceAPI.saveReceipt(month, receiptData);
     }
   }
@@ -1339,9 +1569,9 @@ function renderBiweeklyConversionBadge(item) {
   if (!item?.isBiweeklyConverted) return '';
 
   const sourceAmount = item.biweeklyAmount ?? Math.round(((item.amount ?? item.planned ?? 0) / BIWEEKLY_MONTHLY_FACTOR) * 100) / 100;
-  const monthlyAmount = item.amount ?? item.planned ?? convertBiweeklyToMonthly(sourceAmount);
+  const monthlyAmount = item.biweeklyMonthlyAmount ?? item.amount ?? item.planned ?? convertBiweeklyToMonthly(sourceAmount);
   const explanation = `Bisemanal: ${formatCurrency(Math.abs(sourceAmount))} → mensal: ${formatCurrency(Math.abs(monthlyAmount))}`;
-  return ` <span class="biweekly-conversion-badge" title="${explanation}" aria-label="${explanation}">Bisemanal</span>`;
+  return ` <span class="biweekly-conversion-badge" title="${explanation}" aria-label="${explanation}">Bis. → mensal</span>`;
 }
 
 function startEditPlanned(id) {
@@ -1763,6 +1993,13 @@ formActual.addEventListener('submit', async (e) => {
     return showToast('Preencha data, categoria, nome, valor e selecione o pagamento.', 'error');
   }
 
+  const receiptBeingEdited = editingReceiptId !== null ? receipts.find((receipt) => receipt.id === editingReceiptId) : null;
+  if (receiptBeingEdited && isReceiptEditLockedByBudget(receiptBeingEdited)) {
+    showLockedReceiptMessage();
+    resetReceiptForm();
+    return;
+  }
+
   actualSubmitBtn.textContent = 'Salvando...';
   actualSubmitBtn.disabled = true;
 
@@ -1780,6 +2017,8 @@ formActual.addEventListener('submit', async (e) => {
   // Se o usuário marcou "Entrada", garantimos que isReimbursement seja false
   const finalIsReimbursement = isReimb && !isIncomeChecked;
   const finalAmount = isReimb || isIncomeChecked ? -Math.abs(amount) : Math.abs(amount);
+  const launchedPlannedItem = window.currentLaunchPlannedId ? plannedItems.find((planned) => planned.id === window.currentLaunchPlannedId) : null;
+  const biweeklySource = launchedPlannedItem || oldReceipt;
 
   const itemData = {
     date,
@@ -1792,6 +2031,12 @@ formActual.addEventListener('submit', async (e) => {
     isStatic: isStatic,
     isReimbursement: finalIsReimbursement,
   };
+
+  if (biweeklySource?.isBiweeklyConverted) {
+    itemData.isBiweeklyConverted = true;
+    itemData.biweeklyAmount = biweeklySource.biweeklyAmount;
+    itemData.biweeklyMonthlyAmount = biweeklySource.biweeklyMonthlyAmount ?? biweeklySource.amount;
+  }
 
   if (oldReceipt && oldReceipt.staticSyncId) {
     itemData.staticSyncId = oldReceipt.staticSyncId;
@@ -1866,9 +2111,36 @@ function resetReceiptForm() {
   updateReceiptChips();
 }
 
+function isReceiptEditLockedByBudget(receipt) {
+  // Estático sempre nasce de um item também marcado como Fixo. Fixos comuns,
+  // lançados manualmente no Real, continuam editáveis para registrar o valor efetivo.
+  return Boolean(receipt?.isStatic);
+}
+
+function showLockedReceiptMessage() {
+  showToast('Este lançamento é fixo e estático, só pode ser alterado em Orçamento.', 'info');
+}
+
+function renderReceiptBiweeklyBadge(receipt) {
+  if (receipt?.isBiweeklyConverted) return renderBiweeklyConversionBadge(receipt);
+
+  const linkedPlanned = plannedItems.find(
+    (planned) =>
+      (receipt?.linkedPlannedId && planned.id === receipt.linkedPlannedId) ||
+      (receipt?.staticSyncId && planned.staticSyncId === receipt.staticSyncId),
+  );
+  return renderBiweeklyConversionBadge(linkedPlanned);
+}
+
 function startEditReceipt(id) {
   const r = receipts.find((x) => x.id === id);
   if (!r) return;
+
+  if (isReceiptEditLockedByBudget(r)) {
+    showLockedReceiptMessage();
+    return;
+  }
+
   editingReceiptId = id;
 
   actualDateInput.value = r.date;
@@ -1990,20 +2262,24 @@ function updateReceiptsView() {
             hasReimbursement: r.isReimbursement,
           });
           const eventBadge = isReceiptFromEvent(r) ? renderFinancialEventBadge() : '';
+          const biweeklyBadge = renderReceiptBiweeklyBadge(r);
+          const editActionHtml = isReceiptEditLockedByBudget(r)
+            ? `<button class="action-btn" onclick="showLockedReceiptMessage()" title="Este lançamento é fixo e estático">🔒 Orçamento</button>`
+            : `<button class="action-btn" onclick="startEditReceipt('${r.id}')">Editar</button>`;
 
           const btnReembolsoHtml = !isIncomeOrReimb ? `<button class="action-btn" style="color: #62c462; border: 1px solid rgba(98, 196, 98, 0.3);" onclick="startReimbursement('${r.id}')" title="Reembolsar esta nota">🔄</button>` : '';
 
           item.innerHTML = `
           <div class="receipt-main">
-            <div class="receipt-line">${r.merchant} • ${r.category}${eventBadge}${flowBadge}</div>
+            <div class="receipt-line">${r.merchant} • ${r.category}${biweeklyBadge}${eventBadge}${flowBadge}</div>
             ${obsHtml}
-            <div class="receipt-meta" style="margin-top: 2px;">${r.date.split('-').reverse().join('/')} • ${r.owner}${payStr}${r.isStatic ? ' • Estático' : ''}</div>
+            <div class="receipt-meta" style="margin-top: 2px;">${r.date.split('-').reverse().join('/')} • ${r.owner}${payStr}${r.isStatic ? ' • Fixo & Estático' : ''}</div>
           </div>
           <div class="receipt-right">
             <div class="receipt-amount" style="color: ${amountColor};">${displayAmount}</div>
             <div class="receipt-actions">
               ${btnReembolsoHtml}
-              <button class="action-btn" onclick="startEditReceipt('${r.id}')">Editar</button>
+              ${editActionHtml}
               <button class="action-btn danger" onclick="deleteReceipt('${r.id}')">Excluir</button>
             </div>
           </div>
@@ -3617,10 +3893,14 @@ function syncData(month) {
 
   FinanceAPI.listenCompanies((comps) => {
     if (comps && Object.keys(comps).length > 0) {
+      const { normalizedDirectory, changed } = normalizeCompanyDirectorySnapshot(comps);
       Object.keys(companyDirectory).forEach((key) => delete companyDirectory[key]);
-      Object.assign(companyDirectory, comps);
+      Object.assign(companyDirectory, normalizedDirectory);
       updatePlannedChips();
       updateReceiptChips();
+      if (changed) {
+        FinanceAPI.saveCompanies(normalizedDirectory).catch((error) => console.error('Não foi possível limpar empresas duplicadas:', error));
+      }
     }
   });
 
@@ -3998,6 +4278,153 @@ async function deleteAnnual(id) {
   showToast('Evento excluído.', 'success');
 }
 
+const annualMonthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+let annualDragState = null;
+
+function getAnnualMonthLastDay(monthTarget) {
+  const month = parseInt(monthTarget, 10);
+  return [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1] || 31;
+}
+
+function clearAnnualDragTarget(state) {
+  if (state.target) state.target.classList.remove('is-drag-over');
+  state.target = null;
+}
+
+function updateAnnualDragPosition(state, clientX, clientY) {
+  if (!state.active) return;
+
+  const maxLeft = Math.max(window.innerWidth - state.ghost.offsetWidth - 8, 8);
+  const maxTop = Math.max(window.innerHeight - state.ghost.offsetHeight - 8, 8);
+  state.ghost.style.left = `${Math.min(clientX + 14, maxLeft)}px`;
+  state.ghost.style.top = `${Math.min(clientY + 14, maxTop)}px`;
+
+  const pointedElement = document.elementFromPoint(clientX, clientY);
+  const target = pointedElement?.closest('[data-annual-drop-month]') || null;
+  if (target !== state.target) {
+    clearAnnualDragTarget(state);
+    state.target = target;
+    if (state.target) state.target.classList.add('is-drag-over');
+  }
+
+  state.autoScrollSpeed = clientY < 90 ? -12 : clientY > window.innerHeight - 90 ? 12 : 0;
+}
+
+function runAnnualDragAutoScroll(state) {
+  if (!state.active) return;
+  if (state.autoScrollSpeed) {
+    window.scrollBy({ top: state.autoScrollSpeed, behavior: 'auto' });
+    updateAnnualDragPosition(state, state.lastX, state.lastY);
+  }
+  state.autoScrollFrame = requestAnimationFrame(() => runAnnualDragAutoScroll(state));
+}
+
+function startAnnualDrag(state, clientX, clientY) {
+  if (annualDragState !== state) return;
+  state.active = true;
+  state.sourceElement.classList.add('annual-dragging-source');
+  document.body.classList.add('annual-drag-active');
+
+  const rect = state.sourceElement.getBoundingClientRect();
+  state.ghost = state.sourceElement.cloneNode(true);
+  state.ghost.className = 'receipt-item annual-drag-ghost';
+  state.ghost.style.width = `${Math.min(rect.width, window.innerWidth - 24)}px`;
+  state.ghost.querySelectorAll('button').forEach((button) => button.remove());
+  document.body.appendChild(state.ghost);
+
+  if (navigator.vibrate) navigator.vibrate(25);
+  updateAnnualDragPosition(state, clientX, clientY);
+  runAnnualDragAutoScroll(state);
+}
+
+function cleanupAnnualDrag(state) {
+  clearTimeout(state.pressTimer);
+  if (state.autoScrollFrame) cancelAnimationFrame(state.autoScrollFrame);
+  clearAnnualDragTarget(state);
+  state.sourceElement?.classList.remove('annual-dragging-source');
+  state.ghost?.remove();
+  document.body.classList.remove('annual-drag-active');
+  if (annualDragState === state) annualDragState = null;
+}
+
+async function confirmAnnualMove(itemId, targetMonth) {
+  const item = annualEvents.find((event) => event.id === itemId);
+  if (!item || !targetMonth || item.monthTarget === targetMonth) return;
+
+  const originalDay = parseInt(item.dayTarget, 10) || 1;
+  const adjustedDay = Math.min(originalDay, getAnnualMonthLastDay(targetMonth));
+  const adjustedDayText = String(adjustedDay).padStart(2, '0');
+  const sourceMonthName = annualMonthNames[parseInt(item.monthTarget, 10) - 1];
+  const targetMonthName = annualMonthNames[parseInt(targetMonth, 10) - 1];
+  const dayAdjustment = adjustedDay !== originalDay ? ` O dia ${String(originalDay).padStart(2, '0')} será ajustado para ${adjustedDayText}.` : ` O dia ${adjustedDayText} será mantido.`;
+
+  const confirmed = await showConfirm(`Mover "${item.name}" de ${sourceMonthName} para ${targetMonthName}?${dayAdjustment}`);
+  if (!confirmed) return;
+
+  await FinanceAPI.saveAnnualEvent({ ...item, id: item.id, monthTarget: targetMonth, dayTarget: adjustedDayText });
+  logActivity('Moveu', `Evento Anual: ${item.name} • ${sourceMonthName} → ${targetMonthName}`);
+  showToast(`Evento movido para ${targetMonthName}.`, 'success');
+}
+
+function enableAnnualItemDrag(handle, item, sourceElement) {
+  handle.addEventListener('pointerdown', (event) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    if (annualDragState) return;
+
+    event.preventDefault();
+    const state = {
+      itemId: item.id,
+      sourceElement,
+      active: false,
+      target: null,
+      ghost: null,
+      autoScrollSpeed: 0,
+      autoScrollFrame: null,
+      lastX: event.clientX,
+      lastY: event.clientY,
+    };
+    annualDragState = state;
+
+    const pressDelay = event.pointerType === 'mouse' ? 120 : 380;
+    state.pressTimer = setTimeout(() => startAnnualDrag(state, state.lastX, state.lastY), pressDelay);
+
+    const onPointerMove = (moveEvent) => {
+      if (moveEvent.pointerId !== event.pointerId) return;
+      state.lastX = moveEvent.clientX;
+      state.lastY = moveEvent.clientY;
+      if (state.active) {
+        moveEvent.preventDefault();
+        updateAnnualDragPosition(state, moveEvent.clientX, moveEvent.clientY);
+      }
+    };
+
+    const finishDrag = (finishEvent) => {
+      if (finishEvent.pointerId !== event.pointerId) return;
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', finishDrag);
+      window.removeEventListener('pointercancel', cancelDrag);
+
+      if (state.active) updateAnnualDragPosition(state, finishEvent.clientX, finishEvent.clientY);
+      const targetMonth = state.target?.dataset.annualDropMonth || null;
+      const wasActive = state.active;
+      cleanupAnnualDrag(state);
+      if (wasActive && targetMonth) confirmAnnualMove(state.itemId, targetMonth);
+    };
+
+    const cancelDrag = (cancelEvent) => {
+      if (cancelEvent.pointerId !== event.pointerId) return;
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', finishDrag);
+      window.removeEventListener('pointercancel', cancelDrag);
+      cleanupAnnualDrag(state);
+    };
+
+    window.addEventListener('pointermove', onPointerMove, { passive: false });
+    window.addEventListener('pointerup', finishDrag);
+    window.addEventListener('pointercancel', cancelDrag);
+  });
+}
+
 function renderAnnualList() {
   if (!annualItemsList) return;
   annualItemsList.innerHTML = '';
@@ -4017,8 +4444,6 @@ function renderAnnualList() {
     return a.monthTarget.localeCompare(b.monthTarget);
   });
 
-  const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-
   // 2. Agrupa os eventos pelo mês correspondente
   const groupedByMonth = {};
   sorted.forEach((item) => {
@@ -4031,14 +4456,16 @@ function renderAnnualList() {
   const currentMonthIdx = currentViewMonthStr ? parseInt(currentViewMonthStr.split('-')[1]) - 1 : -1;
 
   // 3. Renderiza os blocos divididos por mês
-  Object.keys(groupedByMonth)
-    .sort((a, b) => a - b)
+  Array.from({ length: 12 }, (_, index) => String(index))
     .forEach((monthIdx) => {
       const isCurrentMonth = parseInt(monthIdx) === currentMonthIdx;
+      const monthItems = groupedByMonth[monthIdx] || [];
+      const isEmptyMonth = monthItems.length === 0;
 
       // Cria o cabeçalho do mês
       const header = document.createElement('div');
-      header.className = 'group-header-div';
+      header.className = `group-header-div annual-month-drop-zone${isEmptyMonth ? ' annual-empty-month-drop-zone' : ''}`;
+      header.dataset.annualDropMonth = String(parseInt(monthIdx, 10) + 1).padStart(2, '0');
       header.style.cursor = 'default';
       header.style.borderLeft = isCurrentMonth ? '4px solid #62c462' : '4px solid #f7c84a';
       if (isCurrentMonth) header.style.background = 'linear-gradient(90deg, rgba(98, 196, 98, 0.15) 0%, #1a1a2e 100%)';
@@ -4047,11 +4474,16 @@ function renderAnnualList() {
         ? ' <span style="background: rgba(98, 196, 98, 0.15); color: #62c462; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(98, 196, 98, 0.3); margin-left: 8px; vertical-align: middle;">Mês Atual</span>'
         : '';
 
-      header.innerHTML = `<span style="color: #f5f5f5; font-size: 1rem; font-weight: 700;">📅 ${monthNames[monthIdx]}${badgeHtml}</span>`;
+      header.innerHTML = `<span style="color: #f5f5f5; font-size: 1rem; font-weight: 700;">📅 ${annualMonthNames[monthIdx]}${badgeHtml}</span>`;
       annualItemsList.appendChild(header);
+
+      // Meses vazios aparecem somente durante o arraste, no lugar cronológico correto.
+      if (isEmptyMonth) return;
 
       // Cria um container para dar um leve recuo (identação) nos itens daquele mês
       const itemsContainer = document.createElement('div');
+      itemsContainer.className = 'annual-month-items-drop-zone';
+      itemsContainer.dataset.annualDropMonth = header.dataset.annualDropMonth;
       itemsContainer.style.borderLeft = '2px solid #27273a';
       itemsContainer.style.marginLeft = '8px';
       itemsContainer.style.paddingLeft = '8px';
@@ -4061,9 +4493,9 @@ function renderAnnualList() {
       itemsContainer.style.marginBottom = '12px';
 
       // Adiciona os itens dentro do mês
-      groupedByMonth[monthIdx].forEach((item) => {
+      monthItems.forEach((item) => {
         const el = document.createElement('div');
-        el.className = 'receipt-item';
+        el.className = 'receipt-item annual-event-item';
 
         const diaText = item.dayTarget ? `Dia ${item.dayTarget}` : 'Dia 01';
         const payStr = ` • ${getPaymentName(item.paymentMethodId)}`;
@@ -4078,6 +4510,7 @@ function renderAnnualList() {
         const incomeBadge = isIncome ? ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold; margin-left: 4px;">(Entrada)</span>' : '';
 
         el.innerHTML = `
+        <button type="button" class="annual-drag-handle" aria-label="Mover ${item.name}" title="Pressione e arraste para outro mês">⠿</button>
         <div class="receipt-main">
           <div class="receipt-line">${item.name}${oneOffBadge}${incomeBadge} <span style="color:#fddf7b; font-size: 0.75rem; margin-left: 4px;">[${diaText}]</span></div>
           ${obsHtml}
@@ -4091,6 +4524,8 @@ function renderAnnualList() {
           </div>
         </div>
       `;
+        const dragHandle = el.querySelector('.annual-drag-handle');
+        if (dragHandle) enableAnnualItemDrag(dragHandle, item, el);
         itemsContainer.appendChild(el);
       });
 
@@ -4242,11 +4677,18 @@ window.launchAnnualToBudget = async function (eventId, targetMonthStr) {
 
 // ===== PWA e Service Worker (Atualizações Consolidadas) =====
 const SERVICE_WORKER_VERSION_KEY = 'controle_financeiro_current_version';
+const SERVICE_WORKER_PENDING_VERSION_KEY = 'controle_financeiro_pending_version';
+const SERVICE_WORKER_CHECK_INTERVAL = 5 * 60 * 1000;
 let updatePromptVisible = false;
+let updateInProgress = false;
+let deferredUpdateVersion = null;
+let pendingServiceWorkerUpdate = null;
+let serviceWorkerRegistration = null;
+let serviceWorkerReloading = false;
 
 async function getAvailableServiceWorkerVersion() {
   try {
-    const response = await fetch('./service-worker.js', { cache: 'no-store' });
+    const response = await fetch(`./service-worker.js?update-check=${Date.now()}`, { cache: 'no-store' });
     const source = await response.text();
     const match = source.match(/CACHE_NAME\s*=\s*['"`]controle-financeiro-v(\d+)['"`]/);
     return match ? parseInt(match[1], 10) : null;
@@ -4256,27 +4698,135 @@ async function getAvailableServiceWorkerVersion() {
   }
 }
 
+function getSavedServiceWorkerVersion() {
+  const version = parseInt(localStorage.getItem(SERVICE_WORKER_VERSION_KEY), 10);
+  return Number.isFinite(version) ? version : null;
+}
+
+function getWorkerVersion(worker, timeout = 1200) {
+  if (!worker) return Promise.resolve(null);
+
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    const timer = setTimeout(() => resolve(null), timeout);
+
+    channel.port1.onmessage = (event) => {
+      clearTimeout(timer);
+      const match = String(event.data?.cacheName || '').match(/controle-financeiro-v(\d+)/);
+      resolve(match ? parseInt(match[1], 10) : null);
+    };
+
+    try {
+      worker.postMessage({ type: 'GET_VERSION' }, [channel.port2]);
+    } catch (error) {
+      clearTimeout(timer);
+      resolve(null);
+    }
+  });
+}
+
+function updatePromptSummary(totalUpdates) {
+  const summary = document.getElementById('update-summary');
+  if (!summary) return;
+  summary.textContent = `${totalUpdates} ${totalUpdates > 1 ? 'atualizações acumuladas estão prontas' : 'atualização acumulada está pronta'}. Deseja aplicar agora?`;
+}
+
+async function queueServiceWorkerUpdate(registration, worker) {
+  if (!worker) return;
+
+  const workerVersion = (await getWorkerVersion(worker)) || (await getAvailableServiceWorkerVersion());
+  if (!workerVersion) return;
+
+  let savedVersion = getSavedServiceWorkerVersion();
+  if (savedVersion === null) {
+    // Clientes antigos podem ainda não possuir a versão salva. Quando já existe
+    // um controlador e outro worker está esperando, considera ao menos uma atualização.
+    const controlledVersion = await getWorkerVersion(navigator.serviceWorker.controller);
+    savedVersion = controlledVersion || Math.max(workerVersion - 1, 0);
+    if (controlledVersion) localStorage.setItem(SERVICE_WORKER_VERSION_KEY, String(controlledVersion));
+  }
+
+  if (workerVersion <= savedVersion) {
+    // Repara o caso legado em que a versão foi salva antes de o worker assumir:
+    // ativa o worker que ficou esperando e força o reload quando ele controlar a aba.
+    sessionStorage.setItem(SERVICE_WORKER_PENDING_VERSION_KEY, String(workerVersion));
+    worker.postMessage('skipWaiting');
+    return;
+  }
+
+  const totalUpdates = Math.max(workerVersion - savedVersion, 1);
+  pendingServiceWorkerUpdate = { registration, worker, newVersion: workerVersion, totalUpdates };
+
+  if (updateInProgress) return;
+  if (updatePromptVisible) {
+    updatePromptSummary(totalUpdates);
+    return;
+  }
+  if (deferredUpdateVersion === workerVersion) return;
+
+  showUpdatePrompt();
+}
+
+function waitForWorkerInstallation(worker, timeout = 8000) {
+  if (!worker || ['installed', 'activated', 'redundant'].includes(worker.state)) return Promise.resolve();
+
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeout);
+    worker.addEventListener('statechange', () => {
+      if (['installed', 'activated', 'redundant'].includes(worker.state)) {
+        clearTimeout(timer);
+        resolve();
+      }
+    });
+  });
+}
+
+async function checkForServiceWorkerUpdates(registration, waitForInstall = false) {
+  try {
+    await registration.update();
+    if (waitForInstall && registration.installing) await waitForWorkerInstallation(registration.installing);
+    if (registration.waiting) await queueServiceWorkerUpdate(registration, registration.waiting);
+  } catch (error) {
+    console.error('Não foi possível verificar atualizações do sistema:', error);
+  }
+}
+
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
+    navigator.serviceWorker.addEventListener('controllerchange', async () => {
+      if (serviceWorkerReloading) return;
+      serviceWorkerReloading = true;
+
+      const pendingVersion = parseInt(sessionStorage.getItem(SERVICE_WORKER_PENDING_VERSION_KEY), 10);
+      const controlledVersion = await getWorkerVersion(navigator.serviceWorker.controller);
+      const appliedVersion = controlledVersion || (Number.isFinite(pendingVersion) ? pendingVersion : null);
+      if (appliedVersion) localStorage.setItem(SERVICE_WORKER_VERSION_KEY, String(appliedVersion));
+      sessionStorage.removeItem(SERVICE_WORKER_PENDING_VERSION_KEY);
+
+      // Na primeira instalação não há uma atualização confirmada para aplicar.
+      if (!Number.isFinite(pendingVersion) && !updateInProgress) {
+        serviceWorkerReloading = false;
+        return;
+      }
+
+      // O novo worker já controla a página e usa rede primeiro para HTML/JS/CSS.
+      // O reload abaixo tem, portanto, o mesmo resultado prático de um hard refresh.
+      window.location.reload();
+    });
+
     navigator.serviceWorker
-      .register('./service-worker.js')
+      .register('./service-worker.js', { updateViaCache: 'none' })
       .then(async (registration) => {
-        const newVersion = await getAvailableServiceWorkerVersion();
-        if (!newVersion) return;
+        serviceWorkerRegistration = registration;
 
-        const savedVersion = parseInt(localStorage.getItem(SERVICE_WORKER_VERSION_KEY), 10);
-        // Primeiro uso deste fluxo: registra a versão atual como base para contar
-        // corretamente todas as atualizações que forem adiadas daqui em diante.
-        const oldVersion = Number.isFinite(savedVersion) ? savedVersion : newVersion;
-        if (!Number.isFinite(savedVersion)) localStorage.setItem(SERVICE_WORKER_VERSION_KEY, String(newVersion));
-        const totalUpdates = Math.max(newVersion - oldVersion, 1);
-
-        const handleWaitingWorker = (worker) => {
-          if (newVersion > oldVersion) showUpdatePrompt(worker, totalUpdates, newVersion);
-          else worker.postMessage('skipWaiting');
-        };
-
-        if (registration.waiting) handleWaitingWorker(registration.waiting);
+        const controlledVersion = await getWorkerVersion(navigator.serviceWorker.controller);
+        if (controlledVersion) {
+          const pendingVersion = parseInt(sessionStorage.getItem(SERVICE_WORKER_PENDING_VERSION_KEY), 10);
+          if (Number.isFinite(pendingVersion) && controlledVersion >= pendingVersion) {
+            localStorage.setItem(SERVICE_WORKER_VERSION_KEY, String(controlledVersion));
+            sessionStorage.removeItem(SERVICE_WORKER_PENDING_VERSION_KEY);
+          }
+        }
 
         registration.onupdatefound = () => {
           const installingWorker = registration.installing;
@@ -4284,26 +4834,29 @@ if ('serviceWorker' in navigator) {
 
           installingWorker.onstatechange = () => {
             if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
-              handleWaitingWorker(installingWorker);
+              queueServiceWorkerUpdate(registration, installingWorker);
             }
           };
         };
+
+        await checkForServiceWorkerUpdates(registration);
+        setInterval(() => checkForServiceWorkerUpdates(registration), SERVICE_WORKER_CHECK_INTERVAL);
+
+        window.addEventListener('online', () => checkForServiceWorkerUpdates(registration));
+        window.addEventListener('focus', () => checkForServiceWorkerUpdates(registration));
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') checkForServiceWorkerUpdates(registration);
+        });
       })
       .catch((error) => console.error('Falha no Service Worker:', error));
-
-    let refreshing = false;
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (!refreshing) {
-        refreshing = true;
-        window.location.reload();
-      }
-    });
   });
 }
 
-function showUpdatePrompt(worker, totalUpdates, newVersion) {
-  if (updatePromptVisible) return;
+function showUpdatePrompt() {
+  if (updatePromptVisible || !pendingServiceWorkerUpdate) return;
   updatePromptVisible = true;
+
+  const { totalUpdates } = pendingServiceWorkerUpdate;
 
   const overlay = document.createElement('div');
   overlay.className = 'custom-modal-overlay active';
@@ -4312,7 +4865,7 @@ function showUpdatePrompt(worker, totalUpdates, newVersion) {
     <div class="custom-modal" style="text-align: center; padding: 30px 20px;">
       <div style="font-size: 2.5rem; margin-bottom: 12px;">✨</div>
       <h2 style="margin: 0 0 10px 0; color: #fddf7b;">Atualização Disponível</h2>
-      <p style="color: #a6a6c0; font-size: 0.95rem; margin-bottom: 24px;">${totalUpdates} ${totalUpdates > 1 ? 'atualizações acumuladas estão prontas' : 'atualização acumulada está pronta'}. Deseja aplicar agora?</p>
+      <p id="update-summary" style="color: #a6a6c0; font-size: 0.95rem; margin-bottom: 24px;">${totalUpdates} ${totalUpdates > 1 ? 'atualizações acumuladas estão prontas' : 'atualização acumulada está pronta'}. Deseja aplicar agora?</p>
       <div class="custom-modal-actions" style="justify-content: center;">
         <button class="custom-modal-btn cancel" id="btn-update-later">Depois</button>
         <button class="custom-modal-btn confirm" id="btn-update-now">Atualizar</button>
@@ -4322,11 +4875,30 @@ function showUpdatePrompt(worker, totalUpdates, newVersion) {
   document.body.appendChild(overlay);
 
   document.getElementById('btn-update-later').onclick = () => {
+    deferredUpdateVersion = pendingServiceWorkerUpdate?.newVersion || null;
     updatePromptVisible = false;
     overlay.remove();
   };
 
-  document.getElementById('btn-update-now').onclick = () => {
+  document.getElementById('btn-update-now').onclick = async () => {
+    const updateButton = document.getElementById('btn-update-now');
+    updateButton.disabled = true;
+    updateButton.textContent = 'Verificando...';
+    updateInProgress = true;
+
+    // Se mais commits chegaram enquanto a modal estava aberta, instala e aplica
+    // apenas o worker mais recente, mantendo a contagem acumulada correta.
+    if (serviceWorkerRegistration) await checkForServiceWorkerUpdates(serviceWorkerRegistration, true);
+
+    const updateToApply = pendingServiceWorkerUpdate;
+    if (!updateToApply) {
+      updateInProgress = false;
+      updatePromptVisible = false;
+      overlay.remove();
+      return;
+    }
+
+    const { totalUpdates: updatesToApply } = updateToApply;
     overlay.innerHTML = `
       <div class="custom-modal" style="text-align: center; padding: 30px 20px; width: 90%; max-width: 320px;">
         <h2 style="margin: 0 0 16px 0; color: #fddf7b; font-size: 1.1rem;">Baixando atualização...</h2>
@@ -4349,10 +4921,10 @@ function showUpdatePrompt(worker, totalUpdates, newVersion) {
     const statusText = document.getElementById('update-status-text');
 
     const interval = setInterval(() => {
-      const stepTarget = (currentStep / totalUpdates) * 100;
+      const stepTarget = (currentStep / updatesToApply) * 100;
       progress = Math.min(progress + Math.floor(Math.random() * 12) + 4, stepTarget);
 
-      if (progress >= stepTarget && currentStep < totalUpdates) currentStep++;
+      if (progress >= stepTarget && currentStep < updatesToApply) currentStep++;
 
       if (progress >= 100) {
         progress = 100;
@@ -4362,17 +4934,20 @@ function showUpdatePrompt(worker, totalUpdates, newVersion) {
         statusText.style.color = '#62c462';
         bar.style.background = '#fddf7b';
         percentText.textContent = '100%';
-        localStorage.setItem(SERVICE_WORKER_VERSION_KEY, String(newVersion));
+        sessionStorage.setItem(SERVICE_WORKER_PENDING_VERSION_KEY, String(updateToApply.newVersion));
 
         setTimeout(() => {
-          worker.postMessage('skipWaiting');
-          // Fallback para navegadores que não disparem controllerchange nesta aba.
-          setTimeout(() => window.location.reload(), 1000);
+          updateToApply.worker.postMessage('skipWaiting');
+          // Fallback: se o navegador atrasar controllerchange, uma nova carga mantém
+          // a versão como pendente e tenta a ativação novamente, sem marcar sucesso antes.
+          setTimeout(() => {
+            if (!serviceWorkerReloading) window.location.reload();
+          }, 5000);
         }, 500);
       } else {
         bar.style.width = progress + '%';
         percentText.textContent = progress + '%';
-        statusText.textContent = `Consolidando atualizações (${currentStep}/${totalUpdates})...`;
+        statusText.textContent = `Consolidando atualizações (${currentStep}/${updatesToApply})...`;
       }
     }, 200);
   };

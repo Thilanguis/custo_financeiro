@@ -16,6 +16,10 @@
   --green-bright: #7cff7c;
   --red: #ff7b7b;
   --blue: #4a90e2;
+  --purple: #9b7be8;
+  --purple-soft: #c5b4f5;
+  --purple-border: rgba(155, 123, 232, 0.42);
+  --purple-bg: rgba(155, 123, 232, 0.14);
   --orange-soft: #dfa05f;
   --orange-soft-dark: #a96d36;
   --header-start: #243b55;
@@ -589,6 +593,75 @@ h2 {
   border-color: var(--green);
 }
 
+#planned-biweekly:checked,
+#income-luana-biweekly:checked,
+#income-gabriel-biweekly:checked {
+  background: var(--purple);
+  border-color: var(--purple);
+}
+
+.income-biweekly-control {
+  margin-top: 5px;
+}
+
+.income-biweekly-control label {
+  width: fit-content;
+  min-height: 26px;
+  margin: 0;
+  padding: 3px 6px;
+  border-radius: 7px;
+  color: var(--purple-soft);
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.income-biweekly-control label:hover {
+  background: var(--purple-bg);
+}
+
+.income-biweekly-control input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+}
+
+.biweekly-conversion-preview {
+  display: none;
+  margin-top: 5px;
+  color: var(--purple-soft);
+  font-size: 0.67rem;
+  line-height: 1.3;
+}
+
+.biweekly-conversion-preview.visible {
+  display: block;
+}
+
+.biweekly-conversion-preview strong {
+  color: #d5c8ff;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.biweekly-conversion-preview span {
+  color: var(--text-muted);
+  font-size: 0.6rem;
+}
+
+.biweekly-conversion-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 5px;
+  padding: 1px 5px;
+  border: 1px solid var(--purple-border);
+  border-radius: 999px;
+  background: var(--purple-bg);
+  color: var(--purple-soft);
+  font-size: 0.58rem;
+  font-weight: 700;
+  line-height: 1.35;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
 button {
   border-radius: 999px;
   border: none;
@@ -890,12 +963,56 @@ button:active {
 
 /* Estilos para diferenciar os Chips de Empresa */
 .chip-company {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   background: transparent;
   border: 1px solid #4a4a6a;
   color: #c3c3d5;
   font-style: normal;
   border-radius: 6px; /* Formato quadrado arredondado para contrastar com a categoria */
   padding: 4px 10px;
+}
+
+.chip-company.is-favorite {
+  border-color: rgba(247, 200, 74, 0.48);
+  background: rgba(247, 200, 74, 0.075);
+}
+
+.chip-company.is-filtered-out {
+  display: none;
+}
+
+.company-chip-name {
+  min-width: 0;
+}
+
+.company-favorite-button {
+  display: inline-grid;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #77778f;
+  font: 700 0.78rem/1 system-ui, sans-serif;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, transform 0.1s ease;
+}
+
+.company-favorite-button[aria-pressed='true'],
+.company-favorite-button:hover {
+  background: rgba(247, 200, 74, 0.12);
+  color: var(--gold-strong);
+}
+
+.company-favorite-button:active {
+  opacity: 1;
+  transform: scale(0.9);
+  box-shadow: none;
 }
 
 .chip-company.active,
@@ -907,6 +1024,71 @@ button:active {
 
 .companies-row {
   display: flex;
+}
+
+.company-chip-filter-wrap {
+  display: flex;
+  width: 100%;
+  max-width: 310px;
+  flex: 1 0 100%;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: rgba(15, 15, 24, 0.72);
+  color: var(--text-muted);
+}
+
+.company-chip-filter {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.72rem;
+}
+
+.company-chip-filter::placeholder {
+  color: var(--text-muted);
+}
+
+.company-chip-filter-wrap:focus-within {
+  border-color: rgba(253, 223, 123, 0.45);
+  box-shadow: 0 0 0 2px rgba(253, 223, 123, 0.08);
+}
+
+.company-filter-empty {
+  flex-basis: 100%;
+  padding: 3px 1px;
+}
+
+.auto-create-notice {
+  display: none;
+  width: fit-content;
+  margin-top: 5px;
+  padding: 2px 6px;
+  border: 1px solid rgba(98, 196, 98, 0.28);
+  border-radius: 999px;
+  background: rgba(98, 196, 98, 0.09);
+  color: var(--green-bright);
+  font-size: 0.61rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.auto-create-notice.visible {
+  display: inline-flex;
+}
+
+@media (max-width: 600px) {
+  .company-chip-filter-wrap {
+    max-width: none;
+  }
 }
 
 /* Barras de Progresso de Orçamento */
@@ -1432,6 +1614,167 @@ button:active {
 
 .checkbox-field label:hover {
   background: rgba(253, 223, 123, 0.055);
+}
+
+.planned-options-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+  margin: 2px 0 10px;
+  padding-top: 4px;
+}
+
+.actual-options-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+  margin: 2px 0 10px;
+  padding-top: 4px;
+}
+
+.option-control {
+  position: relative;
+  min-width: 0;
+}
+
+.planned-options-row.checkbox-field label,
+.actual-options-row.checkbox-field label {
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 7px 34px 7px 9px;
+  border: 1px solid rgba(166, 166, 192, 0.1);
+  background: rgba(15, 15, 24, 0.38);
+}
+
+.planned-options-row.checkbox-field label:hover,
+.actual-options-row.checkbox-field label:hover {
+  border-color: rgba(253, 223, 123, 0.2);
+  background: rgba(253, 223, 123, 0.055);
+}
+
+.actual-options-row .option-label-income {
+  color: var(--green);
+  font-weight: 600;
+}
+
+.option-help-button {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  z-index: 2;
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid rgba(166, 166, 192, 0.34);
+  border-radius: 50%;
+  background: rgba(39, 39, 58, 0.86);
+  color: var(--text-muted);
+  font: 700 0.66rem/1 system-ui, sans-serif;
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease, transform 0.1s ease;
+}
+
+.option-help-button:hover,
+.option-help-button[aria-expanded='true'] {
+  border-color: var(--purple);
+  background: var(--purple-bg);
+  color: var(--purple-soft);
+}
+
+.option-help-button:focus-visible {
+  outline: 2px solid var(--purple-border);
+  outline-offset: 2px;
+}
+
+.option-help-button:active {
+  opacity: 1;
+  transform: translateY(-50%) scale(0.92);
+  box-shadow: none;
+}
+
+.option-help-popover {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  left: auto;
+  z-index: 30;
+  display: block;
+  width: max-content;
+  max-width: min(260px, calc(100vw - 40px));
+  padding: 8px 10px;
+  border: 1px solid var(--purple-border);
+  border-radius: 9px;
+  background: #202033;
+  color: var(--text-subtle);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+  font-size: 0.66rem;
+  font-weight: 400;
+  line-height: 1.4;
+  text-align: left;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-7px) scale(0.76);
+  transform-origin: calc(100% - 17px) 0;
+  transition:
+    opacity 0.14s ease,
+    transform 0.16s ease,
+    visibility 0s linear 0.16s;
+  will-change: opacity, transform;
+}
+
+.option-help-popover::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  right: 12px;
+  width: 9px;
+  height: 9px;
+  border-top: 1px solid var(--purple-border);
+  border-left: 1px solid var(--purple-border);
+  background: #202033;
+  transform: rotate(45deg);
+}
+
+.option-control.is-help-open .option-help-popover {
+  pointer-events: auto;
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0) scale(1);
+  transition-delay: 0s;
+}
+
+@media (max-width: 600px) {
+  .planned-options-row {
+    grid-template-columns: 1fr;
+    gap: 5px;
+    margin-top: 4px;
+  }
+
+  .actual-options-row {
+    grid-template-columns: 1fr;
+    gap: 5px;
+    margin-top: 4px;
+  }
+
+  .planned-options-row.checkbox-field label,
+  .actual-options-row.checkbox-field label {
+    justify-content: flex-start;
+    padding: 6px 9px;
+    padding-right: 34px;
+  }
+
+  .option-help-popover {
+    right: 0;
+    left: auto;
+  }
 }
 
 .btn-primary {

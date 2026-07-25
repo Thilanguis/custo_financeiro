@@ -248,8 +248,12 @@ const companyDirectory = {
   'Cuidados pessoais': ['CABELO', 'UNHA', 'PHARMAPRIX', 'JEAN COUTO', 'ACADEMIA', 'REMÉDIO', 'MASSAGEM', 'MÉDICO', 'VETERINÁRIO'],
 };
 
+function compareFinancialNames(a, b) {
+  return String(a || '').localeCompare(String(b || ''), 'pt-BR', { sensitivity: 'base', numeric: true });
+}
+
 function getCategories() {
-  return Object.keys(companyDirectory);
+  return Object.keys(companyDirectory).sort(compareFinancialNames);
 }
 
 // ===== Utilitários =====
@@ -269,6 +273,12 @@ function formatCurrency(value, isIncome = false) {
 function parseAmount(str) {
   if (str === null || str === undefined || str === '') return NaN;
   return parseFloat(String(str).replace(',', '.'));
+}
+
+const BIWEEKLY_MONTHLY_FACTOR = 26 / 12;
+
+function convertBiweeklyToMonthly(amount) {
+  return Math.round(amount * BIWEEKLY_MONTHLY_FACTOR * 100) / 100;
 }
 
 function getLocalDateString() {
@@ -307,6 +317,10 @@ navButtons.forEach((btn) => {
 const monthInput = document.getElementById('current-month');
 const incomeLuanaInput = document.getElementById('income-luana');
 const incomeGabrielInput = document.getElementById('income-gabriel');
+const incomeLuanaBiweeklyCheckbox = document.getElementById('income-luana-biweekly');
+const incomeGabrielBiweeklyCheckbox = document.getElementById('income-gabriel-biweekly');
+const incomeLuanaBiweeklyPreview = document.getElementById('income-luana-biweekly-preview');
+const incomeGabrielBiweeklyPreview = document.getElementById('income-gabriel-biweekly-preview');
 const btnSaveIncome = document.getElementById('btn-save-income');
 const btnLoadMonth = document.getElementById('btn-load-month');
 const btnToggleIncome = document.getElementById('btn-toggle-income');
@@ -315,6 +329,27 @@ const btnTogglePayments = document.getElementById('btn-toggle-payments');
 const paymentsPanel = document.getElementById('payments-panel');
 const btnToggleReimbursement = document.getElementById('btn-toggle-reimbursement');
 const reimbursementPanel = document.getElementById('reimbursement-panel');
+
+function updateIncomeBiweeklyPreview(input, checkbox, preview) {
+  if (!input || !checkbox || !preview) return;
+
+  const sourceAmount = parseAmount(input.value);
+  const canPreview = checkbox.checked && Number.isFinite(sourceAmount);
+  preview.classList.toggle('visible', canPreview);
+  preview.innerHTML = canPreview
+    ? `Renda mensal considerada: <strong>${formatCurrency(Math.abs(convertBiweeklyToMonthly(sourceAmount)))}</strong> <span>(26 pagamentos ÷ 12 meses)</span>`
+    : '';
+}
+
+function updateIncomeBiweeklyPreviews() {
+  updateIncomeBiweeklyPreview(incomeLuanaInput, incomeLuanaBiweeklyCheckbox, incomeLuanaBiweeklyPreview);
+  updateIncomeBiweeklyPreview(incomeGabrielInput, incomeGabrielBiweeklyCheckbox, incomeGabrielBiweeklyPreview);
+}
+
+incomeLuanaInput?.addEventListener('input', updateIncomeBiweeklyPreviews);
+incomeGabrielInput?.addEventListener('input', updateIncomeBiweeklyPreviews);
+incomeLuanaBiweeklyCheckbox?.addEventListener('change', updateIncomeBiweeklyPreviews);
+incomeGabrielBiweeklyCheckbox?.addEventListener('change', updateIncomeBiweeklyPreviews);
 
 window.updateToggleButtonsState = function (activeBtn) {
   const btns = [btnToggleIncome, btnTogglePayments, btnToggleReimbursement];
@@ -638,8 +673,14 @@ function loadIncomeToInputs(month) {
     }
   }
 
-  incomeLuanaInput.value = income ? income.luana || 0 : 0;
-  incomeGabrielInput.value = income ? income.gabriel || 0 : 0;
+  const luanaIsBiweekly = Boolean(income?.luanaIsBiweekly);
+  const gabrielIsBiweekly = Boolean(income?.gabrielIsBiweekly);
+
+  incomeLuanaBiweeklyCheckbox.checked = luanaIsBiweekly;
+  incomeGabrielBiweeklyCheckbox.checked = gabrielIsBiweekly;
+  incomeLuanaInput.value = income ? (luanaIsBiweekly ? income.luanaBiweeklyAmount ?? Math.round(((income.luana || 0) / BIWEEKLY_MONTHLY_FACTOR) * 100) / 100 : income.luana || 0) : 0;
+  incomeGabrielInput.value = income ? (gabrielIsBiweekly ? income.gabrielBiweeklyAmount ?? Math.round(((income.gabriel || 0) / BIWEEKLY_MONTHLY_FACTOR) * 100) / 100 : income.gabriel || 0) : 0;
+  updateIncomeBiweeklyPreviews();
 }
 
 btnLoadMonth.addEventListener('click', async () => {
@@ -713,20 +754,30 @@ btnSaveIncome.addEventListener('click', async () => {
   const month = getCurrentMonth();
   if (!month) return showToast('Selecione o mês.', 'error');
 
-  const luana = parseAmount(incomeLuanaInput.value) || 0;
-  const gabriel = parseAmount(incomeGabrielInput.value) || 0;
+  const luanaSourceAmount = parseAmount(incomeLuanaInput.value) || 0;
+  const gabrielSourceAmount = parseAmount(incomeGabrielInput.value) || 0;
+  const luanaIsBiweekly = Boolean(incomeLuanaBiweeklyCheckbox?.checked);
+  const gabrielIsBiweekly = Boolean(incomeGabrielBiweeklyCheckbox?.checked);
+  const luana = luanaIsBiweekly ? convertBiweeklyToMonthly(luanaSourceAmount) : luanaSourceAmount;
+  const gabriel = gabrielIsBiweekly ? convertBiweeklyToMonthly(gabrielSourceAmount) : gabrielSourceAmount;
+  const conversionData = {
+    luanaIsBiweekly,
+    gabrielIsBiweekly,
+    luanaBiweeklyAmount: luanaIsBiweekly ? luanaSourceAmount : null,
+    gabrielBiweeklyAmount: gabrielIsBiweekly ? gabrielSourceAmount : null,
+  };
 
   btnSaveIncome.textContent = 'Salvando...';
   btnSaveIncome.disabled = true;
 
-  await FinanceAPI.saveIncome(month, luana, gabriel);
+  await FinanceAPI.saveIncome(month, luana, gabriel, conversionData);
   logActivity('Editou', `Rendas de ${month} - Luana: CAD ${luana} / Gabriel: CAD ${gabriel}`);
 
   const index = incomes.findIndex((i) => i.month === month);
   if (index !== -1) {
-    incomes[index] = { month, luana, gabriel };
+    incomes[index] = { month, luana, gabriel, ...conversionData };
   } else {
-    incomes.push({ month, luana, gabriel });
+    incomes.push({ month, luana, gabriel, ...conversionData });
   }
 
   btnSaveIncome.textContent = 'Salvar Rendas';
@@ -801,6 +852,36 @@ const receiptCompanyChips = document.getElementById('receipt-company-chips');
 let selectedPlannedType = getCategories()[0];
 let selectedReceiptType = getCategories()[0];
 let isEditMode = false;
+const COMPANY_FAVORITE_SEPARATOR = '\u001f';
+const favoriteCompanyKeys = new Set();
+
+function makeCompanyFavoriteKey(category, company) {
+  return `${category}${COMPANY_FAVORITE_SEPARATOR}${company}`;
+}
+
+function isFavoriteCompany(category, company) {
+  return favoriteCompanyKeys.has(makeCompanyFavoriteKey(category, company));
+}
+
+async function toggleFavoriteCompany(category, company) {
+  const key = makeCompanyFavoriteKey(category, company);
+  const wasFavorite = favoriteCompanyKeys.has(key);
+  if (wasFavorite) favoriteCompanyKeys.delete(key);
+  else favoriteCompanyKeys.add(key);
+
+  updatePlannedChips();
+  updateReceiptChips();
+
+  try {
+    await FinanceAPI.saveCompanyFavorites([...favoriteCompanyKeys].sort(compareFinancialNames));
+  } catch (error) {
+    if (wasFavorite) favoriteCompanyKeys.add(key);
+    else favoriteCompanyKeys.delete(key);
+    updatePlannedChips();
+    updateReceiptChips();
+    showToast('Não foi possível atualizar o favorito.', 'error');
+  }
+}
 
 function renderTypeChips(container, selectedType, onSelect) {
   container.innerHTML = '';
@@ -833,7 +914,10 @@ function renderTypeChips(container, selectedType, onSelect) {
 
 function renderCompanyChips(container, type, onSelectCompany) {
   container.innerHTML = '';
-  const companies = companyDirectory[type] || [];
+  const companies = [...(companyDirectory[type] || [])].sort((a, b) => {
+    const favoriteDifference = Number(isFavoriteCompany(type, b)) - Number(isFavoriteCompany(type, a));
+    return favoriteDifference || compareFinancialNames(a, b);
+  });
 
   if (!companies.length && !isEditMode) {
     const span = document.createElement('span');
@@ -843,16 +927,120 @@ function renderCompanyChips(container, type, onSelectCompany) {
     return;
   }
 
+  let filterInput = null;
+  if (companies.length >= 5) {
+    const filterWrap = document.createElement('div');
+    filterWrap.className = 'company-chip-filter-wrap';
+    filterWrap.innerHTML = '<span aria-hidden="true">⌕</span>';
+    filterInput = document.createElement('input');
+    filterInput.type = 'search';
+    filterInput.className = 'company-chip-filter';
+    filterInput.placeholder = 'Filtrar empresas...';
+    filterInput.setAttribute('aria-label', `Filtrar empresas de ${type}`);
+    filterWrap.appendChild(filterInput);
+    container.appendChild(filterWrap);
+  }
+
+  const renderedChips = [];
   companies.forEach((name) => {
     const chip = document.createElement('div');
-    chip.className = 'chip chip-company' + (isEditMode ? ' edit-mode' : '');
-    chip.textContent = name;
+    const isFavorite = isFavoriteCompany(type, name);
+    chip.className = 'chip chip-company' + (isEditMode ? ' edit-mode' : '') + (isFavorite ? ' is-favorite' : '');
+    chip.dataset.filterText = normalizeSearchText(name);
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'company-chip-name';
+    nameSpan.textContent = name;
+    chip.appendChild(nameSpan);
+
+    if (!isEditMode) {
+      const favoriteButton = document.createElement('button');
+      favoriteButton.type = 'button';
+      favoriteButton.className = 'company-favorite-button';
+      favoriteButton.textContent = isFavorite ? '★' : '☆';
+      favoriteButton.title = isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos';
+      favoriteButton.setAttribute('aria-label', `${isFavorite ? 'Remover' : 'Adicionar'} ${name} ${isFavorite ? 'dos' : 'aos'} favoritos`);
+      favoriteButton.setAttribute('aria-pressed', String(isFavorite));
+      favoriteButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        toggleFavoriteCompany(type, name);
+      });
+      chip.appendChild(favoriteButton);
+    }
+
     chip.addEventListener('click', () => {
       if (isEditMode) handleEditCompany(type, name);
       else onSelectCompany(name);
     });
     container.appendChild(chip);
+    renderedChips.push(chip);
   });
+
+  const noResults = document.createElement('span');
+  noResults.className = 'company-filter-empty hint small';
+  noResults.textContent = 'Nenhuma empresa encontrada.';
+  noResults.hidden = true;
+  container.appendChild(noResults);
+
+  filterInput?.addEventListener('input', () => {
+    const term = normalizeSearchText(filterInput.value);
+    let visibleCount = 0;
+    renderedChips.forEach((chip) => {
+      const isVisible = !term || chip.dataset.filterText.includes(term);
+      chip.classList.toggle('is-filtered-out', !isVisible);
+      if (isVisible) visibleCount++;
+    });
+    noResults.hidden = visibleCount > 0;
+  });
+}
+
+function getExistingCategoryName(value) {
+  const normalizedValue = normalizeSearchText(value);
+  if (!normalizedValue) return '';
+  return getCategories().find((category) => normalizeSearchText(category) === normalizedValue) || '';
+}
+
+function updateAutoCreateNotice(categoryInputId, companyInputId, categoryNoticeId, companyNoticeId) {
+  const categoryInput = document.getElementById(categoryInputId);
+  const companyInput = document.getElementById(companyInputId);
+  const categoryNotice = document.getElementById(categoryNoticeId);
+  const companyNotice = document.getElementById(companyNoticeId);
+  if (!categoryInput || !companyInput || !categoryNotice || !companyNotice) return;
+
+  const categoryValue = categoryInput.value.trim();
+  const companyValue = companyInput.value.trim();
+  const existingCategory = getExistingCategoryName(categoryValue);
+  const isNewCategory = Boolean(categoryValue && !existingCategory);
+  const categoryCompanies = existingCategory ? companyDirectory[existingCategory] || [] : [];
+  const isNewCompany = Boolean(companyValue && !categoryCompanies.some((company) => normalizeSearchText(company) === normalizeSearchText(companyValue)));
+
+  categoryNotice.textContent = isNewCategory ? '✦ Nova categoria — será criada ao salvar' : '';
+  categoryNotice.classList.toggle('visible', isNewCategory);
+  companyNotice.textContent = isNewCompany ? '✦ Nova empresa — será criada ao salvar' : '';
+  companyNotice.classList.toggle('visible', isNewCompany);
+}
+
+function updateAutoCreateNotices() {
+  updateAutoCreateNotice('planned-category', 'planned-description', 'planned-category-create-notice', 'planned-company-create-notice');
+  updateAutoCreateNotice('actual-category', 'actual-merchant', 'actual-category-create-notice', 'actual-company-create-notice');
+  updateAutoCreateNotice('annual-category', 'annual-name', 'annual-category-create-notice', 'annual-company-create-notice');
+}
+
+document.addEventListener('input', (event) => {
+  if (['planned-category', 'planned-description', 'actual-category', 'actual-merchant', 'annual-category', 'annual-name'].includes(event.target.id)) updateAutoCreateNotices();
+});
+
+function remapFavoriteCompanies(oldCategory, newCategory = null, oldCompany = null, newCompany = null) {
+  let changed = false;
+  [...favoriteCompanyKeys].forEach((key) => {
+    const [category, company] = key.split(COMPANY_FAVORITE_SEPARATOR);
+    if (category !== oldCategory || (oldCompany !== null && company !== oldCompany)) return;
+
+    favoriteCompanyKeys.delete(key);
+    if (newCategory !== null) favoriteCompanyKeys.add(makeCompanyFavoriteKey(newCategory, newCompany ?? company));
+    changed = true;
+  });
+  return changed;
 }
 
 async function handleEditCategory(oldName) {
@@ -860,14 +1048,17 @@ async function handleEditCategory(oldName) {
   if (newName === null) return;
 
   const trimmed = newName.trim();
+  let favoritesChanged = false;
   if (trimmed === '') {
     if (await showConfirm(`Atenção: Excluir a categoria "${oldName}" vai sumir com todas as empresas dentro dela. Continuar?`, true)) {
       delete companyDirectory[oldName];
+      favoritesChanged = remapFavoriteCompanies(oldName);
       showToast('Categoria excluída.', 'success');
     }
   } else if (trimmed !== oldName) {
     companyDirectory[trimmed] = companyDirectory[oldName];
     delete companyDirectory[oldName];
+    favoritesChanged = remapFavoriteCompanies(oldName, trimmed);
     if (selectedPlannedType === oldName) selectedPlannedType = trimmed;
     if (selectedReceiptType === oldName) selectedReceiptType = trimmed;
     showToast('Categoria renomeada.', 'success');
@@ -876,6 +1067,7 @@ async function handleEditCategory(oldName) {
   updatePlannedChips();
   updateReceiptChips();
   await FinanceAPI.saveCompanies(companyDirectory);
+  if (favoritesChanged) await FinanceAPI.saveCompanyFavorites([...favoriteCompanyKeys].sort(compareFinancialNames));
 }
 
 async function handleEditCompany(category, oldName) {
@@ -883,20 +1075,24 @@ async function handleEditCompany(category, oldName) {
   if (newName === null) return;
 
   const trimmed = newName.trim().toUpperCase();
+  let favoritesChanged = false;
   if (trimmed === '') {
     if (await showConfirm(`Excluir a empresa "${oldName}"?`, true)) {
       companyDirectory[category] = companyDirectory[category].filter((c) => c !== oldName);
+      favoritesChanged = remapFavoriteCompanies(category, null, oldName);
       showToast('Empresa excluída.', 'success');
     }
   } else if (trimmed !== oldName) {
     const idx = companyDirectory[category].indexOf(oldName);
     if (idx !== -1) companyDirectory[category][idx] = trimmed;
+    favoritesChanged = remapFavoriteCompanies(category, category, oldName, trimmed);
     showToast('Empresa renomeada.', 'success');
   }
 
   updatePlannedChips();
   updateReceiptChips();
   await FinanceAPI.saveCompanies(companyDirectory);
+  if (favoritesChanged) await FinanceAPI.saveCompanyFavorites([...favoriteCompanyKeys].sort(compareFinancialNames));
 }
 
 function updatePlannedChips() {
@@ -909,7 +1105,9 @@ function updatePlannedChips() {
 
   renderCompanyChips(plannedCompanyChips, selectedPlannedType, (company) => {
     plannedDescriptionInput.value = company;
+    updateAutoCreateNotices();
   });
+  updateAutoCreateNotices();
 }
 
 function updateReceiptChips() {
@@ -922,9 +1120,11 @@ function updateReceiptChips() {
 
   renderCompanyChips(receiptCompanyChips, selectedReceiptType, (company) => {
     actualMerchantInput.value = company;
+    updateAutoCreateNotices();
   });
 
   if (typeof updateAnnualChips === 'function') updateAnnualChips();
+  updateAutoCreateNotices();
 }
 
 // ===== Orçamento mensal (custos previstos) =====
@@ -937,8 +1137,51 @@ const plannedAmountInput = document.getElementById('planned-amount');
 const plannedOwnerSelect = document.getElementById('planned-owner');
 const plannedFixedCheckbox = document.getElementById('planned-fixed');
 const plannedStaticCheckbox = document.getElementById('planned-static');
+const plannedBiweeklyCheckbox = document.getElementById('planned-biweekly');
+const plannedBiweeklyPreview = document.getElementById('planned-biweekly-preview');
 const labelPlannedStatic = document.getElementById('label-planned-static');
 const plannedSubmitBtn = document.getElementById('planned-submit-btn');
+function updateBiweeklyConversionPreview() {
+  if (!plannedBiweeklyPreview || !plannedBiweeklyCheckbox) return;
+
+  const sourceAmount = parseAmount(plannedAmountInput.value);
+  const canPreview = plannedBiweeklyCheckbox.checked && Number.isFinite(sourceAmount);
+  plannedBiweeklyPreview.classList.toggle('visible', canPreview);
+  plannedBiweeklyPreview.innerHTML = canPreview
+    ? `No orçamento mensal: <strong>${formatCurrency(Math.abs(convertBiweeklyToMonthly(sourceAmount)))}</strong> <span>(26 pagamentos ÷ 12 meses)</span>`
+    : '';
+}
+
+plannedAmountInput.addEventListener('input', updateBiweeklyConversionPreview);
+plannedBiweeklyCheckbox?.addEventListener('change', updateBiweeklyConversionPreview);
+
+function closeOptionHelpPopovers(exceptControl = null) {
+  document.querySelectorAll('.option-control.is-help-open').forEach((control) => {
+    if (control === exceptControl) return;
+    control.classList.remove('is-help-open');
+    control.querySelector('.option-help-button')?.setAttribute('aria-expanded', 'false');
+  });
+}
+
+document.addEventListener('click', (event) => {
+  const helpButton = event.target.closest('.option-help-button');
+  if (helpButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    const control = helpButton.closest('.option-control');
+    const willOpen = !control.classList.contains('is-help-open');
+    closeOptionHelpPopovers(control);
+    control.classList.toggle('is-help-open', willOpen);
+    helpButton.setAttribute('aria-expanded', String(willOpen));
+    return;
+  }
+
+  if (!event.target.closest('.option-help-popover')) closeOptionHelpPopovers();
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeOptionHelpPopovers();
+});
 
 plannedFixedCheckbox.addEventListener('change', (e) => {
   if (e.target.checked) {
@@ -991,7 +1234,9 @@ formPlanned.addEventListener('submit', async (e) => {
   const month = inputMonth;
   const category = plannedCategoryInput.value.trim();
   const description = plannedDescriptionInput.value.trim();
-  const amount = parseAmount(plannedAmountInput.value);
+  const sourceAmount = parseAmount(plannedAmountInput.value);
+  const isBiweeklyConverted = Boolean(plannedBiweeklyCheckbox?.checked);
+  const amount = isBiweeklyConverted ? convertBiweeklyToMonthly(sourceAmount) : sourceAmount;
   const owner = plannedOwnerSelect.value;
   const paymentMethodId = document.getElementById('planned-payment').value;
   const fixed = plannedFixedCheckbox.checked;
@@ -1018,6 +1263,10 @@ formPlanned.addEventListener('submit', async (e) => {
   const syncId = oldItem && oldItem.staticSyncId ? oldItem.staticSyncId : `sync_${Date.now()}`;
 
   const itemData = { date, category, description, amount, owner, paymentMethodId, fixed, isStatic, month };
+  if (isBiweeklyConverted) {
+    itemData.isBiweeklyConverted = true;
+    itemData.biweeklyAmount = sourceAmount;
+  }
   if (isStatic) itemData.staticSyncId = syncId;
   if (editingPlannedId !== null) itemData.id = editingPlannedId;
 
@@ -1072,6 +1321,7 @@ function resetPlannedForm() {
 
   plannedStaticCheckbox.disabled = true;
   labelPlannedStatic.style.opacity = '0.5';
+  updateBiweeklyConversionPreview();
 
   selectedPlannedType = getCategories()[0] || '';
   plannedCategoryInput.value = selectedPlannedType;
@@ -1085,6 +1335,15 @@ function resetPlannedForm() {
   updatePlannedChips();
 }
 
+function renderBiweeklyConversionBadge(item) {
+  if (!item?.isBiweeklyConverted) return '';
+
+  const sourceAmount = item.biweeklyAmount ?? Math.round(((item.amount ?? item.planned ?? 0) / BIWEEKLY_MONTHLY_FACTOR) * 100) / 100;
+  const monthlyAmount = item.amount ?? item.planned ?? convertBiweeklyToMonthly(sourceAmount);
+  const explanation = `Bisemanal: ${formatCurrency(Math.abs(sourceAmount))} → mensal: ${formatCurrency(Math.abs(monthlyAmount))}`;
+  return ` <span class="biweekly-conversion-badge" title="${explanation}" aria-label="${explanation}">Bisemanal</span>`;
+}
+
 function startEditPlanned(id) {
   const item = plannedItems.find((p) => p.id === id);
   if (!item) return;
@@ -1093,7 +1352,9 @@ function startEditPlanned(id) {
   plannedDateInput.value = item.date || '';
   plannedCategoryInput.value = item.category;
   plannedDescriptionInput.value = item.description;
-  plannedAmountInput.value = item.amount;
+  plannedBiweeklyCheckbox.checked = Boolean(item.isBiweeklyConverted);
+  plannedAmountInput.value = item.isBiweeklyConverted ? item.biweeklyAmount ?? Math.round((item.amount / BIWEEKLY_MONTHLY_FACTOR) * 100) / 100 : item.amount;
+  updateBiweeklyConversionPreview();
   plannedOwnerSelect.value = item.owner;
   document.getElementById('planned-payment').value = item.paymentMethodId || 'dinheiro';
 
@@ -1223,10 +1484,10 @@ function matchesFinancialSearch(item, term, descriptionField) {
   if (searchableText.includes(normalizedTerm)) return true;
 
   const digits = normalizedTerm.replace(/\D/g, '');
-  const amountDigits = Math.abs(item.amount || 0)
-    .toFixed(2)
-    .replace(/\D/g, '');
-  return digits.length > 0 && amountDigits.includes(digits);
+  const amountDigits = [item.amount, item.biweeklyAmount]
+    .filter((amount) => Number.isFinite(Number(amount)))
+    .map((amount) => Math.abs(Number(amount)).toFixed(2).replace(/\D/g, ''));
+  return digits.length > 0 && amountDigits.some((amount) => amount.includes(digits));
 }
 
 document.getElementById('search-planned')?.addEventListener('input', (event) => {
@@ -1413,6 +1674,7 @@ function renderPlannedItemsList(month) {
           const annualBadge = isEventItem
             ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px; vertical-align: middle;">Evento</span>'
             : '';
+          const biweeklyBadge = renderBiweeklyConversionBadge(p);
 
           // Checa se este item específico já foi pago/recebido no mês
           const isLaunched = receipts.some((r) => {
@@ -1431,7 +1693,7 @@ function renderPlannedItemsList(month) {
 
           item.innerHTML = `
           <div class="receipt-main">
-            <div class="receipt-line">${p.description}${annualBadge}${incomeBadge}</div>
+            <div class="receipt-line">${p.description}${annualBadge}${incomeBadge}${biweeklyBadge}</div>
             ${obsHtml}
             <div class="receipt-meta" style="margin-top: 2px;">${dateStr}Resp: ${p.owner}${payStr}${p.fixed ? (p.isStatic ? ' • Fixo & Estático' : ' • Fixo') : ''}</div>
           </div>
@@ -1515,7 +1777,7 @@ formActual.addEventListener('submit', async (e) => {
   const isIncomeChecked = document.getElementById('actual-is-income')?.checked || false;
   const isReimb = oldReceipt ? oldReceipt.isReimbursement || false : false;
 
-  // Se o usuário marcou "Entrada (+)", garantimos que isReimbursement seja false
+  // Se o usuário marcou "Entrada", garantimos que isReimbursement seja false
   const finalIsReimbursement = isReimb && !isIncomeChecked;
   const finalAmount = isReimb || isIncomeChecked ? -Math.abs(amount) : Math.abs(amount);
 
@@ -1558,6 +1820,7 @@ formActual.addEventListener('submit', async (e) => {
 
     if (linkedPlanned) {
       const updatedPlanned = {
+        ...linkedPlanned,
         id: linkedPlanned.id,
         month: linkedPlanned.month,
         fixed: linkedPlanned.fixed,
@@ -2123,7 +2386,7 @@ function updateDashboardView() {
           }
         }
       } else {
-        // 3. Entrada (+): computa na receita total do card
+        // 3. Entrada: computa na receita total do card
         rExtraInc += Math.abs(r.amount);
       }
     });
@@ -2360,10 +2623,14 @@ function updateDashboardView() {
 
     const key = makeKey(p.category, p.description, p.owner);
     if (!mapCat[p.category].items.has(key)) {
-      mapCat[p.category].items.set(key, { name: p.description, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: p.date || '', isAnnual: false, annualEventsData: [], hasReimbursement: false, hasActualIncome: false });
+      mapCat[p.category].items.set(key, { name: p.description, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: p.date || '', isAnnual: false, annualEventsData: [], hasReimbursement: false, hasActualIncome: false, isBiweeklyConverted: false, biweeklyAmount: 0 });
     }
     const item = mapCat[p.category].items.get(key);
     item.planned += p.amount;
+    if (p.isBiweeklyConverted) {
+      item.isBiweeklyConverted = true;
+      item.biweeklyAmount += p.biweeklyAmount ?? p.amount / BIWEEKLY_MONTHLY_FACTOR;
+    }
     if (p.owner) item.owners.add(p.owner);
     if (p.date && (!item.maxDate || p.date > item.maxDate)) item.maxDate = p.date;
     if (p.linkedAnnualId) {
@@ -2554,6 +2821,7 @@ function updateDashboardView() {
         trItem.className = 'dashboard-detail-row';
 
         const tdItemName = document.createElement('td');
+        const itemBiweeklyBadge = renderBiweeklyConversionBadge(item);
 
         const obsArray = item.obsList || [];
         let obsHtml = '';
@@ -2669,7 +2937,7 @@ function updateDashboardView() {
             <details style="cursor: pointer; margin: 2px 0;">
               <summary style="outline: none; user-select: none; color: #fddf7b;">
                 <div style="display: inline-block;">
-                  <span style="color: #f5f5f5;">${item.name}</span>${parentAnnualBadge}${itemFlowBadges}
+                  <span style="color: #f5f5f5;">${item.name}</span>${parentAnnualBadge}${itemFlowBadges}${itemBiweeklyBadge}
                   <span style="font-size: 0.6rem; background: rgba(74, 144, 226, 0.15); color: #4a90e2; padding: 2px 6px; border-radius: 6px; margin-left: 4px; border: 1px solid rgba(74, 144, 226, 0.3); white-space: nowrap; vertical-align: middle;">${totalItems} itens</span>
                 </div>
                 <div style="font-size: 0.72rem; color: #8e8eab; margin-top: 2px; line-height: 1.3;">${metaText}</div>
@@ -2697,7 +2965,7 @@ function updateDashboardView() {
           const itemFlowBadges = renderFinancialFlowBadges(item);
 
           tdItemName.innerHTML = `
-            <div style="color: #f5f5f5;">${item.name}${parentAnnualBadge}${itemFlowBadges}</div>
+            <div style="color: #f5f5f5;">${item.name}${parentAnnualBadge}${itemFlowBadges}${itemBiweeklyBadge}</div>
             <div style="font-size: 0.72rem; color: #8e8eab; margin-top: 2px; line-height: 1.3;">${singleMetaText}</div>
           `;
         }
@@ -3356,6 +3624,13 @@ function syncData(month) {
     }
   });
 
+  FinanceAPI.listenCompanyFavorites((items) => {
+    favoriteCompanyKeys.clear();
+    (items || []).forEach((key) => favoriteCompanyKeys.add(key));
+    updatePlannedChips();
+    updateReceiptChips();
+  });
+
   FinanceAPI.listenIncome(month, (inc) => {
     const idx = incomes.findIndex((i) => i.month === month);
     if (inc) {
@@ -3584,7 +3859,9 @@ function updateAnnualChips() {
   });
   renderCompanyChips(annualCompanyChips, selectedAnnualType, (company) => {
     annualNameInput.value = company;
+    updateAutoCreateNotices();
   });
+  updateAutoCreateNotices();
 }
 
 if (annualCategoryInput) {
@@ -4080,6 +4357,7 @@ function showUpdatePrompt(worker, totalUpdates, newVersion) {
       if (progress >= 100) {
         progress = 100;
         clearInterval(interval);
+        bar.style.width = '100%';
         statusText.textContent = 'Instalação concluída!';
         statusText.style.color = '#62c462';
         bar.style.background = '#fddf7b';

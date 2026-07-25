@@ -187,10 +187,18 @@
               <div class="field">
                 <label>Renda Luana (CAD)</label>
                 <input type="number" step="0.01" id="income-luana" placeholder="0.00" />
+                <div class="income-biweekly-control checkbox-field">
+                  <label><input type="checkbox" id="income-luana-biweekly" /> Bisemanal</label>
+                </div>
+                <small id="income-luana-biweekly-preview" class="biweekly-conversion-preview" aria-live="polite"></small>
               </div>
               <div class="field">
                 <label>Renda Gabriel (CAD)</label>
                 <input type="number" step="0.01" id="income-gabriel" placeholder="0.00" />
+                <div class="income-biweekly-control checkbox-field">
+                  <label><input type="checkbox" id="income-gabriel-biweekly" /> Bisemanal</label>
+                </div>
+                <small id="income-gabriel-biweekly-preview" class="biweekly-conversion-preview" aria-live="polite"></small>
               </div>
             </div>
             <button id="btn-save-income" class="btn-primary" style="margin-top: 4px">Salvar Rendas</button>
@@ -258,16 +266,19 @@
               <div class="field">
                 <label>Categoria</label>
                 <input type="text" id="planned-category" placeholder="Moradia, Contas..." required />
+                <small id="planned-category-create-notice" class="auto-create-notice"></small>
               </div>
             </div>
             <div class="field-row">
               <div class="field">
                 <label>Descrição / Empresa</label>
                 <input type="text" id="planned-description" placeholder="Ex: Hipoteca, IGA... (Novas são salvas auto)" required />
+                <small id="planned-company-create-notice" class="auto-create-notice"></small>
               </div>
               <div class="field">
                 <label>Valor previsto (CAD)</label>
                 <input type="number" step="0.01" id="planned-amount" required />
+                <small id="planned-biweekly-preview" class="biweekly-conversion-preview" aria-live="polite"></small>
               </div>
             </div>
             <div class="field-row">
@@ -283,15 +294,31 @@
                 <label>Pagamento</label>
                 <select id="planned-payment"></select>
               </div>
-              <div class="field checkbox-field" style="display: flex; flex-direction: column; gap: 8px; justify-content: center">
+            </div>
+            <div class="planned-options-row checkbox-field">
+              <div class="option-control">
                 <label>
                   <input type="checkbox" id="planned-fixed" />
-                  Fixo todo mês
+                  Fixo
                 </label>
+                <button type="button" class="option-help-button" aria-expanded="false" aria-label="O que significa Fixo?">?</button>
+                <div class="option-help-popover" role="tooltip">Copia este item automaticamente quando você carregar o orçamento do mês seguinte.</div>
+              </div>
+              <div class="option-control">
                 <label style="opacity: 0.5; transition: 0.2s" id="label-planned-static">
                   <input type="checkbox" id="planned-static" disabled />
-                  Estático (Auto-lançar)
+                  Estático
                 </label>
+                <button type="button" class="option-help-button" aria-expanded="false" aria-label="O que significa Estático?">?</button>
+                <div class="option-help-popover" role="tooltip">Além do orçamento, cria o lançamento no Notas (Real) automaticamente. Exige uma data e a opção Fixo marcada.</div>
+              </div>
+              <div class="option-control">
+                <label>
+                  <input type="checkbox" id="planned-biweekly" />
+                  Bisemanal
+                </label>
+                <button type="button" class="option-help-button" aria-expanded="false" aria-label="O que significa Bisemanal?">?</button>
+                <div class="option-help-popover" role="tooltip">Converte um valor bisemanal para a média mensal usando 26 pagamentos por ano.</div>
               </div>
             </div>
             <button type="submit" class="btn-primary" id="planned-submit-btn">Adicionar ao Orçamento</button>
@@ -341,12 +368,14 @@
               <div class="field">
                 <label>Categoria</label>
                 <input type="text" id="actual-category" placeholder="Supermercado, Contas..." required />
+                <small id="actual-category-create-notice" class="auto-create-notice"></small>
               </div>
             </div>
             <div class="field-row">
               <div class="field">
                 <label>Nome / Empresa</label>
                 <input type="text" id="actual-merchant" placeholder="IGA, Videotron... (Novas são salvas auto)" required />
+                <small id="actual-company-create-notice" class="auto-create-notice"></small>
               </div>
               <div class="field">
                 <label>Valor (CAD)</label>
@@ -371,12 +400,14 @@
                 <input type="text" id="actual-observation" />
               </div>
             </div>
-            <div class="field-row">
-              <div class="field checkbox-field" style="justify-content: flex-start; margin-top: 4px">
-                <label style="color: #62c462; font-weight: 500">
+            <div class="actual-options-row checkbox-field">
+              <div class="option-control">
+                <label class="option-label-income">
                   <input type="checkbox" id="actual-is-income" />
-                  Entrada (+)
+                  Entrada
                 </label>
+                <button type="button" class="option-help-button" aria-expanded="false" aria-label="O que significa Entrada?">?</button>
+                <div class="option-help-popover" role="tooltip">Registra este valor como dinheiro que entrou e o soma ao saldo, em vez de tratá-lo como gasto.</div>
               </div>
             </div>
             <button type="submit" class="btn-primary" id="actual-submit-btn">Salvar Nota Fiscal</button>
@@ -527,10 +558,12 @@
               <div class="field">
                 <label>Nome do Evento / Empresa</label>
                 <input type="text" id="annual-name" placeholder="Ex: IPTU, IPVA..." required />
+                <small id="annual-company-create-notice" class="auto-create-notice"></small>
               </div>
               <div class="field">
                 <label>Categoria</label>
                 <input type="text" id="annual-category" placeholder="Contas, Transporte..." required />
+                <small id="annual-category-create-notice" class="auto-create-notice"></small>
               </div>
             </div>
             <div class="field-row">
@@ -565,7 +598,7 @@
               <div class="field checkbox-field" style="justify-content: flex-start; margin-top: 4px">
                 <label style="color: #62c462; font-weight: 500">
                   <input type="checkbox" id="annual-is-income" />
-                  Entrada (+)
+                  Entrada
                 </label>
               </div>
               <div class="field checkbox-field" style="justify-content: flex-start; margin-top: 4px">

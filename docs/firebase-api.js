@@ -45,6 +45,20 @@ window.FinanceAPI = {
     await db.collection('familias').doc(this.familyId).collection('configuracoes').doc('empresas').set(companyDirectory);
   },
 
+  listenCompanyFavorites(callback) {
+    const unsub = db
+      .collection('familias')
+      .doc(this.familyId)
+      .collection('configuracoes')
+      .doc('empresas_favoritas')
+      .onSnapshot((doc) => callback(doc.exists ? doc.data().items || [] : []));
+    this.unsubscribers.push(unsub);
+  },
+
+  async saveCompanyFavorites(items) {
+    await db.collection('familias').doc(this.familyId).collection('configuracoes').doc('empresas_favoritas').set({ items });
+  },
+
   // ===== MÉTODOS DE PAGAMENTO (CARTÕES) =====
   listenPaymentMethods(callback) {
     const unsub = db
@@ -71,8 +85,8 @@ window.FinanceAPI = {
     this.unsubscribers.push(unsub);
   },
 
-  async saveIncome(month, luana, gabriel) {
-    await db.collection('familias').doc(this.familyId).collection('meses').doc(month).set({ luana, gabriel }, { merge: true });
+  async saveIncome(month, luana, gabriel, conversionData = {}) {
+    await db.collection('familias').doc(this.familyId).collection('meses').doc(month).set({ luana, gabriel, ...conversionData }, { merge: true });
   },
 
   // ===== ORÇAMENTO (PREVISTO) =====

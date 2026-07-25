@@ -1,18 +1,12 @@
 // docs/service-worker.js
-const CACHE_NAME = 'controle-financeiro-v50';
-// Migração única: clientes anteriores não conhecem o fluxo de confirmação por mensagem.
-const AUTO_ACTIVATE_MIGRATION_CACHE = 'controle-financeiro-v46';
-
+const CACHE_NAME = 'controle-financeiro-v51';
 const urlsToCache = ['./', './index.html', './style.css', './app.js', './firebase-api.js', './manifest.json', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(CACHE_NAME)
-      .then((cache) => cache.addAll(urlsToCache))
-      .then(() => {
-        if (CACHE_NAME === AUTO_ACTIVATE_MIGRATION_CACHE) return self.skipWaiting();
-      }),
+      .then((cache) => cache.addAll(urlsToCache)),
   );
 });
 

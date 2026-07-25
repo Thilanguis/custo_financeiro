@@ -102,6 +102,7 @@ window.FinanceAPI = {
   },
 
   async savePlanned(month, item) {
+    await this.ensureMonth(month);
     const coll = db.collection('familias').doc(this.familyId).collection('meses').doc(month).collection('orcamento_previsto');
     if (item.id && typeof item.id === 'string') {
       await coll.doc(item.id).set(item);
@@ -136,6 +137,7 @@ window.FinanceAPI = {
   },
 
   async saveReceipt(month, item) {
+    await this.ensureMonth(month);
     const coll = db.collection('familias').doc(this.familyId).collection('meses').doc(month).collection('notas_fiscais');
     if (item.id && typeof item.id === 'string') {
       await coll.doc(item.id).set(item);
@@ -175,5 +177,130 @@ window.FinanceAPI = {
 
   async deleteAnnualEvent(id) {
     await db.collection('familias').doc(this.familyId).collection('eventos_anuais').doc(id).delete();
+  },
+
+  // ===== BACKUP E RESTAURAÇÃO =====
+  async ensureMonth(month) {
+    await db.collection('familias').doc(this.familyId).collection('meses').doc(month).set({ backupMonthMarker: true }, { merge: true });
+  },
+
+  async getFullBackupData() {
+    const familyRef = db.collection('familias').doc(this.familyId);
+    const [familyDoc, configurationsSnapshot, annualEventsSnapshot, userPreferencesSnapshot, logsSnapshot, monthsSnapshot] = await Promise.all([
+      familyRef.get(),
+      familyRef.collection('configuracoes').get(),
+      familyRef.collection('eventos_anuais').get(),
+      familyRef.collection('user_prefs').get(),
+      familyRef.collection('logs').get(),
+      familyRef.collection('meses').get(),
+    ]);
+
+    const configurations = {};
+    configurationsSnapshot.docs.forEach((document) => {
+      configurations[document.id] = document.data();
+    });
+
+    const annualEvents = annualEventsSnapshot.docs.map((document) => ({ id: document.id, data: document.data() }));
+    const userPreferences = userPreferencesSnapshot.docs.map((document) => ({ id: document.id, data: document.data() }));
+    const logs = logsSnapshot.docs.map((document) => ({ id: document.id, data: document.data() }));
+    const months = {};
+
+    await Promise.all(
+      monthsSnapshot.docs.map(async (monthDocument) => {
+        const [plannedSnapshot, receiptsSnapshot] = await Promise.all([
+          monthDocument.ref.collection('orcamento_previsto').get(),
+          monthDocument.ref.collection('notas_fiscais').get(),
+        ]);
+
+        months[monthDocument.id] = {
+          data: monthDocument.data(),
+          planned: plannedSnapshot.docs.map((document) => ({ id: document.id, data: document.data() })),
+          receipts: receiptsSnapshot.docs.map((document) => ({ id: document.id, data: document.data() })),
+        };
+      }),
+    );
+
+    return {
+      family: familyDoc.exists ? familyDoc.data() : null,
+      configurations,
+      annualEvents,
+      userPreferences,
+      logs,
+      months,
+    };
+  },
+
+  async restoreFullBackupData(backupData, mode = 'merge') {
+    const familyRef = db.collection('familias').doc(this.familyId);
+    let batch = db.batch();
+    let operationCount = 0;
+
+    const flushBatch = async () => {
+      if (!operationCount) return;
+      await batch.commit();
+      batch = db.batch();
+      operationCount = 0;
+    };
+
+    const queueOperation = async (operation, reference, data = null, options = null) => {
+      if (operation === 'delete') batch.delete(reference);
+      else if (options) batch.set(reference, data, options);
+      else batch.set(reference, data);
+      operationCount++;
+      if (operationCount >= 400) await flushBatch();
+    };
+
+    if (mode === 'replace') {
+      const [configurationsSnapshot, annualEventsSnapshot, userPreferencesSnapshot, logsSnapshot, monthsSnapshot] = await Promise.all([
+        familyRef.collection('configuracoes').get(),
+        familyRef.collection('eventos_anuais').get(),
+        familyRef.collection('user_prefs').get(),
+        familyRef.collection('logs').get(),
+        familyRef.collection('meses').get(),
+      ]);
+
+      for (const document of configurationsSnapshot.docs) await queueOperation('delete', document.ref);
+      for (const document of annualEventsSnapshot.docs) await queueOperation('delete', document.ref);
+      for (const document of userPreferencesSnapshot.docs) await queueOperation('delete', document.ref);
+      for (const document of logsSnapshot.docs) await queueOperation('delete', document.ref);
+
+      for (const monthDocument of monthsSnapshot.docs) {
+        const [plannedSnapshot, receiptsSnapshot] = await Promise.all([
+          monthDocument.ref.collection('orcamento_previsto').get(),
+          monthDocument.ref.collection('notas_fiscais').get(),
+        ]);
+        for (const document of plannedSnapshot.docs) await queueOperation('delete', document.ref);
+        for (const document of receiptsSnapshot.docs) await queueOperation('delete', document.ref);
+        await queueOperation('delete', monthDocument.ref);
+      }
+      await flushBatch();
+    }
+
+    if (backupData.family) await queueOperation('set', familyRef, backupData.family, mode === 'merge' ? { merge: true } : null);
+
+    for (const [configurationId, configurationData] of Object.entries(backupData.configurations || {})) {
+      await queueOperation('set', familyRef.collection('configuracoes').doc(configurationId), configurationData, mode === 'merge' ? { merge: true } : null);
+    }
+
+    for (const event of backupData.annualEvents || []) {
+      await queueOperation('set', familyRef.collection('eventos_anuais').doc(event.id), event.data);
+    }
+
+    for (const preference of backupData.userPreferences || []) {
+      await queueOperation('set', familyRef.collection('user_prefs').doc(preference.id), preference.data);
+    }
+
+    for (const log of backupData.logs || []) {
+      await queueOperation('set', familyRef.collection('logs').doc(log.id), log.data);
+    }
+
+    for (const [month, monthData] of Object.entries(backupData.months || {})) {
+      const monthRef = familyRef.collection('meses').doc(month);
+      await queueOperation('set', monthRef, monthData.data || { backupMonthMarker: true }, mode === 'merge' ? { merge: true } : null);
+      for (const item of monthData.planned || []) await queueOperation('set', monthRef.collection('orcamento_previsto').doc(item.id), item.data);
+      for (const item of monthData.receipts || []) await queueOperation('set', monthRef.collection('notas_fiscais').doc(item.id), item.data);
+    }
+
+    await flushBatch();
   },
 };

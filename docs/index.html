@@ -123,19 +123,43 @@
             <div class="field" style="flex: 1">
               <label>Mês de referência</label>
 
-              <div style="display: flex; gap: 4px; align-items: center">
+              <div class="month-navigation" style="display: flex; gap: 4px; align-items: center">
                 <input type="month" id="current-month" style="flex: 1" />
                 <button type="button" id="btn-prev-month" class="action-btn" style="height: 38px; padding: 0 12px" title="Mês Anterior">▼</button>
                 <button type="button" id="btn-next-month" class="action-btn" style="height: 38px; padding: 0 12px" title="Próximo Mês">▲</button>
                 <button type="button" id="btn-home-month" class="action-btn" style="height: 38px; padding: 0 12px; font-size: 1.1rem" title="Mês Atual">🏠</button>
               </div>
             </div>
-            <div style="display: flex; gap: 8px">
+            <div class="global-actions">
               <button id="btn-load-month" class="action-btn" style="height: 37px; padding: 0 15px">Carregar</button>
               <button id="btn-toggle-income" class="action-btn" style="height: 35px; padding: 0 12px" title="Editar Rendas">⚙️ Rendas</button>
               <button id="btn-toggle-payments" class="action-btn" style="height: 35px; padding: 0 12px" title="Gerenciar Cartões">💳 Cartões</button>
               <button id="btn-toggle-reimbursement" class="action-btn" style="height: 35px; padding: 0 12px" title="Lançar Reembolso">🔄 Reembolso</button>
+              <button id="btn-toggle-backup" class="action-btn" style="height: 35px; padding: 0 12px" title="Backup e restauração">💾 Backup</button>
             </div>
+          </div>
+
+          <div id="backup-panel" class="backup-panel" hidden>
+            <div class="backup-panel-heading">
+              <div>
+                <strong>💾 Backup dos dados</strong>
+                <small>Um arquivo completo com todos os meses e configurações.</small>
+              </div>
+              <button type="button" id="btn-close-backup" class="action-btn backup-close-btn" aria-label="Fechar backup">✕</button>
+            </div>
+            <div class="backup-folder-row">
+              <div>
+                <span class="backup-folder-label">Local dos backups</span>
+                <strong id="backup-folder-status">A pasta será escolhida no primeiro backup.</strong>
+              </div>
+              <button type="button" id="btn-choose-backup-folder" class="action-btn">📁 Escolher pasta</button>
+            </div>
+            <div class="backup-actions">
+              <button type="button" id="btn-backup-now" class="btn-primary">Salvar backup completo</button>
+              <button type="button" id="btn-restore-backup" class="btn-secondary">Restaurar um backup</button>
+            </div>
+            <small id="backup-last-status" class="backup-last-status">Nenhum backup registrado neste navegador.</small>
+            <input type="file" id="backup-file-input" accept="application/json,.json" hidden />
           </div>
 
           <div id="reimbursement-panel" style="display: none; margin-top: 12px; border-top: 1px solid #252537; padding-top: 12px; animation: fadeIn 0.15s ease-out">

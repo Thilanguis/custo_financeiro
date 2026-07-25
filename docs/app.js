@@ -718,11 +718,482 @@ function loadIncomeToInputs(month) {
   updateIncomeBiweeklyPreviews();
 }
 
+// ===== Backup portátil dos dados =====
+const BACKUP_FORMAT = 'controle-financeiro-backup';
+const BACKUP_SCHEMA_VERSION = 1;
+const BACKUP_DIRECTORY_DB = 'controle-financeiro-file-handles';
+const BACKUP_DIRECTORY_STORE = 'handles';
+const BACKUP_DIRECTORY_KEY = 'backup-directory';
+const BACKUP_LAST_AT_KEY = 'controle_financeiro_last_backup_at';
+const BACKUP_LAST_FILE_KEY = 'controle_financeiro_last_backup_file';
+const BACKUP_PROMPTED_MONTH_KEY = 'controle_financeiro_backup_prompted_month';
+const MAX_BACKUP_FILE_SIZE = 25 * 1024 * 1024;
+
+const btnToggleBackup = document.getElementById('btn-toggle-backup');
+const backupPanel = document.getElementById('backup-panel');
+const btnCloseBackup = document.getElementById('btn-close-backup');
+const btnChooseBackupFolder = document.getElementById('btn-choose-backup-folder');
+const btnBackupNow = document.getElementById('btn-backup-now');
+const btnRestoreBackup = document.getElementById('btn-restore-backup');
+const backupFileInput = document.getElementById('backup-file-input');
+const backupFolderStatus = document.getElementById('backup-folder-status');
+const backupLastStatus = document.getElementById('backup-last-status');
+let backupOperationInProgress = false;
+
+function serializeBackupValue(value) {
+  if (value === null || value === undefined || typeof value !== 'object') return value;
+  if (value instanceof Date) return { __firestoreType: 'timestamp', value: value.toISOString() };
+  if (typeof value.toDate === 'function') return { __firestoreType: 'timestamp', value: value.toDate().toISOString() };
+  if (Array.isArray(value)) return value.map(serializeBackupValue);
+
+  return Object.entries(value).reduce((result, [key, item]) => {
+    result[key] = serializeBackupValue(item);
+    return result;
+  }, {});
+}
+
+function deserializeBackupValue(value) {
+  if (value === null || value === undefined || typeof value !== 'object') return value;
+  if (value.__firestoreType === 'timestamp' && typeof value.value === 'string') {
+    const date = new Date(value.value);
+    if (Number.isNaN(date.getTime())) throw new Error('O backup possui uma data inválida.');
+    return firebase.firestore.Timestamp.fromDate(date);
+  }
+  if (Array.isArray(value)) return value.map(deserializeBackupValue);
+
+  return Object.entries(value).reduce((result, [key, item]) => {
+    result[key] = deserializeBackupValue(item);
+    return result;
+  }, {});
+}
+
+function getBackupStats(data) {
+  const months = Object.values(data.months || {});
+  return {
+    months: months.length,
+    planned: months.reduce((total, month) => total + (month.planned || []).length, 0),
+    receipts: months.reduce((total, month) => total + (month.receipts || []).length, 0),
+    annualEvents: (data.annualEvents || []).length,
+    configurations: Object.keys(data.configurations || {}).length,
+    userPreferences: (data.userPreferences || []).length,
+    logs: (data.logs || []).length,
+  };
+}
+
+function isValidBackupDocumentId(value) {
+  return typeof value === 'string' && value.length > 0 && !value.includes('/');
+}
+
+function isBackupObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function validateBackupDataValue(value, path = 'dados', depth = 0) {
+  if (depth > 40) throw new Error(`O backup possui uma estrutura profunda demais em ${path}.`);
+  if (value === null || ['string', 'boolean'].includes(typeof value)) return;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new Error(`O backup possui um número inválido em ${path}.`);
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => validateBackupDataValue(item, `${path}[${index}]`, depth + 1));
+    return;
+  }
+  if (!isBackupObject(value)) throw new Error(`O backup possui um valor inválido em ${path}.`);
+
+  for (const [key, item] of Object.entries(value)) {
+    if (['__proto__', 'prototype', 'constructor'].includes(key)) throw new Error(`O backup possui uma chave não permitida em ${path}.`);
+    validateBackupDataValue(item, `${path}.${key}`, depth + 1);
+  }
+
+  if ('__firestoreType' in value) {
+    if (value.__firestoreType !== 'timestamp' || typeof value.value !== 'string' || Number.isNaN(new Date(value.value).getTime())) {
+      throw new Error(`O backup possui uma data inválida em ${path}.`);
+    }
+  }
+}
+
+function validateBackupDocumentList(documents, label) {
+  if (!Array.isArray(documents)) throw new Error(`A lista de ${label} está inválida.`);
+  if (documents.some((document) => !isValidBackupDocumentId(document?.id) || !isBackupObject(document.data))) {
+    throw new Error(`O backup possui ${label} inválidos.`);
+  }
+}
+
+function validateBackupPayload(payload) {
+  if (!payload || typeof payload !== 'object') throw new Error('O arquivo não contém um backup válido.');
+  if (payload.format !== BACKUP_FORMAT) throw new Error('Este arquivo não pertence ao Controle Financeiro.');
+  if (payload.schemaVersion !== BACKUP_SCHEMA_VERSION) throw new Error(`Versão de backup incompatível: ${payload.schemaVersion || 'desconhecida'}.`);
+  if (payload.familyId !== FinanceAPI.familyId) throw new Error('O backup pertence a outra família e não pode ser restaurado aqui.');
+  if (!payload.data || typeof payload.data !== 'object') throw new Error('O backup não possui dados para restaurar.');
+
+  const { family = null, configurations = {}, annualEvents = [], userPreferences = [], logs = [], months = {} } = payload.data;
+  if ((family !== null && !isBackupObject(family)) || !isBackupObject(configurations) || !isBackupObject(months)) {
+    throw new Error('A estrutura interna do backup está inválida.');
+  }
+  if (Object.keys(configurations).some((id) => !isValidBackupDocumentId(id))) throw new Error('O backup possui uma configuração com identificador inválido.');
+  if (Object.values(configurations).some((configuration) => !isBackupObject(configuration))) throw new Error('O backup possui uma configuração inválida.');
+  validateBackupDocumentList(annualEvents, 'eventos anuais');
+  validateBackupDocumentList(userPreferences, 'preferências');
+  validateBackupDocumentList(logs, 'registros de atividades');
+
+  for (const [month, monthData] of Object.entries(months)) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || !isBackupObject(monthData) || !isBackupObject(monthData.data)) {
+      throw new Error(`Mês inválido encontrado no backup: ${month}.`);
+    }
+    validateBackupDocumentList(monthData.planned, `itens previstos do mês ${month}`);
+    validateBackupDocumentList(monthData.receipts, `notas do mês ${month}`);
+  }
+
+  validateBackupDataValue(payload.data);
+
+  return payload;
+}
+
+async function buildFullBackupPayload() {
+  const rawData = await FinanceAPI.getFullBackupData();
+  return {
+    format: BACKUP_FORMAT,
+    schemaVersion: BACKUP_SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    familyId: FinanceAPI.familyId,
+    referenceMonth: getCurrentMonth(),
+    stats: getBackupStats(rawData),
+    data: serializeBackupValue(rawData),
+  };
+}
+
+function openBackupDirectoryDatabase() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) return reject(new Error('Armazenamento de pasta indisponível.'));
+    const request = indexedDB.open(BACKUP_DIRECTORY_DB, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(BACKUP_DIRECTORY_STORE)) request.result.createObjectStore(BACKUP_DIRECTORY_STORE);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Não foi possível acessar a pasta salva.'));
+  });
+}
+
+async function saveBackupDirectoryHandle(directoryHandle) {
+  const database = await openBackupDirectoryDatabase();
+  try {
+    await new Promise((resolve, reject) => {
+      const transaction = database.transaction(BACKUP_DIRECTORY_STORE, 'readwrite');
+      transaction.objectStore(BACKUP_DIRECTORY_STORE).put(directoryHandle, BACKUP_DIRECTORY_KEY);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error('Não foi possível guardar a pasta.'));
+    });
+  } finally {
+    database.close();
+  }
+}
+
+async function getSavedBackupDirectoryHandle() {
+  try {
+    const database = await openBackupDirectoryDatabase();
+    try {
+      return await new Promise((resolve, reject) => {
+        const transaction = database.transaction(BACKUP_DIRECTORY_STORE, 'readonly');
+        const request = transaction.objectStore(BACKUP_DIRECTORY_STORE).get(BACKUP_DIRECTORY_KEY);
+        request.onsuccess = () => resolve(request.result || null);
+        request.onerror = () => reject(request.error || new Error('Não foi possível ler a pasta salva.'));
+      });
+    } finally {
+      database.close();
+    }
+  } catch (error) {
+    return null;
+  }
+}
+
+async function hasBackupDirectoryPermission(directoryHandle, requestPermission = false) {
+  if (!directoryHandle) return false;
+  const options = { mode: 'readwrite' };
+  try {
+    if (typeof directoryHandle.queryPermission === 'function' && (await directoryHandle.queryPermission(options)) === 'granted') return true;
+    return requestPermission && typeof directoryHandle.requestPermission === 'function' && (await directoryHandle.requestPermission(options)) === 'granted';
+  } catch (error) {
+    return false;
+  }
+}
+
+async function chooseBackupDirectory() {
+  if (typeof window.showDirectoryPicker !== 'function') {
+    showToast('Neste dispositivo o backup será salvo pelo download normal.', 'info');
+    return null;
+  }
+
+  try {
+    const directoryHandle = await window.showDirectoryPicker({ id: 'cf-backups-desktop', mode: 'readwrite', startIn: 'desktop' });
+    await saveBackupDirectoryHandle(directoryHandle);
+    await updateBackupPanelStatus(directoryHandle);
+    showToast(`Pasta "${directoryHandle.name}" salva para os próximos backups.`, 'success');
+    return directoryHandle;
+  } catch (error) {
+    if (error?.name !== 'AbortError') {
+      console.error('Erro ao escolher a pasta de backup:', error);
+      showToast('Não foi possível salvar a pasta escolhida.', 'error');
+    }
+    return null;
+  }
+}
+
+function triggerBackupDownload(contents, filename) {
+  const blob = new Blob([contents], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function prepareBackupDestination({ askDirectoryIfMissing = true } = {}) {
+  if (typeof window.showDirectoryPicker === 'function') {
+    let directoryHandle = await getSavedBackupDirectoryHandle();
+    if (directoryHandle && !(await hasBackupDirectoryPermission(directoryHandle, true))) directoryHandle = null;
+    if (!directoryHandle && askDirectoryIfMissing) directoryHandle = await chooseBackupDirectory();
+
+    if (directoryHandle) return { method: 'directory', directoryHandle };
+
+    if (askDirectoryIfMissing) return null;
+  }
+
+  return { method: 'download', directoryHandle: null };
+}
+
+async function writeBackupFile(contents, filename, destination) {
+  if (destination?.method === 'directory' && destination.directoryHandle) {
+    const fileHandle = await destination.directoryHandle.getFileHandle(filename, { create: true });
+    const writable = await fileHandle.createWritable();
+    try {
+      await writable.write(contents);
+    } finally {
+      await writable.close();
+    }
+    return { method: 'directory', directoryName: destination.directoryHandle.name, filename };
+  }
+
+  triggerBackupDownload(contents, filename);
+  return { method: 'download', directoryName: null, filename };
+}
+
+function makeBackupFilename(prefix = 'controle-financeiro-backup') {
+  const now = new Date();
+  const date = getLocalDateString();
+  if (prefix === 'controle-financeiro-backup') return `${prefix}-${date}.json`;
+  const time = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+  return `${prefix}-${date}-${time}.json`;
+}
+
+function formatBackupTimestamp(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+}
+
+async function updateBackupPanelStatus(knownDirectoryHandle = undefined) {
+  const directoryHandle = knownDirectoryHandle === undefined ? await getSavedBackupDirectoryHandle() : knownDirectoryHandle;
+  if (backupFolderStatus) {
+    if (directoryHandle) backupFolderStatus.textContent = `Pasta salva: ${directoryHandle.name}`;
+    else if (typeof window.showDirectoryPicker === 'function') backupFolderStatus.textContent = 'A pasta será escolhida no primeiro backup.';
+    else backupFolderStatus.textContent = 'Este dispositivo usará o download normal.';
+  }
+
+  const lastBackupAt = localStorage.getItem(BACKUP_LAST_AT_KEY);
+  const lastBackupFile = localStorage.getItem(BACKUP_LAST_FILE_KEY);
+  if (backupLastStatus) {
+    backupLastStatus.textContent = lastBackupAt
+      ? `Último backup: ${formatBackupTimestamp(lastBackupAt)}${lastBackupFile ? ` • ${lastBackupFile}` : ''}`
+      : 'Nenhum backup registrado neste navegador.';
+  }
+}
+
+async function exportFullBackup({ prefix = 'controle-financeiro-backup', askDirectoryIfMissing = true } = {}) {
+  if (backupOperationInProgress) return null;
+  backupOperationInProgress = true;
+  const originalText = btnBackupNow?.textContent;
+  if (btnBackupNow) {
+    btnBackupNow.disabled = true;
+    btnBackupNow.textContent = 'Preparando backup...';
+  }
+
+  try {
+    // A pasta precisa ser solicitada ainda dentro do gesto do clique. Buscar todos
+    // os dados antes pode fazer o navegador bloquear o seletor por segurança.
+    const destination = await prepareBackupDestination({ askDirectoryIfMissing });
+    if (!destination) return null;
+    const payload = await buildFullBackupPayload();
+    const filename = makeBackupFilename(prefix);
+    const result = await writeBackupFile(JSON.stringify(payload, null, 2), filename, destination);
+
+    localStorage.setItem(BACKUP_LAST_AT_KEY, payload.exportedAt);
+    localStorage.setItem(BACKUP_LAST_FILE_KEY, filename);
+    await updateBackupPanelStatus();
+    const destinationLabel = result.method === 'directory' ? ` na pasta ${result.directoryName}` : '';
+    showToast(`Backup completo salvo${destinationLabel}.`, 'success');
+    return { payload, result };
+  } catch (error) {
+    console.error('Erro ao gerar backup:', error);
+    showToast('Não foi possível gerar o backup completo.', 'error');
+    return null;
+  } finally {
+    backupOperationInProgress = false;
+    if (btnBackupNow) {
+      btnBackupNow.disabled = false;
+      btnBackupNow.textContent = originalText || 'Salvar backup completo';
+    }
+  }
+}
+
+function showRestoreModeDialog(payload) {
+  return new Promise((resolve) => {
+    const stats = getBackupStats(payload.data);
+    const overlay = document.createElement('div');
+    overlay.className = 'custom-modal-overlay';
+    overlay.innerHTML = `
+      <div class="custom-modal backup-restore-modal">
+        <h3>Restaurar backup</h3>
+        <p class="backup-restore-summary"></p>
+        <div class="backup-restore-options">
+          <button type="button" class="backup-restore-option" data-mode="merge">
+            <strong>Mesclar dados</strong>
+            <small>Atualiza os registros do backup e mantém dados extras que já estejam no Firebase.</small>
+          </button>
+          <button type="button" class="backup-restore-option is-danger" data-mode="replace">
+            <strong>Substituir tudo</strong>
+            <small>Remove os dados atuais e deixa o Firebase igual ao arquivo selecionado.</small>
+          </button>
+        </div>
+        <div class="custom-modal-actions">
+          <button type="button" class="custom-modal-btn cancel">Cancelar</button>
+        </div>
+      </div>
+    `;
+    overlay.querySelector('.backup-restore-summary').textContent =
+      `Backup de ${formatBackupTimestamp(payload.exportedAt) || 'data desconhecida'}: ${stats.months} meses, ${stats.planned} itens previstos, ${stats.receipts} notas e ${stats.annualEvents} eventos anuais.`;
+    document.body.appendChild(overlay);
+    void overlay.offsetWidth;
+    overlay.classList.add('active');
+
+    const close = (mode = null) => {
+      overlay.classList.remove('active');
+      setTimeout(() => overlay.remove(), 200);
+      resolve(mode);
+    };
+
+    overlay.querySelector('.cancel').addEventListener('click', () => close());
+    overlay.querySelectorAll('[data-mode]').forEach((button) => button.addEventListener('click', () => close(button.dataset.mode)));
+  });
+}
+
+async function restoreBackupFile(file) {
+  if (!file) return;
+  if (file.size > MAX_BACKUP_FILE_SIZE) {
+    showToast('O arquivo é grande demais para ser um backup deste sistema.', 'error');
+    return;
+  }
+
+  let payload;
+  try {
+    payload = validateBackupPayload(JSON.parse(await file.text()));
+  } catch (error) {
+    showToast(error.message || 'Não foi possível ler o arquivo de backup.', 'error');
+    return;
+  }
+
+  const mode = await showRestoreModeDialog(payload);
+  if (!mode) return;
+
+  if (
+    mode === 'replace' &&
+    !(await showConfirm('ATENÇÃO: todos os dados atuais do Firebase serão substituídos pelos dados deste arquivo. Um backup de segurança será salvo antes. Deseja continuar?', true))
+  ) {
+    return;
+  }
+
+  const safetyBackup = await exportFullBackup({ prefix: 'controle-financeiro-backup-antes-restauracao', askDirectoryIfMissing: true });
+  if (!safetyBackup) {
+    showToast('Restauração cancelada porque o backup de segurança não foi salvo.', 'error');
+    return;
+  }
+
+  backupOperationInProgress = true;
+  const originalRestoreText = btnRestoreBackup?.textContent;
+  if (btnRestoreBackup) {
+    btnRestoreBackup.disabled = true;
+    btnRestoreBackup.textContent = 'Restaurando...';
+  }
+
+  FinanceAPI.clearListeners();
+  try {
+    await FinanceAPI.restoreFullBackupData(deserializeBackupValue(payload.data), mode);
+    syncData(getCurrentMonth());
+    showToast(`Backup restaurado com sucesso no modo ${mode === 'replace' ? 'substituir' : 'mesclar'}.`, 'success');
+  } catch (error) {
+    console.error('Erro ao restaurar backup:', error);
+    syncData(getCurrentMonth());
+    showToast('A restauração falhou. O backup de segurança foi preservado.', 'error');
+  } finally {
+    backupOperationInProgress = false;
+    if (btnRestoreBackup) {
+      btnRestoreBackup.disabled = false;
+      btnRestoreBackup.textContent = originalRestoreText || 'Restaurar um backup';
+    }
+  }
+}
+
+async function offerBackupAfterMonthCreation(month) {
+  if (!month || localStorage.getItem(BACKUP_PROMPTED_MONTH_KEY) === month) return;
+  localStorage.setItem(BACKUP_PROMPTED_MONTH_KEY, month);
+  const confirmed = await showConfirm(`O mês ${month.split('-').reverse().join('/')} foi preparado. Deseja salvar agora um backup completo de todos os meses?`);
+  if (!confirmed) return;
+  if (backupPanel) backupPanel.hidden = false;
+  await exportFullBackup({ askDirectoryIfMissing: true });
+}
+
+btnToggleBackup?.addEventListener('click', async () => {
+  backupPanel.hidden = !backupPanel.hidden;
+  if (!backupPanel.hidden) await updateBackupPanelStatus();
+});
+
+btnCloseBackup?.addEventListener('click', () => {
+  backupPanel.hidden = true;
+});
+
+btnChooseBackupFolder?.addEventListener('click', async () => {
+  await chooseBackupDirectory();
+});
+
+btnBackupNow?.addEventListener('click', async () => {
+  await exportFullBackup({ askDirectoryIfMissing: true });
+});
+
+btnRestoreBackup?.addEventListener('click', () => {
+  backupFileInput?.click();
+});
+
+backupFileInput?.addEventListener('change', async () => {
+  const file = backupFileInput.files?.[0];
+  try {
+    await restoreBackupFile(file);
+  } finally {
+    backupFileInput.value = '';
+  }
+});
+
+updateBackupPanelStatus();
+
 btnLoadMonth.addEventListener('click', async () => {
   const targetMonth = getCurrentMonth();
   if (!targetMonth) return showToast('Selecione um mês primeiro.', 'error');
 
   const originalText = btnLoadMonth.textContent;
+  let shouldOfferBackup = false;
   btnLoadMonth.textContent = 'Processando...';
   btnLoadMonth.disabled = true;
 
@@ -730,6 +1201,7 @@ btnLoadMonth.addEventListener('click', async () => {
     const hasItems = plannedItems.some((p) => p.month === targetMonth);
 
     if (!hasItems) {
+      await FinanceAPI.ensureMonth(targetMonth);
       const [year, month] = targetMonth.split('-');
       let prevDate = new Date(year, parseInt(month) - 2, 1);
       const prevMonthStr = prevDate.getFullYear() + '-' + String(prevDate.getMonth() + 1).padStart(2, '0');
@@ -777,6 +1249,7 @@ btnLoadMonth.addEventListener('click', async () => {
       } else {
         showToast(`Nenhuma conta marcada como "Fixo" encontrada em ${prevMonthStr}.`, 'info');
       }
+      shouldOfferBackup = true;
     } else {
       showToast('Este mês já possui itens. A cópia automática só funciona em meses vazios.', 'error');
     }
@@ -789,6 +1262,8 @@ btnLoadMonth.addEventListener('click', async () => {
     btnLoadMonth.textContent = originalText;
     btnLoadMonth.disabled = false;
   }
+
+  if (shouldOfferBackup) await offerBackupAfterMonthCreation(targetMonth);
 });
 
 btnSaveIncome.addEventListener('click', async () => {

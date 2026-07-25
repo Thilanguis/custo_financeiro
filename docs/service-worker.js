@@ -1,5 +1,5 @@
 // docs/service-worker.js
-const CACHE_NAME = 'controle-financeiro-v52';
+const CACHE_NAME = 'controle-financeiro-v53';
 const urlsToCache = ['./', './index.html', './style.css', './app.js', './firebase-api.js', './manifest.json', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {

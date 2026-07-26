@@ -364,6 +364,7 @@ const btnTogglePayments = document.getElementById('btn-toggle-payments');
 const paymentsPanel = document.getElementById('payments-panel');
 const btnToggleReimbursement = document.getElementById('btn-toggle-reimbursement');
 const reimbursementPanel = document.getElementById('reimbursement-panel');
+let reimbursementSourceReceiptId = null;
 
 function updateIncomeBiweeklyPreview(input, checkbox, preview) {
   if (!input || !checkbox || !preview) return;
@@ -419,6 +420,7 @@ btnTogglePayments.addEventListener('click', () => {
 });
 
 btnToggleReimbursement.addEventListener('click', () => {
+  reimbursementSourceReceiptId = null;
   incomePanel.style.display = 'none';
   paymentsPanel.style.display = 'none';
   const isHidden = reimbursementPanel.style.display === 'none';
@@ -466,6 +468,8 @@ formReimbursement.addEventListener('submit', async (e) => {
     isReimbursement: true,
   };
 
+  if (reimbursementSourceReceiptId) itemData.reimbursementSourceReceiptId = reimbursementSourceReceiptId;
+
   await FinanceAPI.saveReceipt(inputMonth, itemData);
   logActivity('Adicionou', `Reembolso: ${merchant} - ${formatCurrency(Math.abs(amount))}`);
 
@@ -473,6 +477,7 @@ formReimbursement.addEventListener('submit', async (e) => {
   submitBtn.disabled = false;
 
   formReimbursement.reset();
+  reimbursementSourceReceiptId = null;
   document.getElementById('reimb-date').value = date;
   showToast('Reembolso registrado com sucesso!', 'success');
 });
@@ -2380,6 +2385,7 @@ function renderPlannedItemsList(month) {
             ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px; vertical-align: middle;">Evento</span>'
             : '';
           const biweeklyBadge = renderBiweeklyConversionBadge(p);
+          const reimbursementLinks = getPlannedItemReimbursements(p, month).map((reimbursement) => renderReimbursementLink(reimbursement, { compact: true })).join('');
 
           // Checa se este item específico já foi pago/recebido no mês
           const isLaunched = receipts.some((r) => {
@@ -2400,6 +2406,7 @@ function renderPlannedItemsList(month) {
           <div class="receipt-main">
             <div class="receipt-line">${p.description}${annualBadge}${incomeBadge}${biweeklyBadge}</div>
             ${obsHtml}
+            ${reimbursementLinks}
             <div class="receipt-meta" style="margin-top: 2px;">${dateStr}Resp: ${p.owner}${payStr}${p.fixed ? (p.isStatic ? ' • Fixo & Estático' : ' • Fixo') : ''}</div>
           </div>
           <div class="receipt-right">
@@ -2521,6 +2528,10 @@ formActual.addEventListener('submit', async (e) => {
     itemData.linkedPlannedId = oldReceipt.linkedPlannedId;
   }
 
+  if (oldReceipt && oldReceipt.reimbursementSourceReceiptId) {
+    itemData.reimbursementSourceReceiptId = oldReceipt.reimbursementSourceReceiptId;
+  }
+
   // Se o lançamento veio pelo botão +, salva o vínculo forte
   if (window.currentLaunchPlannedId) {
     itemData.linkedPlannedId = window.currentLaunchPlannedId;
@@ -2638,6 +2649,52 @@ function startEditReceipt(id) {
   actualSubmitBtn.textContent = 'Salvar alterações';
 }
 
+function findReimbursementSource(reimbursement, pool = receipts) {
+  if (!reimbursement?.isReimbursement) return null;
+
+  if (reimbursement.reimbursementSourceReceiptId) {
+    const linked = pool.find((receipt) => receipt.id === reimbursement.reimbursementSourceReceiptId && !receipt.isReimbursement);
+    if (linked) return linked;
+  }
+
+  return (
+    pool
+      .filter(
+        (receipt) =>
+          !receipt.isReimbursement &&
+          receipt.amount > 0 &&
+          receipt.category === reimbursement.category &&
+          receipt.merchant === reimbursement.merchant &&
+          receipt.owner === reimbursement.owner &&
+          (!reimbursement.date || !receipt.date || receipt.date <= reimbursement.date),
+      )
+      .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0] || null
+  );
+}
+
+function getPlannedItemReimbursements(plannedItem, month) {
+  return receipts
+    .filter((receipt) => receipt.isReimbursement && receipt.date?.startsWith(month))
+    .filter((reimbursement) => {
+      const source = findReimbursementSource(reimbursement);
+      if (source?.linkedPlannedId) return source.linkedPlannedId === plannedItem.id;
+      return reimbursement.category === plannedItem.category && reimbursement.merchant === plannedItem.description && reimbursement.owner === plannedItem.owner;
+    })
+    .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+}
+
+function renderReimbursementLink(reimbursement, options = {}) {
+  const paymentName = getPaymentName(reimbursement.paymentMethodId);
+  const dateText = reimbursement.date ? reimbursement.date.split('-').reverse().join('/').substring(0, 5) : '';
+  const observation = options.showObservation && reimbursement.observation ? `<small>${escapeCardDetail(reimbursement.observation)}</small>` : '';
+
+  return `<div class="reimbursement-link ${options.compact ? 'is-compact' : ''}">
+    <span class="reimbursement-link-arrow" aria-hidden="true">↳</span>
+    <span class="reimbursement-link-copy"><strong>Reembolso</strong><span>Caiu em ${escapeCardDetail(paymentName)}${dateText ? ` · ${dateText}` : ''}</span>${observation}</span>
+    <b>+ ${formatCurrency(Math.abs(reimbursement.amount))}</b>
+  </div>`;
+}
+
 function renderFinancialFlowBadges(entry) {
   const incomeBadge = entry.hasActualIncome ? '<span class="financial-flow-badge is-income">Entrada</span>' : '';
   const reimbursementBadge = entry.hasReimbursement ? '<span class="financial-flow-badge is-reimbursement">Reembolso</span>' : '';
@@ -2691,11 +2748,30 @@ function updateReceiptsView() {
         if (valA > valB) return receiptsSortOrder === 'asc' ? 1 : -1;
         return 0;
       });
+
+      const orderedGroupItems = [];
+      const attachedReimbursementIds = new Set();
+      groupItems
+        .filter((receipt) => !receipt.isReimbursement)
+        .forEach((receipt) => {
+          orderedGroupItems.push(receipt);
+          groupItems
+            .filter((candidate) => candidate.isReimbursement && findReimbursementSource(candidate, groupItems)?.id === receipt.id)
+            .forEach((reimbursement) => {
+              orderedGroupItems.push(reimbursement);
+              attachedReimbursementIds.add(reimbursement.id);
+            });
+        });
+      groupItems
+        .filter((receipt) => receipt.isReimbursement && !attachedReimbursementIds.has(receipt.id))
+        .forEach((reimbursement) => orderedGroupItems.push(reimbursement));
+      groupItems.splice(0, groupItems.length, ...orderedGroupItems);
+
       const isOpen = isSearching || openReceiptCats.has(cat);
       const catTotal = groupItems.reduce((acc, curr) => acc + curr.amount, 0);
       const flowBadges = renderFinancialFlowBadges({
         hasActualIncome: groupItems.some((receipt) => receipt.amount < 0 && !receipt.isReimbursement),
-        hasReimbursement: groupItems.some((receipt) => receipt.isReimbursement),
+        hasReimbursement: false,
       });
       const eventBadge = groupItems.some((receipt) => isReceiptFromEvent(receipt)) ? renderFinancialEventBadge() : '';
 
@@ -2724,9 +2800,10 @@ function updateReceiptsView() {
         groupItems.forEach((r) => {
           const item = document.createElement('div');
           item.className = 'receipt-item';
+          if (r.isReimbursement) item.classList.add('receipt-item--reimbursement');
 
           const obsHtml = r.observation ? `<div style="font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">↳ ${r.observation}</div>` : '';
-          const payStr = ` • ${getPaymentName(r.paymentMethodId)}`;
+          const payStr = r.isReimbursement ? ` <span class="reimbursement-payment-meta">↳ Caiu em ${getPaymentName(r.paymentMethodId)}</span>` : ` • ${getPaymentName(r.paymentMethodId)}`;
 
           const isIncomeOrReimb = r.isReimbursement || r.amount < 0;
           const amountColor = isIncomeOrReimb ? '#62c462' : '#ff7b7b';
@@ -2734,7 +2811,7 @@ function updateReceiptsView() {
           const displayAmount = isIncomeOrReimb ? `+ ${formatCurrency(Math.abs(r.amount), cat.toLowerCase() === 'salário')}` : `- ${formatCurrency(Math.abs(r.amount), cat.toLowerCase() === 'salário')}`;
           const flowBadge = renderFinancialFlowBadges({
             hasActualIncome: r.amount < 0 && !r.isReimbursement,
-            hasReimbursement: r.isReimbursement,
+            hasReimbursement: false,
           });
           const eventBadge = isReceiptFromEvent(r) ? renderFinancialEventBadge() : '';
           const biweeklyBadge = renderReceiptBiweeklyBadge(r);
@@ -2746,7 +2823,7 @@ function updateReceiptsView() {
 
           item.innerHTML = `
           <div class="receipt-main">
-            <div class="receipt-line">${r.merchant} • ${r.category}${biweeklyBadge}${eventBadge}${flowBadge}</div>
+            <div class="receipt-line">${r.isReimbursement ? '<span class="reimbursement-item-arrow" aria-hidden="true">↳</span><span class="reimbursement-item-label">Reembolso</span>' : ''}${r.merchant} • ${r.category}${biweeklyBadge}${eventBadge}${flowBadge}</div>
             ${obsHtml}
             <div class="receipt-meta" style="margin-top: 2px;">${r.date.split('-').reverse().join('/')} • ${r.owner}${payStr}${r.isStatic ? ' • Fixo & Estático' : ''}</div>
           </div>
@@ -3465,7 +3542,7 @@ function updateDashboardView() {
     catTitle.style.display = 'flex';
     catTitle.style.alignItems = 'center';
     const catBadge = hasEvent ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px;">Evento</span>' : '';
-    const flowBadges = renderFinancialFlowBadges(data);
+    const flowBadges = renderFinancialFlowBadges({ ...data, hasReimbursement: false });
     catTitle.innerHTML = `<span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}${catBadge}${flowBadges}`;
     catContainer.appendChild(catTitle);
 
@@ -3584,7 +3661,7 @@ function updateDashboardView() {
 
         const hasGroupedTransactions = obsArray.some((o) => o.transactions && o.transactions.length > 1);
 
-        const shouldRenderObs = obsArray.length > 1 || (obsArray.length === 1 && !isGenericObs(obsArray[0].text)) || hasGroupedTransactions;
+        const shouldRenderObs = item.hasReimbursement || obsArray.length > 1 || (obsArray.length === 1 && !isGenericObs(obsArray[0].text)) || hasGroupedTransactions;
         let datesArray = [];
         let totalTxCount = 0;
 
@@ -3628,7 +3705,10 @@ function updateDashboardView() {
             }
           });
 
-          allTransactions.sort((a, b) => b.date.localeCompare(a.date));
+          allTransactions.sort((a, b) => {
+            if (a.isReimbursement !== b.isReimbursement) return a.isReimbursement ? 1 : -1;
+            return (b.date || '').localeCompare(a.date || '');
+          });
 
           let hasRenderedAnnualChild = false;
 
@@ -3643,8 +3723,7 @@ function updateDashboardView() {
               const displayAmount = isIncomeOrReimb ? `+ ${formatCurrency(Math.abs(t.amount), isSalarioCat)}` : `- ${formatCurrency(Math.abs(t.amount), isSalarioCat)}`;
 
               let reimbBadge = '';
-              if (t.isReimbursement) reimbBadge = ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Reemb.)</span>';
-              else if (t.amount < 0) reimbBadge = ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Entrada)</span>';
+              if (t.amount < 0 && !t.isReimbursement) reimbBadge = ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold;">(Entrada)</span>';
 
               let isTxAnnual = false;
               if (item.annualEventsData && item.annualEventsData.length > 0) {
@@ -3663,14 +3742,14 @@ function updateDashboardView() {
                 : '';
 
               return `
-                <div class="dashboard-transaction-detail" style="margin-top: 8px; margin-bottom: 8px; border-left: 2px solid #27273a; padding-left: 8px;">
+                <div class="dashboard-transaction-detail ${t.isReimbursement ? 'is-reimbursement' : ''}" style="margin-top: 8px; margin-bottom: 8px;">
                   <div class="dashboard-transaction-main" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 4px;">
-                    <span class="dashboard-transaction-note" style="color: #c3c3d5; font-size: 0.8rem; line-height: 1.3;">${t.text}${reimbBadge}${txAnnualBadge}</span>
+                    <span class="dashboard-transaction-note" style="color: #c3c3d5; font-size: 0.8rem; line-height: 1.3;">${t.isReimbursement ? '<span class="reimbursement-item-arrow" aria-hidden="true">↳</span><span class="reimbursement-item-label">Reembolso</span>' : ''}${t.text}${reimbBadge}${txAnnualBadge}</span>
                     <span class="dashboard-transaction-amount" style="color: ${amountColor}; font-size: 0.75rem; font-weight: 600; white-space: nowrap; margin-left: 4px;">${displayAmount}</span>
                   </div>
                   <div class="dashboard-transaction-meta" style="font-size: 0.7rem; color: #8e8eab; margin-top: 3px; display: flex; flex-wrap: wrap; gap: 4px;">
                     <span>(${t.owner})</span>
-                    <span>• ${payStr}</span>
+                    <span>${t.isReimbursement ? 'Caiu em' : '•'} ${payStr}</span>
                     ${dateStr ? `<span>• ${dateStr}</span>` : ''}
                   </div>
                 </div>`;
@@ -3682,7 +3761,7 @@ function updateDashboardView() {
             item.isAnnual && !hasRenderedAnnualChild
               ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px; vertical-align: middle;">Evento</span>'
               : '';
-          const itemFlowBadges = renderFinancialFlowBadges(item);
+          const itemFlowBadges = renderFinancialFlowBadges({ ...item, hasReimbursement: false });
 
           tdItemName.innerHTML = `
             <details style="cursor: pointer; margin: 2px 0;">
@@ -3713,7 +3792,7 @@ function updateDashboardView() {
           const parentAnnualBadge = item.isAnnual
             ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px; vertical-align: middle;">Evento</span>'
             : '';
-          const itemFlowBadges = renderFinancialFlowBadges(item);
+          const itemFlowBadges = renderFinancialFlowBadges({ ...item, hasReimbursement: false });
 
           tdItemName.innerHTML = `
             <div style="color: #f5f5f5;">${item.name}${parentAnnualBadge}${itemFlowBadges}${itemBiweeklyBadge}</div>
@@ -4238,6 +4317,8 @@ function updateCreditCardsDashboard() {
 function startReimbursement(id) {
   const r = receipts.find((x) => x.id === id);
   if (!r) return;
+
+  reimbursementSourceReceiptId = r.id;
 
   document.getElementById('income-panel').style.display = 'none';
   document.getElementById('payments-panel').style.display = 'none';

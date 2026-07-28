@@ -595,12 +595,13 @@
             </div>
             <div class="field-row">
               <div class="field" style="flex: 2">
-                <label>Data (O ano será ignorado)</label>
+                <label id="annual-date-label">Data (O ano será ignorado)</label>
                 <input type="date" id="annual-date" required />
               </div>
               <div class="field" style="flex: 2">
-                <label>Valor (CAD)</label>
+                <label id="annual-amount-label">Valor (CAD)</label>
                 <input type="number" step="0.01" id="annual-amount" required />
+                <small id="annual-installment-amount-hint" class="annual-installment-amount-hint"></small>
               </div>
               <div class="field" style="flex: 2">
                 <label>Responsável</label>
@@ -637,24 +638,87 @@
               <div class="field checkbox-field" style="justify-content: flex-start; margin-top: 4px">
                 <label style="color: #62c462; font-weight: 500">
                   <input type="checkbox" id="annual-installment-check" />
-                  Gerar Parcelas / Repetir
+                  Planejar pagamentos
                 </label>
               </div>
             </div>
 
-            <div class="field-row" id="annual-installment-fields" style="display: none; background: rgba(98, 196, 98, 0.1); padding: 12px; border-radius: 8px; border: 1px solid rgba(98, 196, 98, 0.3); margin-top: 4px">
-              <div class="field">
-                <label style="color: #62c462">Total de parcelas</label>
-                <input type="number" id="annual-installments-count" min="2" max="24" placeholder="Ex: 4" />
+            <div class="annual-installment-builder" id="annual-installment-fields" hidden>
+              <div class="annual-installment-mode" role="radiogroup" aria-label="Tipo do planejamento">
+                <label class="annual-installment-mode-option is-selected">
+                  <input type="radio" name="annual-installment-mode" value="purchase" checked />
+                  <span><strong>Parcelar uma compra</strong><small>O valor informado é o total e será dividido.</small></span>
+                </label>
+                <label class="annual-installment-mode-option">
+                  <input type="radio" name="annual-installment-mode" value="repeat" />
+                  <span><strong>Repetir o mesmo valor</strong><small>O valor informado será repetido em cada data.</small></span>
+                </label>
               </div>
+              <div class="annual-payment-frequency" id="annual-payment-frequency" role="radiogroup" aria-label="Frequência do pagamento">
+                <span>Como o pagamento acontece?</span>
+                <label class="annual-payment-frequency-option is-selected">
+                  <input type="radio" name="annual-payment-frequency" value="monthly" checked />
+                  <strong>Mensal</strong>
+                </label>
+                <label class="annual-payment-frequency-option">
+                  <input type="radio" name="annual-payment-frequency" value="biweekly" />
+                  <strong>Bisemanal</strong><small>26 pagamentos por ano</small>
+                </label>
+              </div>
+              <div class="annual-interest-toggle" id="annual-interest-toggle">
+                <label>
+                  <input type="checkbox" id="annual-interest-check" />
+                  <span><strong>Calcular juros</strong><small>Opcional para carro, empréstimo ou hipoteca.</small></span>
+                </label>
+                <div class="annual-interest-fields" id="annual-interest-fields" hidden>
+                  <div class="annual-interest-type" role="radiogroup" aria-label="Tipo do cálculo de juros">
+                    <label class="annual-interest-type-option is-selected">
+                      <input type="radio" name="annual-interest-type" value="financing" checked />
+                      <span><strong>Financiamento</strong><small>Carro, empréstimo e compras financiadas.</small></span>
+                    </label>
+                    <label class="annual-interest-type-option">
+                      <input type="radio" name="annual-interest-type" value="mortgage" />
+                      <span><strong>Hipoteca</strong><small>Usa o cálculo canadense para taxa fixa.</small></span>
+                    </label>
+                  </div>
+                  <div class="field-row annual-interest-inputs">
+                    <div class="field">
+                      <label>Taxa anual (%)</label>
+                      <input type="number" id="annual-interest-rate" min="0.01" max="100" step="0.01" placeholder="Ex: 5,49" />
+                    </div>
+                    <div class="field" id="annual-mortgage-amortization-field" hidden>
+                      <label>Amortização restante (anos)</label>
+                      <input type="number" id="annual-mortgage-amortization" min="0.5" max="40" step="0.5" placeholder="Ex: 22" />
+                      <small>Consulte o saldo e o prazo restantes no app ou extrato do banco.</small>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="field-row annual-installment-fields-row">
               <div class="field">
+                <label id="annual-installments-count-label" style="color: #62c462">Total de parcelas</label>
+                <input type="number" id="annual-installments-count" min="2" max="600" placeholder="Ex: 4" />
+              </div>
+              <div class="field" id="annual-installments-interval-field">
                 <label style="color: #62c462">Intervalo (Meses)</label>
                 <input type="number" id="annual-installments-interval" min="1" max="12" value="1" placeholder="Ex: 1 = Mensal, 2 = Bimestral" />
               </div>
+              </div>
+              <div id="annual-installment-preview" class="annual-installment-preview" aria-live="polite"></div>
             </div>
 
             <button type="submit" class="btn-primary" id="annual-submit-btn" style="margin-top: 8px">Salvar Evento Anual</button>
           </form>
+        </div>
+
+        <div class="card installment-plans-card" id="installment-plans-card" hidden>
+          <div class="list-header-row">
+            <div>
+              <h3><span class="context-icon" aria-hidden="true">🧾</span> Parcelas ativas</h3>
+              <p class="hint installment-plans-subtitle">Acompanhamento da compra até a última parcela paga.</p>
+            </div>
+          </div>
+          <div id="installment-plans-list" class="installment-plans-list"></div>
         </div>
 
         <div class="card">

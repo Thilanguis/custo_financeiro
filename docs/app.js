@@ -779,6 +779,7 @@ function getBackupStats(data) {
     planned: months.reduce((total, month) => total + (month.planned || []).length, 0),
     receipts: months.reduce((total, month) => total + (month.receipts || []).length, 0),
     annualEvents: (data.annualEvents || []).length,
+    installmentPlans: (data.installmentPlans || []).length,
     configurations: Object.keys(data.configurations || {}).length,
     userPreferences: (data.userPreferences || []).length,
     logs: (data.logs || []).length,
@@ -832,13 +833,14 @@ function validateBackupPayload(payload) {
   if (payload.familyId !== FinanceAPI.familyId) throw new Error('O backup pertence a outra família e não pode ser restaurado aqui.');
   if (!payload.data || typeof payload.data !== 'object') throw new Error('O backup não possui dados para restaurar.');
 
-  const { family = null, configurations = {}, annualEvents = [], userPreferences = [], logs = [], months = {} } = payload.data;
+  const { family = null, configurations = {}, annualEvents = [], installmentPlans = [], userPreferences = [], logs = [], months = {} } = payload.data;
   if ((family !== null && !isBackupObject(family)) || !isBackupObject(configurations) || !isBackupObject(months)) {
     throw new Error('A estrutura interna do backup está inválida.');
   }
   if (Object.keys(configurations).some((id) => !isValidBackupDocumentId(id))) throw new Error('O backup possui uma configuração com identificador inválido.');
   if (Object.values(configurations).some((configuration) => !isBackupObject(configuration))) throw new Error('O backup possui uma configuração inválida.');
   validateBackupDocumentList(annualEvents, 'eventos anuais');
+  validateBackupDocumentList(installmentPlans, 'parcelamentos');
   validateBackupDocumentList(userPreferences, 'preferências');
   validateBackupDocumentList(logs, 'registros de atividades');
 
@@ -1080,7 +1082,7 @@ function showRestoreModeDialog(payload) {
       </div>
     `;
     overlay.querySelector('.backup-restore-summary').textContent =
-      `Backup de ${formatBackupTimestamp(payload.exportedAt) || 'data desconhecida'}: ${stats.months} meses, ${stats.planned} itens previstos, ${stats.receipts} notas e ${stats.annualEvents} eventos anuais.`;
+      `Backup de ${formatBackupTimestamp(payload.exportedAt) || 'data desconhecida'}: ${stats.months} meses, ${stats.planned} itens previstos, ${stats.receipts} notas, ${stats.annualEvents} eventos anuais e ${stats.installmentPlans} parcelamentos.`;
     document.body.appendChild(overlay);
     void overlay.offsetWidth;
     overlay.classList.add('active');
@@ -1213,46 +1215,117 @@ btnLoadMonth.addEventListener('click', async () => {
 
       const prevItems = await FinanceAPI.getPlannedOnce(prevMonthStr);
       const fixedItemsToClone = prevItems.filter((p) => p.fixed);
+      let clonedItemsCount = 0;
 
       for (const item of fixedItemsToClone) {
+        let sourceItem = item;
+        let installmentPlan = null;
+        let installmentEntry = null;
+
+        if (item.installmentPlanId && item.installmentAutomationMode === 'fixed-static-clone') {
+          installmentPlan = getInstallmentPlan(item.installmentPlanId) || (await FinanceAPI.getInstallmentPlan(item.installmentPlanId));
+          const nextNumber = Number(item.installmentNumber || 0) + 1;
+          installmentEntry = installmentPlan?.installments?.find((entry) => entry.number === nextNumber) || null;
+
+          if (!installmentPlan || installmentPlan.status === 'cancelled' || nextNumber > Number(item.installmentCount || installmentPlan.installmentCount) || !installmentEntry) {
+            continue;
+          }
+          if (installmentEntry.status === 'cancelled' || installmentEntry.targetDate?.substring(0, 7) !== targetMonth) continue;
+
+          const installmentCount = Number(item.installmentCount || installmentPlan.installmentCount);
+          sourceItem = {
+            ...item,
+            description: `${item.installmentOriginalName || installmentPlan.name || item.description} (${nextNumber}/${installmentCount})`,
+            amount: installmentEntry.amount,
+            installmentNumber: nextNumber,
+            installmentCount,
+            staticSyncId: `installment_${item.installmentPlanId}_${nextNumber}`,
+          };
+          if (sourceItem.isBiweeklyConverted) sourceItem.biweeklyMonthlyAmount = installmentEntry.amount;
+          if (installmentPlan.paymentFrequency === 'biweekly') {
+            sourceItem.isBiweeklyConverted = true;
+            sourceItem.biweeklyAmount = installmentPlan.paymentAmount;
+            sourceItem.biweeklyMonthlyAmount = installmentEntry.amount;
+          }
+        }
+
         let newDate = '';
 
-        if (item.date) {
-          const oldDateParts = item.date.split('-');
+        if (installmentEntry?.targetDate) {
+          const installmentDay = installmentEntry.targetDate.split('-')[2] || '01';
+          newDate = `${targetMonth}-${installmentDay}`;
+        } else if (sourceItem.date) {
+          const oldDateParts = sourceItem.date.split('-');
           const day = oldDateParts.length === 3 ? oldDateParts[2] : '01';
           newDate = `${targetMonth}-${day}`;
-        } else if (item.isStatic) {
+        } else if (sourceItem.isStatic) {
           newDate = `${targetMonth}-01`;
         }
 
-        const newItem = { ...item, month: targetMonth, date: newDate };
+        const newItem = { ...sourceItem, month: targetMonth, date: newDate };
         delete newItem.id;
-        await FinanceAPI.savePlanned(targetMonth, newItem);
+        const plannedId = await FinanceAPI.savePlanned(targetMonth, newItem);
+        clonedItemsCount += 1;
 
-        if (item.isStatic) {
+        if (sourceItem.isStatic) {
           const receiptData = {
             date: newDate,
-            category: item.category,
-            merchant: item.description,
-            amount: item.amount,
-            owner: item.owner,
-            paymentMethodId: item.paymentMethodId || 'dinheiro',
+            category: sourceItem.category,
+            merchant: sourceItem.description,
+            amount: sourceItem.amount,
+            owner: sourceItem.owner,
+            paymentMethodId: sourceItem.paymentMethodId || 'dinheiro',
+            observation: sourceItem.observation || '',
             isStatic: true,
             staticSyncId: newItem.staticSyncId,
+            linkedPlannedId: plannedId,
           };
-          if (item.isBiweeklyConverted) {
+          if (sourceItem.isBiweeklyConverted) {
             receiptData.isBiweeklyConverted = true;
-            receiptData.biweeklyAmount = item.biweeklyAmount;
-            receiptData.biweeklyMonthlyAmount = item.amount;
+            receiptData.biweeklyAmount = sourceItem.biweeklyAmount;
+            receiptData.biweeklyMonthlyAmount = sourceItem.biweeklyMonthlyAmount ?? sourceItem.amount;
           }
-          await FinanceAPI.saveReceipt(targetMonth, receiptData);
+          if (sourceItem.installmentPlanId) {
+            receiptData.installmentPlanId = sourceItem.installmentPlanId;
+            receiptData.installmentNumber = sourceItem.installmentNumber;
+            receiptData.installmentCount = sourceItem.installmentCount;
+            receiptData.installmentMode = sourceItem.installmentMode;
+            receiptData.installmentOriginalName = sourceItem.installmentOriginalName;
+            receiptData.installmentAutomationMode = sourceItem.installmentAutomationMode;
+          }
+          const receiptId = await FinanceAPI.saveReceipt(targetMonth, receiptData);
+
+          if (installmentPlan && installmentEntry) {
+            const updatedInstallments = installmentPlan.installments.map((entry) =>
+              entry.number === sourceItem.installmentNumber
+                ? {
+                    ...entry,
+                    status: 'paid',
+                    plannedId,
+                    plannedMonth: targetMonth,
+                    receiptId,
+                    receiptMonth: targetMonth,
+                    paidAmount: sourceItem.amount,
+                    paidAt: newDate,
+                  }
+                : entry,
+            );
+            const isCompleted = sourceItem.installmentNumber >= sourceItem.installmentCount;
+            await FinanceAPI.saveInstallmentPlan({
+              ...installmentPlan,
+              status: isCompleted ? 'completed' : 'active',
+              installments: updatedInstallments,
+              updatedAt: new Date().toISOString(),
+              completedAt: isCompleted ? newDate : installmentPlan.completedAt || null,
+            });
+          }
         }
       }
 
-      if (fixedItemsToClone.length > 0) {
-        showToast(`${fixedItemsToClone.length} contas fixas copiadas de ${prevMonthStr}!`, 'success');
+      if (clonedItemsCount > 0) {
+        showToast(`${clonedItemsCount} contas fixas copiadas de ${prevMonthStr}!`, 'success');
       } else {
-        showToast(`Nenhuma conta marcada como "Fixo" encontrada em ${prevMonthStr}.`, 'info');
+        showToast(`Nenhuma conta fixa pendente encontrada em ${prevMonthStr}.`, 'info');
       }
       shouldOfferBackup = true;
     } else {
@@ -1606,7 +1679,7 @@ function renderCompanyChips(container, type, onSelectCompany) {
   }
 
   let filterInput = null;
-  if (companies.length >= 5) {
+  if (companies.length > 0) {
     const filterWrap = document.createElement('div');
     filterWrap.className = 'company-chip-filter-wrap';
     filterWrap.innerHTML = '<span aria-hidden="true">⌕</span>';
@@ -1957,7 +2030,7 @@ formPlanned.addEventListener('submit', async (e) => {
 
   const syncId = oldItem && oldItem.staticSyncId ? oldItem.staticSyncId : `sync_${Date.now()}`;
 
-  const itemData = { date, category, description, amount, owner, paymentMethodId, fixed, isStatic, month };
+  const itemData = { ...(oldItem || {}), date, category, description, amount, owner, paymentMethodId, fixed, isStatic, month };
   if (isBiweeklyConverted) {
     itemData.isBiweeklyConverted = true;
     itemData.biweeklyAmount = sourceAmount;
@@ -1966,6 +2039,13 @@ formPlanned.addEventListener('submit', async (e) => {
   if (editingPlannedId !== null) itemData.id = editingPlannedId;
 
   await FinanceAPI.savePlanned(month, itemData);
+  if (itemData.installmentPlanId) {
+    await updateInstallmentPlanEntry(itemData.installmentPlanId, itemData.installmentNumber, {
+      amount,
+      targetDate: date,
+      plannedMonth: month,
+    });
+  }
   logActivity(editingPlannedId ? 'Editou' : 'Adicionou', `Previsto: ${description} - ${formatCurrency(amount)}`);
 
   if (editingPlannedId === null) {
@@ -1987,6 +2067,7 @@ formPlanned.addEventListener('submit', async (e) => {
     if (linkedReceipt) {
       if (isStatic) {
         const updatedReceipt = {
+          ...linkedReceipt,
           id: linkedReceipt.id,
           date: date || linkedReceipt.date,
           category: category,
@@ -2054,6 +2135,18 @@ function renderBiweeklyConversionBadge(item) {
   return ` <span class="biweekly-conversion-badge" title="${explanation}" aria-label="${explanation}">Bis. → mensal</span>`;
 }
 
+function renderInstallmentItemBadge(item) {
+  if (!item?.installmentPlanId) return '';
+  const number = Number(item.installmentNumber) || 0;
+  const count = Number(item.installmentCount) || 0;
+  return `<span class="installment-item-badge" title="Parcela vinculada ao controle de pagamentos">Parcela ${number}/${count}</span>`;
+}
+
+function renderInstallmentCategoryBadge(items) {
+  if (!Array.from(items || []).some((item) => item?.installmentPlanId)) return '';
+  return '<span class="installment-item-badge installment-category-badge" title="Esta categoria contém um parcelamento ativo">Parcelamento</span>';
+}
+
 function startEditPlanned(id) {
   const item = plannedItems.find((p) => p.id === id);
   if (!item) return;
@@ -2091,6 +2184,13 @@ async function deletePlanned(id) {
 
   const month = getCurrentMonth();
   await FinanceAPI.deletePlanned(month, id);
+  if (p.installmentPlanId && !receipts.some((receipt) => receipt.linkedPlannedId === id)) {
+    await updateInstallmentPlanEntry(p.installmentPlanId, p.installmentNumber, {
+      status: 'cancelled',
+      plannedId: null,
+      plannedMonth: null,
+    });
+  }
   logActivity('Excluiu', `Previsto: ${p.description} - ${formatCurrency(Math.abs(p.amount))}`);
 
   if (p.isStatic) {
@@ -2150,6 +2250,15 @@ async function deleteReceipt(id) {
 
   const month = r.date.substring(0, 7);
   await FinanceAPI.deleteReceipt(month, id);
+  if (r.installmentPlanId) {
+    await updateInstallmentPlanEntry(r.installmentPlanId, r.installmentNumber, {
+      status: 'budgeted',
+      receiptId: null,
+      receiptMonth: null,
+      paidAmount: null,
+      paidAt: null,
+    });
+  }
   logActivity('Excluiu', `Real/Nota: ${r.merchant} - ${formatCurrency(Math.abs(r.amount))}`);
 
   if (r.isStatic) {
@@ -2159,6 +2268,17 @@ async function deleteReceipt(id) {
     });
     if (plannedToDelete) {
       await FinanceAPI.deletePlanned(month, plannedToDelete.id);
+      if (r.installmentPlanId) {
+        await updateInstallmentPlanEntry(r.installmentPlanId, r.installmentNumber, {
+          status: 'cancelled',
+          plannedId: null,
+          plannedMonth: null,
+          receiptId: null,
+          receiptMonth: null,
+          paidAmount: null,
+          paidAt: null,
+        });
+      }
     }
   }
 
@@ -2345,6 +2465,7 @@ function renderPlannedItemsList(month) {
       });
 
       const hasEvent = groupItems.some((p) => p.linkedAnnualId || p.category === 'Eventos');
+      const installmentCategoryBadge = renderInstallmentCategoryBadge(groupItems);
       const headerDiv = document.createElement('div');
       headerDiv.className = 'group-header-div';
 
@@ -2359,7 +2480,7 @@ function renderPlannedItemsList(month) {
         : '';
 
       headerDiv.innerHTML = `
-      <span style="color: #f5f5f5; display: flex; align-items: center;"><span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}${catBadge}</span>
+      <span style="color: #f5f5f5; display: flex; align-items: center;"><span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}${catBadge}${installmentCategoryBadge}</span>
       <span style="color:#a6a6c0; font-size:0.85rem; font-weight:normal;">${formatCurrency(catTotal)}</span>
     `;
 
@@ -2385,6 +2506,7 @@ function renderPlannedItemsList(month) {
             ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px; vertical-align: middle;">Evento</span>'
             : '';
           const biweeklyBadge = renderBiweeklyConversionBadge(p);
+          const installmentBadge = renderInstallmentItemBadge(p);
           const reimbursementLinks = getPlannedItemReimbursements(p, month).map((reimbursement) => renderReimbursementLink(reimbursement, { compact: true })).join('');
 
           // Checa se este item específico já foi pago/recebido no mês
@@ -2404,7 +2526,7 @@ function renderPlannedItemsList(month) {
 
           item.innerHTML = `
           <div class="receipt-main">
-            <div class="receipt-line">${p.description}${annualBadge}${incomeBadge}${biweeklyBadge}</div>
+            <div class="receipt-line">${p.description}${annualBadge}${incomeBadge}${biweeklyBadge}${installmentBadge}</div>
             ${obsHtml}
             ${reimbursementLinks}
             <div class="receipt-meta" style="margin-top: 2px;">${dateStr}Resp: ${p.owner}${payStr}${p.fixed ? (p.isStatic ? ' • Fixo & Estático' : ' • Fixo') : ''}</div>
@@ -2501,6 +2623,7 @@ formActual.addEventListener('submit', async (e) => {
   const finalAmount = isReimb || isIncomeChecked ? -Math.abs(amount) : Math.abs(amount);
   const launchedPlannedItem = window.currentLaunchPlannedId ? plannedItems.find((planned) => planned.id === window.currentLaunchPlannedId) : null;
   const biweeklySource = launchedPlannedItem || oldReceipt;
+  const installmentSource = launchedPlannedItem || oldReceipt;
 
   const itemData = {
     date,
@@ -2518,6 +2641,13 @@ formActual.addEventListener('submit', async (e) => {
     itemData.isBiweeklyConverted = true;
     itemData.biweeklyAmount = biweeklySource.biweeklyAmount;
     itemData.biweeklyMonthlyAmount = biweeklySource.biweeklyMonthlyAmount ?? biweeklySource.amount;
+  }
+
+  if (installmentSource?.installmentPlanId) {
+    itemData.installmentPlanId = installmentSource.installmentPlanId;
+    itemData.installmentNumber = installmentSource.installmentNumber;
+    itemData.installmentCount = installmentSource.installmentCount;
+    itemData.installmentMode = installmentSource.installmentMode;
   }
 
   if (oldReceipt && oldReceipt.staticSyncId) {
@@ -2540,7 +2670,16 @@ formActual.addEventListener('submit', async (e) => {
 
   if (editingReceiptId !== null) itemData.id = editingReceiptId;
 
-  await FinanceAPI.saveReceipt(month, itemData);
+  const savedReceiptId = await FinanceAPI.saveReceipt(month, itemData);
+  if (itemData.installmentPlanId) {
+    await updateInstallmentPlanEntry(itemData.installmentPlanId, itemData.installmentNumber, {
+      status: 'paid',
+      receiptId: savedReceiptId,
+      receiptMonth: month,
+      paidAmount: finalAmount,
+      paidAt: date,
+    });
+  }
   logActivity(editingReceiptId ? 'Editou' : 'Adicionou', `Real: ${merchant} - ${formatCurrency(finalAmount)}`);
 
   if (oldReceipt && oldReceipt.isStatic) {
@@ -2774,6 +2913,7 @@ function updateReceiptsView() {
         hasReimbursement: false,
       });
       const eventBadge = groupItems.some((receipt) => isReceiptFromEvent(receipt)) ? renderFinancialEventBadge() : '';
+      const installmentCategoryBadge = renderInstallmentCategoryBadge(groupItems);
 
       const headerDiv = document.createElement('div');
       headerDiv.className = 'group-header-div';
@@ -2783,7 +2923,7 @@ function updateReceiptsView() {
       const displayedCatTotal = isCatIncome ? `+ ${formatCurrency(Math.abs(catTotal), cat.toLowerCase() === 'salário')}` : formatCurrency(catTotal, cat.toLowerCase() === 'salário');
 
       headerDiv.innerHTML = `
-      <span class="receipt-group-title" style="color: #f5f5f5;"><span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}${eventBadge}${flowBadges}</span>
+      <span class="receipt-group-title" style="color: #f5f5f5;"><span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}${eventBadge}${installmentCategoryBadge}${flowBadges}</span>
       <span class="receipt-group-total" style="color:#a6a6c0; font-size:0.85rem; font-weight:normal;">${displayedCatTotal}</span>
     `;
 
@@ -2815,6 +2955,7 @@ function updateReceiptsView() {
           });
           const eventBadge = isReceiptFromEvent(r) ? renderFinancialEventBadge() : '';
           const biweeklyBadge = renderReceiptBiweeklyBadge(r);
+          const installmentBadge = renderInstallmentItemBadge(r);
           const editActionHtml = isReceiptEditLockedByBudget(r)
             ? `<button class="action-btn" onclick="showLockedReceiptMessage()" title="Este lançamento é fixo e estático">🔒 Orçamento</button>`
             : `<button class="action-btn" onclick="startEditReceipt('${r.id}')">Editar</button>`;
@@ -2823,7 +2964,7 @@ function updateReceiptsView() {
 
           item.innerHTML = `
           <div class="receipt-main">
-            <div class="receipt-line">${r.isReimbursement ? '<span class="reimbursement-item-arrow" aria-hidden="true">↳</span><span class="reimbursement-item-label">Reembolso</span>' : ''}${r.merchant} • ${r.category}${biweeklyBadge}${eventBadge}${flowBadge}</div>
+            <div class="receipt-line">${r.isReimbursement ? '<span class="reimbursement-item-arrow" aria-hidden="true">↳</span><span class="reimbursement-item-label">Reembolso</span>' : ''}${r.merchant} • ${r.category}${biweeklyBadge}${installmentBadge}${eventBadge}${flowBadge}</div>
             ${obsHtml}
             <div class="receipt-meta" style="margin-top: 2px;">${r.date.split('-').reverse().join('/')} • ${r.owner}${payStr}${r.isStatic ? ' • Fixo & Estático' : ''}</div>
           </div>
@@ -3446,18 +3587,24 @@ function updateDashboardView() {
   const mapCat = {};
 
   plannedForMonth.forEach((p) => {
-    if (!mapCat[p.category]) mapCat[p.category] = { planned: 0, actual: 0, items: new Map(), hasReimbursement: false, hasActualIncome: false };
+    if (!mapCat[p.category]) mapCat[p.category] = { planned: 0, actual: 0, items: new Map(), hasReimbursement: false, hasActualIncome: false, hasInstallment: false };
     mapCat[p.category].planned += p.amount;
+    if (p.installmentPlanId) mapCat[p.category].hasInstallment = true;
 
     const key = makeKey(p.category, p.description, p.owner);
     if (!mapCat[p.category].items.has(key)) {
-      mapCat[p.category].items.set(key, { name: p.description, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: p.date || '', isAnnual: false, annualEventsData: [], hasReimbursement: false, hasActualIncome: false, isBiweeklyConverted: false, biweeklyAmount: 0 });
+      mapCat[p.category].items.set(key, { name: p.description, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: p.date || '', isAnnual: false, annualEventsData: [], hasReimbursement: false, hasActualIncome: false, isBiweeklyConverted: false, biweeklyAmount: 0, installmentPlanId: null, installmentNumber: null, installmentCount: null });
     }
     const item = mapCat[p.category].items.get(key);
     item.planned += p.amount;
     if (p.isBiweeklyConverted) {
       item.isBiweeklyConverted = true;
       item.biweeklyAmount += p.biweeklyAmount ?? p.amount / BIWEEKLY_MONTHLY_FACTOR;
+    }
+    if (p.installmentPlanId) {
+      item.installmentPlanId = p.installmentPlanId;
+      item.installmentNumber = p.installmentNumber;
+      item.installmentCount = p.installmentCount;
     }
     if (p.owner) item.owners.add(p.owner);
     if (p.date && (!item.maxDate || p.date > item.maxDate)) item.maxDate = p.date;
@@ -3471,19 +3618,25 @@ function updateDashboardView() {
   });
 
   receiptsForMonth.forEach((r) => {
-    if (!mapCat[r.category]) mapCat[r.category] = { planned: 0, actual: 0, items: new Map(), hasReimbursement: false, hasActualIncome: false };
+    if (!mapCat[r.category]) mapCat[r.category] = { planned: 0, actual: 0, items: new Map(), hasReimbursement: false, hasActualIncome: false, hasInstallment: false };
     mapCat[r.category].actual += r.amount;
+    if (r.installmentPlanId) mapCat[r.category].hasInstallment = true;
     if (r.isReimbursement) mapCat[r.category].hasReimbursement = true;
     if (r.amount < 0 && !r.isReimbursement) mapCat[r.category].hasActualIncome = true;
 
     const key = makeKey(r.category, r.merchant, r.owner);
     if (!mapCat[r.category].items.has(key)) {
-      mapCat[r.category].items.set(key, { name: r.merchant, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: r.date || '', isAnnual: false, annualObs: new Set(), hasReimbursement: false, hasActualIncome: false });
+      mapCat[r.category].items.set(key, { name: r.merchant, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: r.date || '', isAnnual: false, annualObs: new Set(), hasReimbursement: false, hasActualIncome: false, installmentPlanId: null, installmentNumber: null, installmentCount: null });
     }
     const item = mapCat[r.category].items.get(key);
     item.actual += r.amount;
     if (r.isReimbursement) item.hasReimbursement = true;
     if (r.amount < 0 && !r.isReimbursement) item.hasActualIncome = true;
+    if (r.installmentPlanId) {
+      item.installmentPlanId = r.installmentPlanId;
+      item.installmentNumber = r.installmentNumber;
+      item.installmentCount = r.installmentCount;
+    }
     if (r.owner) item.owners.add(r.owner);
     if (r.date && (!item.maxDate || r.date > item.maxDate)) item.maxDate = r.date;
 
@@ -3535,6 +3688,7 @@ function updateDashboardView() {
     catContainer.className = 'cat-name-container';
 
     const hasEvent = Array.from(data.items.values()).some((item) => item.isAnnual);
+    const installmentCategoryBadge = data.hasInstallment ? renderInstallmentCategoryBadge(data.items.values()) : '';
     const isUnbudgetedExpense = data.planned === 0 && data.actual > 0;
     const isUnplannedCredit = data.planned === 0 && data.actual < 0 && (data.hasActualIncome || data.hasReimbursement);
     const catTitle = document.createElement('span');
@@ -3543,7 +3697,7 @@ function updateDashboardView() {
     catTitle.style.alignItems = 'center';
     const catBadge = hasEvent ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px;">Evento</span>' : '';
     const flowBadges = renderFinancialFlowBadges({ ...data, hasReimbursement: false });
-    catTitle.innerHTML = `<span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}${catBadge}${flowBadges}`;
+    catTitle.innerHTML = `<span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}${catBadge}${installmentCategoryBadge}${flowBadges}`;
     catContainer.appendChild(catTitle);
 
     let percent = 0;
@@ -3650,6 +3804,7 @@ function updateDashboardView() {
 
         const tdItemName = document.createElement('td');
         const itemBiweeklyBadge = renderBiweeklyConversionBadge(item);
+        const itemInstallmentBadge = renderInstallmentItemBadge(item);
 
         const obsArray = item.obsList || [];
         let obsHtml = '';
@@ -3767,7 +3922,7 @@ function updateDashboardView() {
             <details style="cursor: pointer; margin: 2px 0;">
               <summary style="outline: none; user-select: none; color: #fddf7b;">
                 <div style="display: inline-block;">
-                  <span style="color: #f5f5f5;">${item.name}</span>${parentAnnualBadge}${itemFlowBadges}${itemBiweeklyBadge}
+                  <span style="color: #f5f5f5;">${item.name}</span>${parentAnnualBadge}${itemFlowBadges}${itemBiweeklyBadge}${itemInstallmentBadge}
                   <span style="font-size: 0.6rem; background: rgba(74, 144, 226, 0.15); color: #4a90e2; padding: 2px 6px; border-radius: 6px; margin-left: 4px; border: 1px solid rgba(74, 144, 226, 0.3); white-space: nowrap; vertical-align: middle;">${totalItems} itens</span>
                 </div>
                 <div style="font-size: 0.72rem; color: #8e8eab; margin-top: 2px; line-height: 1.3;">${metaText}</div>
@@ -3795,7 +3950,7 @@ function updateDashboardView() {
           const itemFlowBadges = renderFinancialFlowBadges({ ...item, hasReimbursement: false });
 
           tdItemName.innerHTML = `
-            <div style="color: #f5f5f5;">${item.name}${parentAnnualBadge}${itemFlowBadges}${itemBiweeklyBadge}</div>
+            <div style="color: #f5f5f5;">${item.name}${parentAnnualBadge}${itemFlowBadges}${itemBiweeklyBadge}${itemInstallmentBadge}</div>
             <div style="font-size: 0.72rem; color: #8e8eab; margin-top: 2px; line-height: 1.3;">${singleMetaText}</div>
           `;
         }
@@ -4513,6 +4668,11 @@ function syncData(month) {
     renderAnnualList();
     checkAnnualAlerts();
   });
+
+  FinanceAPI.listenInstallmentPlans((plans) => {
+    installmentPlans = plans || [];
+    renderInstallmentPlans();
+  });
 }
 
 function bufferToBase64URL(buffer) {
@@ -4657,7 +4817,9 @@ btnLogout.addEventListener('click', async () => {
 
 // ===== PLANEJAMENTO ANUAL (LÓGICA) =====
 let annualEvents = [];
+let installmentPlans = [];
 let editingAnnualId = null;
+let editingInstallmentPlanId = null;
 
 const formAnnual = document.getElementById('form-annual');
 const annualNameInput = document.getElementById('annual-name');
@@ -4672,14 +4834,240 @@ const annualInstallmentCheck = document.getElementById('annual-installment-check
 const annualInstallmentFields = document.getElementById('annual-installment-fields');
 const annualInstallmentsCount = document.getElementById('annual-installments-count');
 const annualInstallmentsInterval = document.getElementById('annual-installments-interval');
+const annualInstallmentPreview = document.getElementById('annual-installment-preview');
+const annualInstallmentAmountHint = document.getElementById('annual-installment-amount-hint');
+const annualAmountLabel = document.getElementById('annual-amount-label');
+const annualDateLabel = document.getElementById('annual-date-label');
+const annualInstallmentModeInputs = [...document.querySelectorAll('input[name="annual-installment-mode"]')];
+const annualInterestToggle = document.getElementById('annual-interest-toggle');
+const annualInterestCheck = document.getElementById('annual-interest-check');
+const annualInterestFields = document.getElementById('annual-interest-fields');
+const annualInterestRate = document.getElementById('annual-interest-rate');
+const annualInterestTypeInputs = [...document.querySelectorAll('input[name="annual-interest-type"]')];
+const annualPaymentFrequency = document.getElementById('annual-payment-frequency');
+const annualPaymentFrequencyInputs = [...document.querySelectorAll('input[name="annual-payment-frequency"]')];
+const annualMortgageAmortizationField = document.getElementById('annual-mortgage-amortization-field');
+const annualMortgageAmortization = document.getElementById('annual-mortgage-amortization');
+const annualInstallmentsCountLabel = document.getElementById('annual-installments-count-label');
+const annualInstallmentsIntervalField = document.getElementById('annual-installments-interval-field');
 const annualSubmitBtn = document.getElementById('annual-submit-btn');
 const annualItemsList = document.getElementById('annual-items-list');
+const installmentPlansCard = document.getElementById('installment-plans-card');
+const installmentPlansList = document.getElementById('installment-plans-list');
+
+function getAnnualInstallmentMode() {
+  return annualInstallmentModeInputs.find((input) => input.checked)?.value || 'purchase';
+}
+
+function getAnnualInterestType() {
+  return annualInterestTypeInputs.find((input) => input.checked)?.value || 'financing';
+}
+
+function getAnnualPaymentFrequency() {
+  return annualPaymentFrequencyInputs.find((input) => input.checked)?.value || 'monthly';
+}
+
+function distributeCurrencyAmount(total, count) {
+  const totalCents = Math.round(Math.abs(total) * 100);
+  const baseCents = Math.floor(totalCents / count);
+  const remainder = totalCents % count;
+  return Array.from({ length: count }, (_, index) => (baseCents + (index < remainder ? 1 : 0)) / 100);
+}
+
+function calculateInstallmentScheduleWithInterest(principal, annualRatePercent, budgetMonthCount, interestType, paymentFrequency = 'monthly') {
+  const safePrincipal = Math.abs(Number(principal) || 0);
+  const safeBudgetMonthCount = Math.max(1, Math.round(Number(budgetMonthCount) || 1));
+  const annualRate = Math.max(0, Number(annualRatePercent) || 0) / 100;
+  const paymentsPerYear = paymentFrequency === 'biweekly' ? 26 : 12;
+  const paymentCount = paymentFrequency === 'biweekly' ? Math.max(1, Math.round((safeBudgetMonthCount * paymentsPerYear) / 12)) : safeBudgetMonthCount;
+  const periodicRate = interestType === 'mortgage' ? Math.pow(1 + annualRate / 2, 2 / paymentsPerYear) - 1 : annualRate / paymentsPerYear;
+
+  if (!periodicRate) {
+    const payments = distributeCurrencyAmount(safePrincipal, paymentCount);
+    const amounts = distributeCurrencyAmount(safePrincipal, safeBudgetMonthCount);
+    return {
+      amounts,
+      periodicPayment: payments[0] || 0,
+      monthlyEquivalent: amounts[0] || 0,
+      paymentCount,
+      paymentsPerYear,
+      totalPaid: safePrincipal,
+      totalInterest: 0,
+      periodicRate: 0,
+    };
+  }
+
+  const calculatedPayment = (safePrincipal * periodicRate) / (1 - Math.pow(1 + periodicRate, -paymentCount));
+  const regularPayment = Math.round(calculatedPayment * 100) / 100;
+  let balance = Math.round(safePrincipal * 100) / 100;
+  const payments = [];
+
+  for (let index = 0; index < paymentCount; index += 1) {
+    const interestForPeriod = Math.round(balance * periodicRate * 100) / 100;
+    const payment = index === paymentCount - 1 ? Math.round((balance + interestForPeriod) * 100) / 100 : regularPayment;
+    const principalPaid = Math.round((payment - interestForPeriod) * 100) / 100;
+    balance = Math.max(0, Math.round((balance - principalPaid) * 100) / 100);
+    payments.push(payment);
+  }
+
+  const totalPaid = Math.round(payments.reduce((total, value) => total + value, 0) * 100) / 100;
+  const amounts = paymentFrequency === 'biweekly' ? distributeCurrencyAmount(totalPaid, safeBudgetMonthCount) : payments;
+  return {
+    amounts,
+    periodicPayment: regularPayment,
+    monthlyEquivalent: Math.round(regularPayment * (paymentsPerYear / 12) * 100) / 100,
+    paymentCount,
+    paymentsPerYear,
+    totalPaid,
+    totalInterest: Math.max(0, Math.round((totalPaid - safePrincipal) * 100) / 100),
+    periodicRate,
+  };
+}
+
+function addMonthsToAnnualDate(dateValue, monthsToAdd) {
+  const [year, month, day] = dateValue.split('-').map(Number);
+  const firstDay = new Date(year, month - 1 + monthsToAdd, 1);
+  const lastDay = new Date(firstDay.getFullYear(), firstDay.getMonth() + 1, 0).getDate();
+  const safeDay = Math.min(day, lastDay);
+  return `${firstDay.getFullYear()}-${String(firstDay.getMonth() + 1).padStart(2, '0')}-${String(safeDay).padStart(2, '0')}`;
+}
+
+function formatShortDate(dateValue) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateValue || '')) return '';
+  const [year, month, day] = dateValue.split('-');
+  return `${day}/${month}/${year}`;
+}
+
+function updateAnnualInstallmentBuilder() {
+  if (!annualInstallmentCheck || !annualInstallmentFields) return;
+  const enabled = annualInstallmentCheck.checked && !editingAnnualId;
+  annualInstallmentFields.hidden = !enabled;
+
+  annualInstallmentModeInputs.forEach((input) => {
+    input.closest('.annual-installment-mode-option')?.classList.toggle('is-selected', input.checked);
+  });
+
+  const mode = getAnnualInstallmentMode();
+  const canUseInterest = enabled && mode === 'purchase';
+  const usesInterest = canUseInterest && Boolean(annualInterestCheck?.checked);
+  const interestType = getAnnualInterestType();
+  const paymentFrequency = mode === 'purchase' ? getAnnualPaymentFrequency() : 'monthly';
+
+  if (annualPaymentFrequency) annualPaymentFrequency.hidden = !enabled || mode !== 'purchase';
+  if (annualInterestToggle) annualInterestToggle.hidden = !canUseInterest;
+  if (annualInterestToggle) annualInterestToggle.classList.toggle('is-open', usesInterest);
+  if (!canUseInterest && annualInterestCheck) annualInterestCheck.checked = false;
+  if (annualInterestFields) annualInterestFields.hidden = !usesInterest;
+  if (annualMortgageAmortizationField) annualMortgageAmortizationField.hidden = !usesInterest || interestType !== 'mortgage';
+  annualInterestTypeInputs.forEach((input) => {
+    input.closest('.annual-interest-type-option')?.classList.toggle('is-selected', input.checked);
+  });
+  annualPaymentFrequencyInputs.forEach((input) => {
+    input.closest('.annual-payment-frequency-option')?.classList.toggle('is-selected', input.checked);
+  });
+
+  if (mode === 'purchase') {
+    annualInstallmentsInterval.value = '1';
+    annualInstallmentsInterval.readOnly = true;
+    if (annualInstallmentsIntervalField) annualInstallmentsIntervalField.classList.add('is-locked');
+  } else {
+    annualInstallmentsInterval.readOnly = false;
+    if (annualInstallmentsIntervalField) annualInstallmentsIntervalField.classList.remove('is-locked');
+  }
+
+  if (usesInterest && interestType === 'mortgage') {
+    const amortizationYears = Number(annualMortgageAmortization?.value);
+    if (Number.isFinite(amortizationYears) && amortizationYears > 0) annualInstallmentsCount.value = String(Math.round(amortizationYears * 12));
+    annualInstallmentsCount.readOnly = true;
+    if (annualInstallmentsCountLabel) annualInstallmentsCountLabel.textContent = 'Meses restantes no orçamento';
+  } else {
+    annualInstallmentsCount.readOnly = false;
+    if (annualInstallmentsCountLabel) {
+      annualInstallmentsCountLabel.textContent = mode === 'repeat' ? 'Total de lançamentos' : paymentFrequency === 'biweekly' ? 'Prazo restante (meses)' : 'Total de parcelas';
+    }
+  }
+
+  if (annualAmountLabel) {
+    annualAmountLabel.textContent = enabled && mode === 'purchase' ? (usesInterest && interestType === 'mortgage' ? 'Saldo devedor atual (CAD)' : 'Valor financiado / da compra (CAD)') : 'Valor (CAD)';
+  }
+  if (annualDateLabel) annualDateLabel.textContent = enabled ? 'Data da primeira parcela' : 'Data (O ano será ignorado)';
+  if (annualInstallmentAmountHint) {
+    annualInstallmentAmountHint.classList.toggle('visible', enabled);
+    annualInstallmentAmountHint.textContent = enabled
+      ? mode === 'purchase'
+        ? usesInterest
+          ? interestType === 'mortgage'
+            ? 'Informe o saldo que ainda falta pagar. O cálculo usa a regra canadense de hipoteca fixa.'
+            : 'Informe o valor financiado antes dos juros.'
+          : 'O sistema dividirá este total sem perder centavos.'
+        : 'Este valor será usado em cada lançamento.'
+      : '';
+  }
+
+  if (enabled && annualOneOffCheckbox) {
+    annualOneOffCheckbox.checked = true;
+    annualOneOffCheckbox.disabled = true;
+  } else if (annualOneOffCheckbox) {
+    annualOneOffCheckbox.disabled = false;
+  }
+
+  if (!annualInstallmentPreview) return;
+  if (!enabled) {
+    annualInstallmentPreview.innerHTML = '';
+    return;
+  }
+
+  const amount = parseAmount(annualAmountInput.value);
+  const count = Math.min(600, Math.max(2, parseInt(annualInstallmentsCount.value, 10) || 2));
+  const interval = Math.max(1, parseInt(annualInstallmentsInterval.value, 10) || 1);
+  const firstDate = annualDateInput.value;
+  if (!Number.isFinite(amount) || amount <= 0) {
+    annualInstallmentPreview.innerHTML = 'Informe o valor para visualizar a transformação.';
+    return;
+  }
+
+  const lastDate = firstDate ? addMonthsToAnnualDate(firstDate, (count - 1) * interval) : '';
+  if (mode === 'purchase') {
+    const rate = Number(annualInterestRate?.value);
+    if (usesInterest && (!Number.isFinite(rate) || rate <= 0)) {
+      annualInstallmentPreview.innerHTML = 'Informe a taxa anual para calcular as parcelas.';
+      return;
+    }
+    if (usesInterest && interestType === 'mortgage' && (!Number(annualMortgageAmortization?.value) || Number(annualMortgageAmortization.value) <= 0)) {
+      annualInstallmentPreview.innerHTML = 'Informe quantos anos ainda faltam na amortização da hipoteca.';
+      return;
+    }
+
+    const calculation = paymentFrequency === 'biweekly' || usesInterest ? calculateInstallmentScheduleWithInterest(amount, usesInterest ? rate : 0, count, interestType, paymentFrequency) : null;
+    const portions = calculation?.amounts || distributeCurrencyAmount(amount, count);
+    const grouped = portions.reduce((result, value) => {
+      const key = value.toFixed(2);
+      result[key] = (result[key] || 0) + 1;
+      return result;
+    }, {});
+    const composition = Object.entries(grouped)
+      .map(([value, quantity]) => `${quantity} × ${formatCurrency(Number(value))}`)
+      .join(' + ');
+    annualInstallmentPreview.innerHTML = paymentFrequency === 'biweekly'
+      ? `<strong>${calculation.paymentCount} pagamentos bisemanais de aproximadamente ${formatCurrency(calculation.periodicPayment)}</strong><br>No orçamento mensal: <strong>${formatCurrency(calculation.monthlyEquivalent)}</strong> (26 pagamentos ÷ 12 meses)<br>${usesInterest ? `Valor financiado: ${formatCurrency(amount)} • Juros estimados: ${formatCurrency(calculation.totalInterest)} • Total estimado: ${formatCurrency(calculation.totalPaid)}` : `Valor total da compra: ${formatCurrency(amount)}`}${lastDate ? `<br>Controle mensal de ${formatShortDate(firstDate)} até ${formatShortDate(lastDate)}.` : ''}`
+      : usesInterest
+        ? `<strong>${count} parcelas mensais de aproximadamente ${formatCurrency(calculation.periodicPayment)}</strong><br>Valor financiado: ${formatCurrency(amount)} • Juros estimados: ${formatCurrency(calculation.totalInterest)} • Total estimado: ${formatCurrency(calculation.totalPaid)}${lastDate ? `<br>De ${formatShortDate(firstDate)} até ${formatShortDate(lastDate)}.` : ''}`
+        : `<strong>${count} parcelas:</strong> ${composition} = ${formatCurrency(amount)}${lastDate ? `<br>De ${formatShortDate(firstDate)} até ${formatShortDate(lastDate)}.` : ''}`;
+  } else {
+    annualInstallmentPreview.innerHTML = `<strong>${count} lançamentos</strong> de ${formatCurrency(amount)} • Total do período: ${formatCurrency(amount * count)}${lastDate ? `<br>De ${formatShortDate(firstDate)} até ${formatShortDate(lastDate)}.` : ''}`;
+  }
+}
 
 if (annualInstallmentCheck) {
-  annualInstallmentCheck.addEventListener('change', (e) => {
-    annualInstallmentFields.style.display = e.target.checked ? 'flex' : 'none';
-  });
+  annualInstallmentCheck.addEventListener('change', updateAnnualInstallmentBuilder);
 }
+annualInstallmentModeInputs.forEach((input) => input.addEventListener('change', updateAnnualInstallmentBuilder));
+annualInterestCheck?.addEventListener('change', updateAnnualInstallmentBuilder);
+annualInterestTypeInputs.forEach((input) => input.addEventListener('change', updateAnnualInstallmentBuilder));
+annualPaymentFrequencyInputs.forEach((input) => input.addEventListener('change', updateAnnualInstallmentBuilder));
+[annualAmountInput, annualDateInput, annualInstallmentsCount, annualInstallmentsInterval, annualInterestRate, annualMortgageAmortization].forEach((input) =>
+  input?.addEventListener('input', updateAnnualInstallmentBuilder),
+);
 
 let selectedAnnualType = '';
 const annualTypeChips = document.getElementById('annual-type-chips');
@@ -4707,14 +5095,274 @@ if (annualCategoryInput) {
   });
 }
 
+function getInstallmentPlan(planId) {
+  return installmentPlans.find((plan) => plan.id === planId) || null;
+}
+
+function canFullyEditInstallmentPlan(plan) {
+  const installments = plan?.installments || [];
+  const protectedInstallments = installments.filter((installment) => ['paid', 'budgeted'].includes(installment.status));
+  if (protectedInstallments.length === 0) return true;
+
+  // A primeira parcela de uma compra nova é criada automaticamente no Orçamento
+  // e em Notas. Enquanto ela for o único histórico, os dois registros ainda podem
+  // ser reconstruídos com segurança pela edição completa do cadastro.
+  if (plan.automationMode !== 'fixed-static-clone' || protectedInstallments.length !== 1) return false;
+  const firstInstallment = protectedInstallments[0];
+  return Number(firstInstallment.number) === 1 && Boolean(firstInstallment.plannedId && firstInstallment.receiptId);
+}
+
+async function deleteInstallmentLinkedRecords(plan, keep = {}) {
+  if (!plan) return;
+  const keepAnnualEventIds = keep.annualEventIds || new Set();
+  const keepPlannedKeys = keep.plannedKeys || new Set();
+  const keepReceiptKeys = keep.receiptKeys || new Set();
+  const deletedAnnualEventIds = new Set();
+  const deletedPlannedKeys = new Set();
+  const deletedReceiptKeys = new Set();
+
+  for (const installment of plan.installments || []) {
+    if (installment.annualEventId && !keepAnnualEventIds.has(installment.annualEventId) && !deletedAnnualEventIds.has(installment.annualEventId)) {
+      await FinanceAPI.deleteAnnualEvent(installment.annualEventId);
+      deletedAnnualEventIds.add(installment.annualEventId);
+    }
+
+    const plannedMonth = installment.plannedMonth || installment.targetDate?.substring(0, 7);
+    const plannedKey = plannedMonth && installment.plannedId ? `${plannedMonth}:${installment.plannedId}` : '';
+    if (plannedKey && !keepPlannedKeys.has(plannedKey) && !deletedPlannedKeys.has(plannedKey)) {
+      await FinanceAPI.deletePlanned(plannedMonth, installment.plannedId);
+      deletedPlannedKeys.add(plannedKey);
+    }
+
+    const receiptMonth = installment.receiptMonth || installment.targetDate?.substring(0, 7);
+    const receiptKey = receiptMonth && installment.receiptId ? `${receiptMonth}:${installment.receiptId}` : '';
+    if (receiptKey && !keepReceiptKeys.has(receiptKey) && !deletedReceiptKeys.has(receiptKey)) {
+      await FinanceAPI.deleteReceipt(receiptMonth, installment.receiptId);
+      deletedReceiptKeys.add(receiptKey);
+    }
+  }
+}
+
+async function updateInstallmentPlanEntry(planId, installmentNumber, changes) {
+  const plan = getInstallmentPlan(planId);
+  if (!plan) return;
+  const updatedInstallments = (plan.installments || []).map((installment) =>
+    installment.number === Number(installmentNumber) ? { ...installment, ...changes } : installment,
+  );
+  const updatedPlan = {
+    ...plan,
+    installments: updatedInstallments,
+    totalAmount: updatedInstallments.reduce((total, installment) => total + (Number(installment.amount) || 0), 0),
+    updatedAt: new Date().toISOString(),
+  };
+  await FinanceAPI.saveInstallmentPlan(updatedPlan);
+}
+
+function getInstallmentStatusPresentation(status) {
+  if (status === 'paid') return { label: 'Paga', className: 'paid' };
+  if (status === 'budgeted') return { label: 'No orçamento', className: 'budgeted' };
+  if (status === 'cancelled') return { label: 'Cancelada', className: 'cancelled' };
+  return { label: 'Pendente', className: 'pending' };
+}
+
+function renderInstallmentPlans() {
+  if (!installmentPlansCard || !installmentPlansList) return;
+  const activePlans = installmentPlans
+    .filter((plan) => (plan.installments || []).some((installment) => !['paid', 'cancelled'].includes(installment.status)))
+    .sort((a, b) => String(a.startDate || '').localeCompare(String(b.startDate || '')));
+
+  installmentPlansCard.hidden = activePlans.length === 0;
+  installmentPlansList.innerHTML = '';
+  if (activePlans.length === 0) return;
+
+  activePlans.forEach((plan) => {
+    const installments = plan.installments || [];
+    const paid = installments.filter((installment) => installment.status === 'paid');
+    const paidAmount = paid.reduce((total, installment) => total + Math.abs(Number(installment.paidAmount ?? installment.amount) || 0), 0);
+    const totalAmount = Math.abs(Number(plan.totalAmount) || installments.reduce((total, installment) => total + Math.abs(Number(installment.amount) || 0), 0));
+    const progress = installments.length ? Math.min(100, (paid.length / installments.length) * 100) : 0;
+    const canFullyEdit = canFullyEditInstallmentPlan(plan);
+    const modeLabel = plan.mode === 'repeat' ? 'Repetição' : 'Parcelamento';
+    const interestLabel = plan.hasInterest
+      ? `${plan.interestType === 'mortgage' ? 'Hipoteca' : 'Financiamento'} • ${Number(plan.annualInterestRate).toLocaleString('pt-BR')}% a.a.${plan.paymentFrequency === 'biweekly' ? ' • Bisemanal → mensal' : ''}`
+      : '';
+    const details = document.createElement('details');
+    details.className = 'installment-plan';
+    details.innerHTML = `
+      <summary class="installment-plan-summary">
+        <div class="installment-plan-title">
+          <div class="installment-plan-title-line">
+            <strong>${escapeCardDetail(plan.name || 'Sem nome')}</strong>
+            <span class="installment-plan-badge">${modeLabel}</span>
+          </div>
+          <div class="installment-plan-meta">${escapeCardDetail(plan.category || '')} • ${escapeCardDetail(plan.owner || '')} • início em ${formatShortDate(plan.startDate)}${interestLabel ? ` • ${interestLabel}` : ''}</div>
+        </div>
+        <div class="installment-plan-numbers">
+          <strong>${formatCurrency(paidAmount)}</strong> de ${formatCurrency(totalAmount)}
+          <div class="installment-plan-count">${paid.length} de ${installments.length} pagas</div>
+        </div>
+        <div class="installment-plan-progress" aria-label="${progress.toFixed(0)}% concluído"><span style="width:${progress}%"></span></div>
+      </summary>
+      <div class="installment-plan-installments">
+        ${installments
+          .map((installment) => {
+            const presentation = getInstallmentStatusPresentation(installment.status);
+            return `<div class="installment-plan-item">
+              <strong>${installment.number}/${installments.length}</strong>
+              <span>${formatShortDate(installment.targetDate)} • ${formatCurrency(Math.abs(installment.amount))}</span>
+              <span class="installment-status installment-status--${presentation.className}">${presentation.label}</span>
+            </div>`;
+          })
+          .join('')}
+      </div>
+      <div class="installment-plan-actions">
+        <button type="button" class="action-btn${canFullyEdit ? '' : ' is-locked'}" onclick="startEditInstallmentPlan('${plan.id}', event)" title="${canFullyEdit ? 'Voltar este parcelamento ao formulário' : 'Há parcelas lançadas; o histórico está protegido'}">${canFullyEdit ? 'Editar cadastro' : '🔒 Editar cadastro'}</button>
+        <button type="button" class="action-btn" onclick="adjustFutureInstallments('${plan.id}', event)">Ajustar futuras</button>
+        ${
+          canFullyEdit
+            ? `<button type="button" class="action-btn danger" onclick="deleteInstallmentPlanFully('${plan.id}', event)">Excluir parcelamento</button>`
+            : `<button type="button" class="action-btn danger" onclick="cancelFutureInstallments('${plan.id}', event)">Encerrar parcelamento</button>`
+        }
+      </div>
+    `;
+    installmentPlansList.appendChild(details);
+  });
+}
+
+window.startEditInstallmentPlan = function (planId, event) {
+  event?.preventDefault();
+  event?.stopPropagation();
+  const plan = getInstallmentPlan(planId);
+  if (!plan) return showToast('Não foi possível localizar o parcelamento.', 'error');
+  if (!canFullyEditInstallmentPlan(plan)) {
+    return showToast('Este parcelamento já possui parcela lançada ou paga. Para proteger o histórico, ajuste somente as parcelas futuras.', 'info');
+  }
+
+  editingInstallmentPlanId = plan.id;
+  editingAnnualId = null;
+  annualNameInput.value = plan.name || '';
+  annualCategoryInput.value = plan.category || '';
+  annualDateInput.value = plan.startDate || '';
+  annualAmountInput.value = Math.abs(Number(plan.principalAmount ?? plan.totalAmount) || 0);
+  annualOwnerSelect.value = plan.owner || 'Ambos';
+  annualPaymentSelect.value = plan.paymentMethodId || 'dinheiro';
+  annualObservationInput.value = plan.observation || '';
+  const incomeCheck = document.getElementById('annual-is-income');
+  if (incomeCheck) incomeCheck.checked = Boolean(plan.isIncome);
+  if (annualInstallmentCheck) {
+    annualInstallmentCheck.checked = true;
+    annualInstallmentCheck.parentElement.parentElement.style.display = 'flex';
+  }
+  annualInstallmentModeInputs.forEach((input) => (input.checked = input.value === (plan.mode || 'purchase')));
+  annualInstallmentsCount.value = String(plan.installmentCount || plan.installments?.length || 2);
+  annualInstallmentsInterval.value = String(plan.intervalMonths || 1);
+  if (annualInterestCheck) annualInterestCheck.checked = Boolean(plan.hasInterest);
+  annualInterestTypeInputs.forEach((input) => (input.checked = input.value === (plan.interestType || 'financing')));
+  annualPaymentFrequencyInputs.forEach((input) => (input.checked = input.value === (plan.paymentFrequency || 'monthly')));
+  if (annualInterestRate) annualInterestRate.value = plan.annualInterestRate || '';
+  if (annualMortgageAmortization) annualMortgageAmortization.value = plan.amortizationYears || '';
+  if (annualOneOffCheckbox) annualOneOffCheckbox.checked = true;
+
+  selectedAnnualType = plan.category || getCategories()[0] || '';
+  updateAnnualChips();
+  updateAnnualInstallmentBuilder();
+  annualSubmitBtn.textContent = 'Salvar alterações do parcelamento';
+  formAnnual.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  showToast('Parcelamento carregado para edição.', 'info');
+};
+
+window.adjustFutureInstallments = async function (planId, event) {
+  event?.preventDefault();
+  event?.stopPropagation();
+  const plan = getInstallmentPlan(planId);
+  const future = plan?.installments?.filter((installment) => !['paid', 'cancelled'].includes(installment.status)) || [];
+  if (!plan || future.length === 0) return showToast('Não há parcelas futuras para ajustar.', 'info');
+
+  const currentValue = Math.abs(Number(future[0].amount) || 0).toFixed(2).replace('.', ',');
+  const answer = await showPrompt(`Novo valor para as ${future.length} parcelas futuras de "${plan.name}"?\n\nAs parcelas já pagas não serão alteradas.`, currentValue);
+  if (answer === null) return;
+  const newAmount = parseAmount(answer);
+  if (!Number.isFinite(newAmount) || newAmount <= 0) return showToast('Informe um valor válido.', 'error');
+  if (!(await showConfirm(`Aplicar ${formatCurrency(newAmount)} em todas as parcelas futuras?`))) return;
+
+  const signedAmount = plan.isIncome ? -Math.abs(newAmount) : Math.abs(newAmount);
+  const futureNumbers = new Set(future.map((installment) => installment.number));
+  const updatedInstallments = plan.installments.map((installment) => (futureNumbers.has(installment.number) ? { ...installment, amount: signedAmount } : installment));
+
+  for (const installment of future) {
+    if (!installment.annualEventId) continue;
+    const eventItem = annualEvents.find((annualEvent) => annualEvent.id === installment.annualEventId);
+    if (eventItem) await FinanceAPI.saveAnnualEvent({ ...eventItem, id: eventItem.id, amount: signedAmount });
+  }
+
+  await FinanceAPI.saveInstallmentPlan({
+    ...plan,
+    installments: updatedInstallments,
+    totalAmount: updatedInstallments.reduce((total, installment) => total + (Number(installment.amount) || 0), 0),
+    paymentAmount: plan.paymentFrequency === 'biweekly' ? Math.round(newAmount * (12 / 26) * 100) / 100 : newAmount,
+    monthlyEquivalentAmount: newAmount,
+    futureAmountAdjusted: true,
+    updatedAt: new Date().toISOString(),
+  });
+  showToast('Parcelas futuras ajustadas.', 'success');
+};
+
+window.deleteInstallmentPlanFully = async function (planId, event) {
+  event?.preventDefault();
+  event?.stopPropagation();
+  const plan = getInstallmentPlan(planId);
+  if (!plan) return showToast('Não foi possível localizar o parcelamento.', 'error');
+  if (!canFullyEditInstallmentPlan(plan)) {
+    return showToast('Este parcelamento já possui histórico em outros meses. Encerre-o para preservar os lançamentos pagos.', 'info');
+  }
+
+  const linkedPlannedCount = (plan.installments || []).filter((installment) => installment.plannedId).length;
+  const linkedReceiptCount = (plan.installments || []).filter((installment) => installment.receiptId).length;
+  const message = `Excluir todo o parcelamento "${plan.name}"?\n\nTambém serão removidos ${linkedPlannedCount} item(ns) do Orçamento e ${linkedReceiptCount} lançamento(s) de Notas vinculados. Esta ação não pode ser desfeita.`;
+  if (!(await showConfirm(message, true))) return;
+
+  try {
+    await deleteInstallmentLinkedRecords(plan);
+    await FinanceAPI.deleteInstallmentPlan(plan.id);
+    logActivity('Excluiu', `Parcelamento completo: ${plan.name}`);
+    showToast('Parcelamento e lançamentos vinculados excluídos.', 'success');
+  } catch (error) {
+    console.error('Erro ao excluir parcelamento completo:', error);
+    showToast('Não foi possível excluir todo o parcelamento. Tente novamente.', 'error');
+  }
+};
+
+window.cancelFutureInstallments = async function (planId, event) {
+  event?.preventDefault();
+  event?.stopPropagation();
+  const plan = getInstallmentPlan(planId);
+  const future = plan?.installments?.filter((installment) => !['paid', 'cancelled'].includes(installment.status)) || [];
+  if (!plan || future.length === 0) return showToast('Este parcelamento já foi encerrado.', 'info');
+  if (!(await showConfirm(`Encerrar "${plan.name}" e cancelar as ${future.length} parcelas futuras? O histórico já pago será preservado.`, true))) return;
+
+  for (const installment of future) {
+    if (installment.annualEventId) await FinanceAPI.deleteAnnualEvent(installment.annualEventId);
+  }
+  const futureNumbers = new Set(future.map((installment) => installment.number));
+  await FinanceAPI.saveInstallmentPlan({
+    ...plan,
+    status: 'cancelled',
+    installments: plan.installments.map((installment) =>
+      futureNumbers.has(installment.number) ? { ...installment, status: 'cancelled', annualEventId: null } : installment,
+    ),
+    cancelledAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  showToast('Parcelamento encerrado. O histórico pago foi mantido.', 'success');
+};
+
 if (formAnnual) {
   formAnnual.addEventListener('submit', async (e) => {
     e.preventDefault();
     const name = annualNameInput.value.trim();
     const category = annualCategoryInput.value.trim();
     const dateVal = annualDateInput.value;
-    const monthTarget = dateVal ? dateVal.split('-')[1] : '';
-    const dayTarget = dateVal ? dateVal.split('-')[2] : '';
+    const [targetYear, monthTarget, dayTarget] = dateVal ? dateVal.split('-') : ['', '', ''];
     const rawAmount = parseAmount(annualAmountInput.value);
     const isIncome = document.getElementById('annual-is-income')?.checked || false;
     const amount = isIncome ? -Math.abs(rawAmount) : Math.abs(rawAmount);
@@ -4730,25 +5378,212 @@ if (formAnnual) {
     annualSubmitBtn.textContent = 'Salvando...';
     annualSubmitBtn.disabled = true;
 
-    await autoRegisterCompany(category, name);
+    try {
+      await autoRegisterCompany(category, name);
 
-    const isInstallment = annualInstallmentCheck && annualInstallmentCheck.checked && !editingAnnualId;
-    const count = isInstallment ? parseInt(annualInstallmentsCount.value) || 2 : 1;
-    const interval = isInstallment ? parseInt(annualInstallmentsInterval.value) || 1 : 1;
+      const isInstallment = Boolean(annualInstallmentCheck?.checked && !editingAnnualId);
+      if (isInstallment) {
+        const count = Math.min(600, Math.max(2, parseInt(annualInstallmentsCount.value, 10) || 2));
+        const mode = getAnnualInstallmentMode();
+        const interval = mode === 'purchase' ? 1 : Math.min(12, Math.max(1, parseInt(annualInstallmentsInterval.value, 10) || 1));
+        const hasInterest = mode === 'purchase' && Boolean(annualInterestCheck?.checked);
+        const interestType = getAnnualInterestType();
+        const paymentFrequency = mode === 'purchase' ? getAnnualPaymentFrequency() : 'monthly';
+        const annualRate = hasInterest ? Number(annualInterestRate?.value) : 0;
+        const amortizationYears = hasInterest && interestType === 'mortgage' ? Number(annualMortgageAmortization?.value) : null;
 
-    let baseMonth = parseInt(monthTarget);
+        if (hasInterest && (!Number.isFinite(annualRate) || annualRate <= 0)) {
+          return showToast('Informe uma taxa anual válida.', 'error');
+        }
+        if (hasInterest && interestType === 'mortgage' && (!Number.isFinite(amortizationYears) || amortizationYears <= 0)) {
+          return showToast('Informe a amortização restante da hipoteca.', 'error');
+        }
 
-    for (let i = 0; i < count; i++) {
-      let m = (baseMonth + i * interval) % 12;
-      if (m === 0) m = 12; // Mês 12 (Dezembro) ao invés de 0
+        const paymentCalculation = mode === 'purchase' && (hasInterest || paymentFrequency === 'biweekly')
+          ? calculateInstallmentScheduleWithInterest(rawAmount, annualRate, count, interestType, paymentFrequency)
+          : null;
+        const absoluteAmounts =
+          mode === 'purchase' ? paymentCalculation?.amounts || distributeCurrencyAmount(rawAmount, count) : Array.from({ length: count }, () => Math.abs(rawAmount));
+        const signedAmounts = absoluteAmounts.map((value) => (isIncome ? -value : value));
+        const schedule = signedAmounts.map((installmentAmount, index) => {
+          const targetDate = addMonthsToAnnualDate(dateVal, index * interval);
+          return {
+            number: index + 1,
+            amount: installmentAmount,
+            targetDate,
+            status: 'pending',
+          };
+        });
+        const existingPlan = editingInstallmentPlanId ? getInstallmentPlan(editingInstallmentPlanId) : null;
+        if (editingInstallmentPlanId && !existingPlan) return showToast('Não foi possível localizar o parcelamento em edição.', 'error');
+        if (existingPlan && !canFullyEditInstallmentPlan(existingPlan)) {
+          return showToast('O histórico deste parcelamento mudou durante a edição. Ajuste somente as parcelas futuras.', 'info');
+        }
 
-      const currentTargetMonth = String(m).padStart(2, '0');
-      const currentName = isInstallment ? `${name} (${i + 1}/${count})` : name;
+        const planData = {
+          name,
+          category,
+          owner,
+          paymentMethodId,
+          observation,
+          isIncome,
+          mode,
+          automationMode: mode === 'purchase' ? 'fixed-static-clone' : 'annual-events',
+          status: 'active',
+          startDate: dateVal,
+          intervalMonths: interval,
+          installmentCount: count,
+          principalAmount: mode === 'purchase' ? Math.abs(rawAmount) : null,
+          totalAmount: signedAmounts.reduce((total, value) => total + value, 0),
+          hasInterest,
+          interestType: hasInterest ? interestType : null,
+          annualInterestRate: hasInterest ? annualRate : null,
+          paymentFrequency: mode === 'purchase' ? paymentFrequency : null,
+          paymentCount: paymentCalculation?.paymentCount || count,
+          paymentAmount: paymentCalculation?.periodicPayment || null,
+          monthlyEquivalentAmount: paymentCalculation?.monthlyEquivalent || null,
+          amortizationYears: hasInterest && interestType === 'mortgage' ? amortizationYears : null,
+          estimatedInterest: paymentCalculation?.totalInterest || 0,
+          installments: schedule,
+          createdAt: existingPlan?.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        if (existingPlan) planData.id = existingPlan.id;
+        const planId = existingPlan ? existingPlan.id : await FinanceAPI.saveInstallmentPlan(planData);
+        const savedSchedule = [];
 
+        if (mode === 'purchase') {
+          const firstInstallment = schedule[0];
+          const targetMonth = firstInstallment.targetDate.substring(0, 7);
+          const currentName = `${name} (1/${count})`;
+          const staticSyncId = `installment_${planId}_1`;
+          const previousFirstInstallment = existingPlan?.installments?.find((installment) => Number(installment.number) === 1);
+          const previousPlannedMonth = previousFirstInstallment?.plannedMonth || previousFirstInstallment?.targetDate?.substring(0, 7);
+          const previousReceiptMonth = previousFirstInstallment?.receiptMonth || previousFirstInstallment?.targetDate?.substring(0, 7);
+          const plannedData = {
+            date: firstInstallment.targetDate,
+            category,
+            description: currentName,
+            amount: firstInstallment.amount,
+            owner,
+            paymentMethodId,
+            observation,
+            fixed: true,
+            isStatic: true,
+            month: targetMonth,
+            staticSyncId,
+            installmentPlanId: planId,
+            installmentNumber: 1,
+            installmentCount: count,
+            installmentMode: mode,
+            installmentOriginalName: name,
+            installmentAutomationMode: 'fixed-static-clone',
+          };
+          if (previousFirstInstallment?.plannedId && previousPlannedMonth === targetMonth) {
+            plannedData.id = previousFirstInstallment.plannedId;
+          }
+          if (paymentFrequency === 'biweekly' && paymentCalculation) {
+            plannedData.isBiweeklyConverted = true;
+            plannedData.biweeklyAmount = paymentCalculation.periodicPayment;
+            plannedData.biweeklyMonthlyAmount = firstInstallment.amount;
+          }
+          const plannedId = await FinanceAPI.savePlanned(targetMonth, plannedData);
+          const receiptData = {
+            date: firstInstallment.targetDate,
+            category,
+            merchant: currentName,
+            amount: firstInstallment.amount,
+            owner,
+            paymentMethodId,
+            observation,
+            isStatic: true,
+            staticSyncId,
+            linkedPlannedId: plannedId,
+            installmentPlanId: planId,
+            installmentNumber: 1,
+            installmentCount: count,
+            installmentMode: mode,
+            installmentOriginalName: name,
+            installmentAutomationMode: 'fixed-static-clone',
+          };
+          if (previousFirstInstallment?.receiptId && previousReceiptMonth === targetMonth) {
+            receiptData.id = previousFirstInstallment.receiptId;
+          }
+          if (paymentFrequency === 'biweekly' && paymentCalculation) {
+            receiptData.isBiweeklyConverted = true;
+            receiptData.biweeklyAmount = paymentCalculation.periodicPayment;
+            receiptData.biweeklyMonthlyAmount = firstInstallment.amount;
+          }
+          const receiptId = await FinanceAPI.saveReceipt(targetMonth, receiptData);
+          savedSchedule.push({
+            ...firstInstallment,
+            status: 'paid',
+            plannedId,
+            plannedMonth: targetMonth,
+            receiptId,
+            receiptMonth: targetMonth,
+            paidAmount: firstInstallment.amount,
+            paidAt: firstInstallment.targetDate,
+          });
+          savedSchedule.push(...schedule.slice(1));
+          await FinanceAPI.saveInstallmentPlan({ ...planData, id: planId, installments: savedSchedule, updatedAt: new Date().toISOString() });
+          if (existingPlan) {
+            await deleteInstallmentLinkedRecords(existingPlan, {
+              plannedKeys: new Set([`${targetMonth}:${plannedId}`]),
+              receiptKeys: new Set([`${targetMonth}:${receiptId}`]),
+            });
+          }
+          const wasEditingPlan = Boolean(existingPlan);
+          resetAnnualForm();
+          showToast(wasEditingPlan ? 'Parcelamento atualizado e recriado sem duplicar parcelas.' : 'Parcelamento criado como Fixo e Estático. A próxima parcela entrará ao clonar o mês.', 'success');
+          return;
+        }
+
+        for (const installment of schedule) {
+          const [, currentTargetMonth, currentDay] = installment.targetDate.split('-');
+          const currentTargetYear = installment.targetDate.split('-')[0];
+          const currentName = `${name} (${installment.number}/${count})`;
+          const itemData = {
+            name: currentName,
+            installmentOriginalName: name,
+            category,
+            monthTarget: currentTargetMonth,
+            targetYear: currentTargetYear,
+            dayTarget: currentDay,
+            amount: installment.amount,
+            owner,
+            paymentMethodId,
+            observation,
+            isOneOff: true,
+            isIncome,
+            installmentPlanId: planId,
+            installmentNumber: installment.number,
+            installmentCount: count,
+            installmentMode: mode,
+          };
+          const annualEventId = await FinanceAPI.saveAnnualEvent(itemData);
+          savedSchedule.push({ ...installment, annualEventId });
+          logActivity('Adicionou', `Evento Anual: ${currentName} - ${formatCurrency(installment.amount)}`);
+        }
+
+        await FinanceAPI.saveInstallmentPlan({ ...planData, id: planId, installments: savedSchedule, updatedAt: new Date().toISOString() });
+        if (existingPlan) {
+          await deleteInstallmentLinkedRecords(existingPlan, {
+            annualEventIds: new Set(savedSchedule.map((installment) => installment.annualEventId).filter(Boolean)),
+          });
+        }
+        const wasEditingPlan = Boolean(existingPlan);
+        resetAnnualForm();
+        showToast(wasEditingPlan ? 'Planejamento atualizado sem duplicar lançamentos.' : mode === 'purchase' ? `Compra dividida em ${count} parcelas.` : `${count} repetições programadas.`, 'success');
+        return;
+      }
+
+      const oldEvent = editingAnnualId ? annualEvents.find((event) => event.id === editingAnnualId) : null;
       const itemData = {
-        name: currentName,
+        ...(oldEvent || {}),
+        name,
         category,
-        monthTarget: currentTargetMonth,
+        monthTarget,
         dayTarget,
         amount,
         owner,
@@ -4757,25 +5592,32 @@ if (formAnnual) {
         isOneOff,
         isIncome,
       };
-
-      if (editingAnnualId && !isInstallment) {
-        itemData.id = editingAnnualId;
-      }
-
+      if (editingAnnualId) itemData.id = editingAnnualId;
+      if (oldEvent?.installmentPlanId) itemData.targetYear = targetYear;
       await FinanceAPI.saveAnnualEvent(itemData);
-      logActivity(editingAnnualId && !isInstallment ? 'Editou' : 'Adicionou', `Evento Anual: ${currentName} - ${formatCurrency(amount)}`);
+      if (oldEvent?.installmentPlanId) {
+        await updateInstallmentPlanEntry(oldEvent.installmentPlanId, oldEvent.installmentNumber, {
+          amount,
+          targetDate: `${targetYear}-${monthTarget}-${dayTarget}`,
+        });
+      }
+      logActivity(editingAnnualId ? 'Editou' : 'Adicionou', `Evento Anual: ${name} - ${formatCurrency(amount)}`);
+      resetAnnualForm();
+      showToast(editingAnnualId ? 'Evento anual atualizado.' : 'Evento anual salvo com sucesso!', 'success');
+    } catch (error) {
+      console.error('Erro ao salvar planejamento anual:', error);
+      showToast('Não foi possível salvar o planejamento.', 'error');
+    } finally {
+      annualSubmitBtn.textContent = editingInstallmentPlanId ? 'Salvar alterações do parcelamento' : editingAnnualId ? 'Salvar Alterações' : 'Salvar Evento Anual';
+      annualSubmitBtn.disabled = false;
     }
-
-    annualSubmitBtn.textContent = 'Salvar Evento Anual';
-    annualSubmitBtn.disabled = false;
-    resetAnnualForm();
-    showToast(isInstallment ? `${count} parcelas salvas com sucesso!` : 'Evento anual salvo com sucesso!', 'success');
   });
 }
 
 function resetAnnualForm() {
   formAnnual.reset();
   editingAnnualId = null;
+  editingInstallmentPlanId = null;
   annualSubmitBtn.textContent = 'Salvar Evento Anual';
 
   selectedAnnualType = getCategories()[0] || '';
@@ -4785,8 +5627,17 @@ function resetAnnualForm() {
   const isIncomeCheck = document.getElementById('annual-is-income');
   if (isIncomeCheck) isIncomeCheck.checked = false;
   if (annualInstallmentCheck) annualInstallmentCheck.checked = false;
-  if (annualInstallmentFields) annualInstallmentFields.style.display = 'none';
+  annualInstallmentModeInputs.forEach((input) => (input.checked = input.value === 'purchase'));
+  if (annualInterestCheck) annualInterestCheck.checked = false;
+  annualInterestTypeInputs.forEach((input) => (input.checked = input.value === 'financing'));
+  annualPaymentFrequencyInputs.forEach((input) => (input.checked = input.value === 'monthly'));
+  if (annualInterestRate) annualInterestRate.value = '';
+  if (annualMortgageAmortization) annualMortgageAmortization.value = '';
+  if (annualInstallmentsCount) annualInstallmentsCount.readOnly = false;
+  if (annualInstallmentsInterval) annualInstallmentsInterval.readOnly = false;
+  if (annualInstallmentFields) annualInstallmentFields.hidden = true;
   if (annualInstallmentCheck) annualInstallmentCheck.parentElement.parentElement.style.display = 'flex'; // Garante que volta a aparecer caso estivesse editando
+  updateAnnualInstallmentBuilder();
   updateAnnualChips();
 }
 
@@ -4798,7 +5649,7 @@ function startEditAnnual(id) {
   annualNameInput.value = item.name;
   annualCategoryInput.value = item.category;
 
-  const dummyYear = new Date().getFullYear();
+  const dummyYear = item.targetYear || new Date().getFullYear();
   const safeDay = item.dayTarget ? String(item.dayTarget).padStart(2, '0') : '01';
   annualDateInput.value = `${dummyYear}-${item.monthTarget}-${safeDay}`;
 
@@ -4812,7 +5663,11 @@ function startEditAnnual(id) {
   if (annualOneOffCheckbox) annualOneOffCheckbox.checked = item.isOneOff || false;
 
   // Oculta opção de gerar parcelas ao editar
-  if (annualInstallmentCheck) annualInstallmentCheck.parentElement.parentElement.style.display = 'none';
+  if (annualInstallmentCheck) {
+    annualInstallmentCheck.checked = false;
+    annualInstallmentCheck.parentElement.parentElement.style.display = 'none';
+  }
+  updateAnnualInstallmentBuilder();
 
   annualSubmitBtn.textContent = 'Salvar Alterações';
 
@@ -4829,6 +5684,9 @@ async function deleteAnnual(id) {
   if (!(await showConfirm('Excluir este evento do planejamento anual?', true))) return;
   const ev = annualEvents.find((a) => a.id === id);
   await FinanceAPI.deleteAnnualEvent(id);
+  if (ev?.installmentPlanId) {
+    await updateInstallmentPlanEntry(ev.installmentPlanId, ev.installmentNumber, { status: 'cancelled', annualEventId: null });
+  }
   if (ev) logActivity('Excluiu', `Evento Anual: ${ev.name} - ${formatCurrency(Math.abs(ev.amount))}`);
   if (editingAnnualId === id) resetAnnualForm();
   showToast('Evento excluído.', 'success');
@@ -4918,6 +5776,12 @@ async function confirmAnnualMove(itemId, targetMonth) {
   if (!confirmed) return;
 
   await FinanceAPI.saveAnnualEvent({ ...item, id: item.id, monthTarget: targetMonth, dayTarget: adjustedDayText });
+  if (item.installmentPlanId) {
+    const year = item.targetYear || new Date().getFullYear();
+    await updateInstallmentPlanEntry(item.installmentPlanId, item.installmentNumber, {
+      targetDate: `${year}-${targetMonth}-${adjustedDayText}`,
+    });
+  }
   logActivity('Moveu', `Evento Anual: ${item.name} • ${sourceMonthName} → ${targetMonthName}`);
   showToast(`Evento movido para ${targetMonthName}.`, 'success');
 }
@@ -4992,6 +5856,9 @@ function renderAnnualList() {
 
   // 1. Ordena primeiro por mês e depois por dia para ficar na sequência perfeita
   const sorted = [...annualEvents].sort((a, b) => {
+    const yearA = a.targetYear || '0000';
+    const yearB = b.targetYear || '0000';
+    if (yearA !== yearB) return yearA.localeCompare(yearB);
     if (a.monthTarget === b.monthTarget) {
       const dayA = a.dayTarget ? parseInt(a.dayTarget) : 1;
       const dayB = b.dayTarget ? parseInt(b.dayTarget) : 1;
@@ -5059,6 +5926,10 @@ function renderAnnualList() {
         const oneOffBadge = item.isOneOff
           ? ' <span style="background: rgba(255, 123, 123, 0.15); color: #ff7b7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(255, 123, 123, 0.3); margin-left: 6px; vertical-align: middle;">Único</span>'
           : '';
+        const installmentBadge = item.installmentPlanId
+          ? ` <span class="annual-plan-badge">${item.installmentMode === 'repeat' ? 'Repetição' : 'Parcela'}</span>`
+          : '';
+        const targetYearBadge = item.targetYear ? ` <span class="annual-plan-badge">${item.targetYear}</span>` : '';
 
         const isIncome = item.amount < 0 || item.isIncome;
         const amountColor = isIncome ? '#62c462' : '#ff7b7b';
@@ -5068,7 +5939,7 @@ function renderAnnualList() {
         el.innerHTML = `
         <button type="button" class="annual-drag-handle" aria-label="Mover ${item.name}" title="Pressione e arraste para outro mês">⠿</button>
         <div class="receipt-main">
-          <div class="receipt-line">${item.name}${oneOffBadge}${incomeBadge} <span style="color:#fddf7b; font-size: 0.75rem; margin-left: 4px;">[${diaText}]</span></div>
+          <div class="receipt-line">${item.name}${oneOffBadge}${installmentBadge}${targetYearBadge}${incomeBadge} <span style="color:#fddf7b; font-size: 0.75rem; margin-left: 4px;">[${diaText}]</span></div>
           ${obsHtml}
           <div class="receipt-meta" style="margin-top:2px;">${item.category} • Resp: ${item.owner}${payStr}</div>
         </div>
@@ -5129,9 +6000,11 @@ function checkAnnualAlerts() {
   if (!currentMonthStr) return;
 
   const currentMonthNum = currentMonthStr.split('-')[1];
+  const currentYear = currentMonthStr.split('-')[0];
 
   const pendingEvents = annualEvents.filter((ev) => {
     if (ev.monthTarget !== currentMonthNum) return false;
+    if (ev.targetYear && ev.targetYear !== currentYear) return false;
 
     const alreadyPlanned = plannedItems.some((p) => {
       if (p.month !== currentMonthStr) return false;
@@ -5219,7 +6092,22 @@ window.launchAnnualToBudget = async function (eventId, targetMonthStr) {
     linkedAnnualId: ev.id, // Tracking injetado aqui
   };
 
-  await FinanceAPI.savePlanned(targetMonthStr, itemData);
+  if (ev.installmentPlanId) {
+    itemData.installmentPlanId = ev.installmentPlanId;
+    itemData.installmentNumber = ev.installmentNumber;
+    itemData.installmentCount = ev.installmentCount;
+    itemData.installmentMode = ev.installmentMode;
+  }
+
+  const plannedId = await FinanceAPI.savePlanned(targetMonthStr, itemData);
+  if (ev.installmentPlanId) {
+    await updateInstallmentPlanEntry(ev.installmentPlanId, ev.installmentNumber, {
+      status: 'budgeted',
+      annualEventId: null,
+      plannedId,
+      plannedMonth: targetMonthStr,
+    });
+  }
   logActivity('Adicionou', `Previsto (via Evento): ${ev.name} - ${formatCurrency(Math.abs(ev.amount))}`);
 
   if (ev.isOneOff) {

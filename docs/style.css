@@ -3169,3 +3169,512 @@ body.annual-drag-active .annual-empty-month-drop-zone {
     display: grid;
   }
 }
+/* Parcelamentos ativos */
+.annual-installment-builder {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  margin-top: 4px;
+  border: 1px solid rgba(98, 196, 98, 0.28);
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(98, 196, 98, 0.09), rgba(102, 84, 185, 0.06));
+}
+
+.annual-installment-builder[hidden] {
+  display: none;
+}
+
+.annual-installment-mode {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.annual-installment-mode-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #353550;
+  border-radius: 10px;
+  background: rgba(20, 20, 35, 0.72);
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease;
+}
+
+.annual-installment-mode-option:hover,
+.annual-installment-mode-option.is-selected {
+  border-color: rgba(253, 223, 123, 0.72);
+  background: rgba(253, 223, 123, 0.09);
+}
+
+.annual-installment-mode-option:active {
+  transform: scale(0.995);
+}
+
+.annual-installment-mode-option input {
+  flex: 0 0 auto;
+}
+
+.annual-installment-mode-option span,
+.annual-installment-mode-option small {
+  display: block;
+  min-width: 0;
+}
+
+.annual-interest-toggle {
+  overflow: hidden;
+  border: 1px solid rgba(143, 120, 219, 0.34);
+  border-radius: 10px;
+  background: rgba(143, 120, 219, 0.06);
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+
+.annual-interest-toggle.is-open {
+  border-color: rgba(143, 120, 219, 0.62);
+  background: rgba(143, 120, 219, 0.09);
+}
+
+.annual-interest-toggle > label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 11px;
+  cursor: pointer;
+}
+
+.annual-interest-toggle.is-open > label {
+  border-bottom: 1px solid rgba(143, 120, 219, 0.25);
+}
+
+.annual-interest-toggle span,
+.annual-interest-toggle small {
+  display: block;
+}
+
+.annual-interest-toggle strong {
+  color: #d7cdf8;
+  font-size: 0.82rem;
+}
+
+.annual-interest-toggle small,
+.annual-interest-inputs small {
+  margin-top: 2px;
+  color: #9690b6;
+  font-size: 0.68rem;
+}
+
+.annual-interest-fields {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  background: rgba(16, 15, 29, 0.52);
+  animation: annual-interest-reveal 0.16s ease-out;
+}
+
+@keyframes annual-interest-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.annual-interest-fields[hidden],
+.annual-interest-toggle[hidden],
+#annual-mortgage-amortization-field[hidden] {
+  display: none;
+}
+
+.annual-interest-type {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.annual-interest-type-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #34334c;
+  border-radius: 9px;
+  background: rgba(24, 23, 41, 0.7);
+  cursor: pointer;
+}
+
+.annual-interest-type-option.is-selected {
+  border-color: rgba(143, 120, 219, 0.78);
+  background: rgba(143, 120, 219, 0.13);
+}
+
+.annual-interest-type-option span,
+.annual-interest-type-option small {
+  display: block;
+  min-width: 0;
+}
+
+.annual-payment-frequency {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+.annual-installment-builder > .annual-payment-frequency {
+  padding: 8px 10px;
+  border: 1px solid rgba(98, 196, 98, 0.22);
+  border-radius: 10px;
+  background: rgba(98, 196, 98, 0.045);
+}
+
+.annual-payment-frequency[hidden] {
+  display: none;
+}
+
+.annual-payment-frequency > span {
+  margin-right: 3px;
+  color: #a6a6c0;
+  font-size: 0.72rem;
+}
+
+.annual-payment-frequency-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 9px;
+  border: 1px solid #34334c;
+  border-radius: 999px;
+  background: rgba(24, 23, 41, 0.7);
+  color: #c7c4d8;
+  cursor: pointer;
+}
+
+.annual-payment-frequency-option.is-selected {
+  border-color: rgba(143, 120, 219, 0.78);
+  background: rgba(143, 120, 219, 0.15);
+  color: #f5f5f5;
+}
+
+.annual-payment-frequency-option small {
+  color: #aaa3ca;
+  font-size: 0.63rem;
+}
+
+.annual-interest-type-option strong {
+  color: #f5f5f5;
+  font-size: 0.8rem;
+}
+
+.annual-interest-type-option small {
+  margin-top: 2px;
+  color: #aaa3ca;
+  font-size: 0.67rem;
+}
+
+.annual-interest-inputs {
+  margin: 0;
+}
+
+.annual-installment-fields-row .field.is-locked {
+  opacity: 0.72;
+}
+
+.annual-installment-mode-option strong {
+  color: #f5f5f5;
+  font-size: 0.88rem;
+}
+
+.annual-installment-mode-option small {
+  margin-top: 2px;
+  color: #a6a6c0;
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
+.annual-installment-fields-row {
+  margin: 0;
+}
+
+.annual-installment-preview {
+  min-height: 42px;
+  padding: 9px 11px;
+  border-left: 3px solid #8f78db;
+  border-radius: 0 8px 8px 0;
+  background: rgba(143, 120, 219, 0.1);
+  color: #c8c3e8;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.annual-installment-preview strong {
+  color: #fddf7b;
+}
+
+.annual-installment-amount-hint {
+  display: none;
+  margin-top: 4px;
+  color: #b7aedf;
+  font-size: 0.7rem;
+}
+
+.annual-installment-amount-hint.visible {
+  display: block;
+}
+
+.installment-plans-card .list-header-row {
+  margin-bottom: 12px;
+}
+
+.installment-plans-subtitle {
+  margin: 2px 0 0;
+}
+
+.installment-plans-list {
+  display: grid;
+  gap: 10px;
+}
+
+.installment-plan {
+  overflow: hidden;
+  border: 1px solid #303048;
+  border-radius: 12px;
+  background: rgba(17, 17, 29, 0.7);
+}
+
+.installment-plan[open] {
+  border-color: rgba(143, 120, 219, 0.48);
+}
+
+.installment-plan-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.installment-plan-summary::-webkit-details-marker {
+  display: none;
+}
+
+.installment-plan-title,
+.installment-plan-numbers {
+  min-width: 0;
+}
+
+.installment-plan-title-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.installment-plan-title-line::before {
+  content: '\25B6';
+  color: #fddf7b;
+  font-size: 0.72rem;
+  transition: transform 0.16s ease;
+}
+
+.installment-plan[open] .installment-plan-title-line::before {
+  transform: rotate(90deg);
+}
+
+.installment-plan-title-line strong {
+  overflow: hidden;
+  color: #f5f5f5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.installment-plan-badge {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border: 1px solid rgba(143, 120, 219, 0.48);
+  border-radius: 999px;
+  background: rgba(143, 120, 219, 0.13);
+  color: #bcaaf5;
+  font-size: 0.63rem;
+  font-weight: 700;
+}
+
+.installment-plan-meta,
+.installment-plan-count {
+  margin-top: 4px;
+  color: #a6a6c0;
+  font-size: 0.72rem;
+}
+
+.installment-plan-numbers {
+  text-align: right;
+}
+
+.installment-plan-numbers strong {
+  color: #62c462;
+}
+
+.installment-plan-progress {
+  grid-column: 1 / -1;
+  height: 7px;
+  overflow: hidden;
+  border: 1px solid #29293d;
+  border-radius: 999px;
+  background: #0d0d17;
+}
+
+.installment-plan-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #62c462, #81dc81);
+  transition: width 0.25s ease;
+}
+
+.installment-plan-installments {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 7px;
+  padding: 0 12px 12px;
+}
+
+.installment-plan-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 9px;
+  border: 1px solid #29293d;
+  border-radius: 8px;
+  color: #c3c3d5;
+  font-size: 0.72rem;
+}
+
+.installment-plan-item strong {
+  color: #f5f5f5;
+}
+
+.installment-plan-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  padding: 0 12px 12px;
+}
+
+.installment-plan-actions .action-btn.is-locked {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
+.installment-status {
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.installment-status--pending {
+  background: rgba(247, 200, 74, 0.13);
+  color: #f7c84a;
+}
+
+.installment-status--budgeted {
+  background: rgba(74, 144, 226, 0.14);
+  color: #75adeb;
+}
+
+.installment-status--paid {
+  background: rgba(98, 196, 98, 0.14);
+  color: #62c462;
+}
+
+.installment-status--cancelled {
+  background: rgba(166, 166, 192, 0.12);
+  color: #a6a6c0;
+}
+
+.annual-plan-badge {
+  display: inline-flex;
+  padding: 2px 6px;
+  margin-left: 5px;
+  border: 1px solid rgba(143, 120, 219, 0.46);
+  border-radius: 999px;
+  background: rgba(143, 120, 219, 0.12);
+  color: #bcaaf5;
+  font-size: 0.62rem;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+.installment-item-badge {
+  display: inline-flex;
+  padding: 2px 6px;
+  margin-left: 5px;
+  border: 1px solid rgba(143, 120, 219, 0.46);
+  border-radius: 999px;
+  background: rgba(143, 120, 219, 0.12);
+  color: #bcaaf5;
+  font-size: 0.62rem;
+  font-weight: 700;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.installment-category-badge {
+  background: rgba(143, 120, 219, 0.18);
+  color: #cdbfff;
+}
+
+@media (max-width: 700px) {
+  .annual-installment-mode {
+    grid-template-columns: 1fr;
+  }
+
+  .annual-interest-type {
+    grid-template-columns: 1fr;
+  }
+
+  .annual-installment-builder {
+    padding: 10px;
+  }
+
+  .installment-plan-summary {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 7px;
+  }
+
+  .installment-plan-numbers {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    text-align: left;
+  }
+
+  .installment-plan-progress {
+    grid-column: 1;
+  }
+
+  .installment-plan-installments {
+    grid-template-columns: 1fr;
+  }
+
+  .installment-plan-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  }
+
+  .installment-plan-actions .action-btn {
+    min-width: 0;
+    white-space: normal;
+  }
+}

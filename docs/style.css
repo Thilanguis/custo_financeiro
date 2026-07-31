@@ -45,7 +45,7 @@ body {
 
 /* CABEÇALHO COMPACTO - AZUL ORIGINAL */
 .app-header {
-  padding: 10px 16px 0;
+  padding: 12px 16px 4px;
   background: linear-gradient(135deg, var(--header-start), var(--header-end));
 }
 
@@ -3186,7 +3186,7 @@ body.annual-drag-active .annual-empty-month-drop-zone {
 
 .annual-installment-mode {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -3288,8 +3288,51 @@ body.annual-drag-active .annual-empty-month-drop-zone {
 
 .annual-interest-fields[hidden],
 .annual-interest-toggle[hidden],
+#annual-rent-to-own-fields[hidden],
 #annual-mortgage-amortization-field[hidden] {
   display: none;
+}
+
+.annual-rent-to-own-fields {
+  padding: 10px;
+  border: 1px solid rgba(242, 151, 55, 0.34);
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(242, 151, 55, 0.09), rgba(143, 120, 219, 0.055));
+  animation: annual-interest-reveal 0.16s ease-out;
+}
+
+.annual-rent-to-own-fields .field-row {
+  align-items: stretch;
+  margin: 0;
+}
+
+.annual-rent-buyout-option {
+  justify-content: center;
+  min-height: 52px;
+  padding: 8px 11px;
+  border: 1px solid rgba(242, 151, 55, 0.24);
+  border-radius: 9px;
+  background: rgba(20, 20, 35, 0.5);
+}
+
+.annual-rent-buyout-option > label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  color: #f3c185;
+  cursor: pointer;
+}
+
+.annual-rent-buyout-option span,
+.annual-rent-buyout-option small {
+  display: block;
+}
+
+.annual-rent-buyout-option small {
+  margin-top: 2px;
+  color: #aaa3ca;
+  font-size: 0.68rem;
 }
 
 .annual-interest-type {
@@ -3635,9 +3678,23 @@ body.annual-drag-active .annual-empty-month-drop-zone {
   color: #cdbfff;
 }
 
+.installment-rental-badge {
+  border-color: rgba(242, 151, 55, 0.52);
+  background: rgba(242, 151, 55, 0.13);
+  color: #f3b267;
+}
+
 @media (max-width: 700px) {
   .annual-installment-mode {
     grid-template-columns: 1fr;
+  }
+
+  .annual-rent-to-own-fields .field-row {
+    flex-direction: column;
+  }
+
+  .annual-payment-frequency > span {
+    flex: 0 0 100%;
   }
 
   .annual-interest-type {

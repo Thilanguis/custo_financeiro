@@ -653,6 +653,10 @@
                   <input type="radio" name="annual-installment-mode" value="repeat" />
                   <span><strong>Repetir o mesmo valor</strong><small>O valor informado será repetido em cada data.</small></span>
                 </label>
+                <label class="annual-installment-mode-option">
+                  <input type="radio" name="annual-installment-mode" value="rent_to_own" />
+                  <span><strong>Aluguel com opção de compra</strong><small>O aluguel pago abate o saldo se você comprar.</small></span>
+                </label>
               </div>
               <div class="annual-payment-frequency" id="annual-payment-frequency" role="radiogroup" aria-label="Frequência do pagamento">
                 <span>Como o pagamento acontece?</span>
@@ -694,6 +698,20 @@
                   </div>
                 </div>
               </div>
+              <div class="annual-rent-to-own-fields" id="annual-rent-to-own-fields" hidden>
+                <div class="field-row">
+                  <div class="field">
+                    <label>Valor do aluguel (CAD)</label>
+                    <input type="number" id="annual-rental-amount" min="0.01" step="0.01" placeholder="Ex: 195,00" />
+                  </div>
+                  <div class="field checkbox-field annual-rent-buyout-option">
+                    <label>
+                      <input type="checkbox" id="annual-rent-buy-at-end" checked />
+                      <span><strong>Comprar ao final</strong><small>Após o último aluguel, lança somente o saldo restante.</small></span>
+                    </label>
+                  </div>
+                </div>
+              </div>
               <div class="field-row annual-installment-fields-row">
               <div class="field">
                 <label id="annual-installments-count-label" style="color: #62c462">Total de parcelas</label>
@@ -715,7 +733,7 @@
           <div class="list-header-row">
             <div>
               <h3><span class="context-icon" aria-hidden="true">🧾</span> Parcelas ativas</h3>
-              <p class="hint installment-plans-subtitle">Acompanhamento da compra até a última parcela paga.</p>
+              <p class="hint installment-plans-subtitle">Acompanhamento de compras, aluguéis e repetições até o último pagamento.</p>
             </div>
           </div>
           <div id="installment-plans-list" class="installment-plans-list"></div>

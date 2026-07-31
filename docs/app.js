@@ -1232,20 +1232,59 @@ btnLoadMonth.addEventListener('click', async () => {
           }
           if (installmentEntry.status === 'cancelled' || installmentEntry.targetDate?.substring(0, 7) !== targetMonth) continue;
 
+          if (installmentPlan.mode === 'rent_to_own' && installmentEntry.type === 'buyout') {
+            const paidRentalCredit = (installmentPlan.installments || [])
+              .filter((entry) => entry.type === 'rental' && entry.status === 'paid')
+              .reduce((total, entry) => total + Math.abs(Number(entry.paidAmount ?? entry.amount) || 0), 0);
+            const actualBuyoutAmount = Math.max(0, Math.round((Math.abs(Number(installmentPlan.assetPrice || installmentPlan.principalAmount) || 0) - paidRentalCredit) * 100) / 100);
+            if (actualBuyoutAmount <= 0) {
+              await FinanceAPI.saveInstallmentPlan({
+                ...installmentPlan,
+                status: 'completed',
+                installments: installmentPlan.installments.map((entry) =>
+                  entry.number === nextNumber ? { ...entry, amount: 0, status: 'paid', paidAmount: 0, paidAt: `${targetMonth}-01` } : entry,
+                ),
+                completedAt: `${targetMonth}-01`,
+                updatedAt: new Date().toISOString(),
+              });
+              continue;
+            }
+            installmentEntry = { ...installmentEntry, amount: installmentPlan.isIncome ? -actualBuyoutAmount : actualBuyoutAmount };
+            installmentPlan = {
+              ...installmentPlan,
+              projectedBuyoutAmount: actualBuyoutAmount,
+              totalAmount: (installmentPlan.installments || []).reduce(
+                (total, entry) => total + (entry.number === nextNumber ? installmentEntry.amount : Number(entry.amount) || 0),
+                0,
+              ),
+              installments: installmentPlan.installments.map((entry) => (entry.number === nextNumber ? installmentEntry : entry)),
+            };
+          }
+
           const installmentCount = Number(item.installmentCount || installmentPlan.installmentCount);
+          const stageLabel = getInstallmentStageLabel(installmentEntry, installmentPlan);
           sourceItem = {
             ...item,
-            description: `${item.installmentOriginalName || installmentPlan.name || item.description} (${nextNumber}/${installmentCount})`,
+            description: installmentPlan.mode === 'rent_to_own'
+              ? `${item.installmentOriginalName || installmentPlan.name || item.description} • ${stageLabel}`
+              : `${item.installmentOriginalName || installmentPlan.name || item.description} (${nextNumber}/${installmentCount})`,
             amount: installmentEntry.amount,
             installmentNumber: nextNumber,
             installmentCount,
+            installmentStage: installmentEntry.type || null,
+            rentalNumber: installmentEntry.rentalNumber || null,
+            rentalCount: installmentEntry.rentalCount || installmentPlan.rentalMonths || null,
             staticSyncId: `installment_${item.installmentPlanId}_${nextNumber}`,
           };
           if (sourceItem.isBiweeklyConverted) sourceItem.biweeklyMonthlyAmount = installmentEntry.amount;
-          if (installmentPlan.paymentFrequency === 'biweekly') {
+          if (installmentPlan.paymentFrequency === 'biweekly' && installmentEntry.type !== 'buyout') {
             sourceItem.isBiweeklyConverted = true;
             sourceItem.biweeklyAmount = installmentPlan.paymentAmount;
             sourceItem.biweeklyMonthlyAmount = installmentEntry.amount;
+          } else if (installmentEntry.type === 'buyout') {
+            delete sourceItem.isBiweeklyConverted;
+            delete sourceItem.biweeklyAmount;
+            delete sourceItem.biweeklyMonthlyAmount;
           }
         }
 
@@ -1290,6 +1329,9 @@ btnLoadMonth.addEventListener('click', async () => {
             receiptData.installmentNumber = sourceItem.installmentNumber;
             receiptData.installmentCount = sourceItem.installmentCount;
             receiptData.installmentMode = sourceItem.installmentMode;
+            receiptData.installmentStage = sourceItem.installmentStage || null;
+            receiptData.rentalNumber = sourceItem.rentalNumber || null;
+            receiptData.rentalCount = sourceItem.rentalCount || null;
             receiptData.installmentOriginalName = sourceItem.installmentOriginalName;
             receiptData.installmentAutomationMode = sourceItem.installmentAutomationMode;
           }
@@ -1314,6 +1356,7 @@ btnLoadMonth.addEventListener('click', async () => {
             await FinanceAPI.saveInstallmentPlan({
               ...installmentPlan,
               status: isCompleted ? 'completed' : 'active',
+              totalAmount: updatedInstallments.reduce((total, entry) => total + (Number(entry.amount) || 0), 0),
               installments: updatedInstallments,
               updatedAt: new Date().toISOString(),
               completedAt: isCompleted ? newDate : installmentPlan.completedAt || null,
@@ -2137,13 +2180,21 @@ function renderBiweeklyConversionBadge(item) {
 
 function renderInstallmentItemBadge(item) {
   if (!item?.installmentPlanId) return '';
+  if (item.installmentMode === 'rent_to_own') {
+    const label = getInstallmentStageLabel(item);
+    return `<span class="installment-item-badge installment-rental-badge" title="Pagamento vinculado ao aluguel com opção de compra">${label}</span>`;
+  }
   const number = Number(item.installmentNumber) || 0;
   const count = Number(item.installmentCount) || 0;
   return `<span class="installment-item-badge" title="Parcela vinculada ao controle de pagamentos">Parcela ${number}/${count}</span>`;
 }
 
 function renderInstallmentCategoryBadge(items) {
-  if (!Array.from(items || []).some((item) => item?.installmentPlanId)) return '';
+  const installmentItems = Array.from(items || []).filter((item) => item?.installmentPlanId);
+  if (installmentItems.length === 0) return '';
+  if (installmentItems.some((item) => item.installmentMode === 'rent_to_own')) {
+    return '<span class="installment-item-badge installment-category-badge installment-rental-badge" title="Esta categoria contém aluguel com opção de compra">Aluguel → compra</span>';
+  }
   return '<span class="installment-item-badge installment-category-badge" title="Esta categoria contém um parcelamento ativo">Parcelamento</span>';
 }
 
@@ -2466,6 +2517,10 @@ function renderPlannedItemsList(month) {
 
       const hasEvent = groupItems.some((p) => p.linkedAnnualId || p.category === 'Eventos');
       const installmentCategoryBadge = renderInstallmentCategoryBadge(groupItems);
+      const reimbursementCategoryBadge = renderFinancialFlowBadges({
+        hasActualIncome: false,
+        hasReimbursement: groupItems.some((plannedItem) => getPlannedItemReimbursements(plannedItem, month).length > 0),
+      });
       const headerDiv = document.createElement('div');
       headerDiv.className = 'group-header-div';
 
@@ -2480,7 +2535,7 @@ function renderPlannedItemsList(month) {
         : '';
 
       headerDiv.innerHTML = `
-      <span style="color: #f5f5f5; display: flex; align-items: center;"><span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}${catBadge}${installmentCategoryBadge}</span>
+      <span style="color: #f5f5f5; display: flex; align-items: center;"><span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}${catBadge}${installmentCategoryBadge}${reimbursementCategoryBadge}</span>
       <span style="color:#a6a6c0; font-size:0.85rem; font-weight:normal;">${formatCurrency(catTotal)}</span>
     `;
 
@@ -2648,6 +2703,9 @@ formActual.addEventListener('submit', async (e) => {
     itemData.installmentNumber = installmentSource.installmentNumber;
     itemData.installmentCount = installmentSource.installmentCount;
     itemData.installmentMode = installmentSource.installmentMode;
+    itemData.installmentStage = installmentSource.installmentStage || null;
+    itemData.rentalNumber = installmentSource.rentalNumber || null;
+    itemData.rentalCount = installmentSource.rentalCount || null;
   }
 
   if (oldReceipt && oldReceipt.staticSyncId) {
@@ -2910,7 +2968,7 @@ function updateReceiptsView() {
       const catTotal = groupItems.reduce((acc, curr) => acc + curr.amount, 0);
       const flowBadges = renderFinancialFlowBadges({
         hasActualIncome: groupItems.some((receipt) => receipt.amount < 0 && !receipt.isReimbursement),
-        hasReimbursement: false,
+        hasReimbursement: groupItems.some((receipt) => receipt.isReimbursement),
       });
       const eventBadge = groupItems.some((receipt) => isReceiptFromEvent(receipt)) ? renderFinancialEventBadge() : '';
       const installmentCategoryBadge = renderInstallmentCategoryBadge(groupItems);
@@ -3593,7 +3651,7 @@ function updateDashboardView() {
 
     const key = makeKey(p.category, p.description, p.owner);
     if (!mapCat[p.category].items.has(key)) {
-      mapCat[p.category].items.set(key, { name: p.description, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: p.date || '', isAnnual: false, annualEventsData: [], hasReimbursement: false, hasActualIncome: false, isBiweeklyConverted: false, biweeklyAmount: 0, installmentPlanId: null, installmentNumber: null, installmentCount: null });
+      mapCat[p.category].items.set(key, { name: p.description, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: p.date || '', isAnnual: false, annualEventsData: [], hasReimbursement: false, hasActualIncome: false, isBiweeklyConverted: false, biweeklyAmount: 0, installmentPlanId: null, installmentNumber: null, installmentCount: null, installmentMode: null, installmentStage: null, rentalNumber: null, rentalCount: null });
     }
     const item = mapCat[p.category].items.get(key);
     item.planned += p.amount;
@@ -3605,6 +3663,10 @@ function updateDashboardView() {
       item.installmentPlanId = p.installmentPlanId;
       item.installmentNumber = p.installmentNumber;
       item.installmentCount = p.installmentCount;
+      item.installmentMode = p.installmentMode;
+      item.installmentStage = p.installmentStage;
+      item.rentalNumber = p.rentalNumber;
+      item.rentalCount = p.rentalCount;
     }
     if (p.owner) item.owners.add(p.owner);
     if (p.date && (!item.maxDate || p.date > item.maxDate)) item.maxDate = p.date;
@@ -3626,7 +3688,7 @@ function updateDashboardView() {
 
     const key = makeKey(r.category, r.merchant, r.owner);
     if (!mapCat[r.category].items.has(key)) {
-      mapCat[r.category].items.set(key, { name: r.merchant, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: r.date || '', isAnnual: false, annualObs: new Set(), hasReimbursement: false, hasActualIncome: false, installmentPlanId: null, installmentNumber: null, installmentCount: null });
+      mapCat[r.category].items.set(key, { name: r.merchant, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: r.date || '', isAnnual: false, annualObs: new Set(), hasReimbursement: false, hasActualIncome: false, installmentPlanId: null, installmentNumber: null, installmentCount: null, installmentMode: null, installmentStage: null, rentalNumber: null, rentalCount: null });
     }
     const item = mapCat[r.category].items.get(key);
     item.actual += r.amount;
@@ -3636,6 +3698,10 @@ function updateDashboardView() {
       item.installmentPlanId = r.installmentPlanId;
       item.installmentNumber = r.installmentNumber;
       item.installmentCount = r.installmentCount;
+      item.installmentMode = r.installmentMode;
+      item.installmentStage = r.installmentStage;
+      item.rentalNumber = r.rentalNumber;
+      item.rentalCount = r.rentalCount;
     }
     if (r.owner) item.owners.add(r.owner);
     if (r.date && (!item.maxDate || r.date > item.maxDate)) item.maxDate = r.date;
@@ -3696,7 +3762,7 @@ function updateDashboardView() {
     catTitle.style.display = 'flex';
     catTitle.style.alignItems = 'center';
     const catBadge = hasEvent ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px;">Evento</span>' : '';
-    const flowBadges = renderFinancialFlowBadges({ ...data, hasReimbursement: false });
+    const flowBadges = renderFinancialFlowBadges(data);
     catTitle.innerHTML = `<span class="toggle-icon">${isOpen ? '▼' : '▶'}</span> ${cat}${catBadge}${installmentCategoryBadge}${flowBadges}`;
     catContainer.appendChild(catTitle);
 
@@ -3916,7 +3982,7 @@ function updateDashboardView() {
             item.isAnnual && !hasRenderedAnnualChild
               ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px; vertical-align: middle;">Evento</span>'
               : '';
-          const itemFlowBadges = renderFinancialFlowBadges({ ...item, hasReimbursement: false });
+          const itemFlowBadges = renderFinancialFlowBadges(item);
 
           tdItemName.innerHTML = `
             <details style="cursor: pointer; margin: 2px 0;">
@@ -3947,7 +4013,7 @@ function updateDashboardView() {
           const parentAnnualBadge = item.isAnnual
             ? ' <span style="background: rgba(253, 223, 123, 0.15); color: #fddf7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(253, 223, 123, 0.3); margin-left: 6px; vertical-align: middle;">Evento</span>'
             : '';
-          const itemFlowBadges = renderFinancialFlowBadges({ ...item, hasReimbursement: false });
+          const itemFlowBadges = renderFinancialFlowBadges(item);
 
           tdItemName.innerHTML = `
             <div style="color: #f5f5f5;">${item.name}${parentAnnualBadge}${itemFlowBadges}${itemBiweeklyBadge}${itemInstallmentBadge}</div>
@@ -4850,6 +4916,9 @@ const annualMortgageAmortizationField = document.getElementById('annual-mortgage
 const annualMortgageAmortization = document.getElementById('annual-mortgage-amortization');
 const annualInstallmentsCountLabel = document.getElementById('annual-installments-count-label');
 const annualInstallmentsIntervalField = document.getElementById('annual-installments-interval-field');
+const annualRentToOwnFields = document.getElementById('annual-rent-to-own-fields');
+const annualRentalAmount = document.getElementById('annual-rental-amount');
+const annualRentBuyAtEnd = document.getElementById('annual-rent-buy-at-end');
 const annualSubmitBtn = document.getElementById('annual-submit-btn');
 const annualItemsList = document.getElementById('annual-items-list');
 const installmentPlansCard = document.getElementById('installment-plans-card');
@@ -4938,6 +5007,44 @@ function formatShortDate(dateValue) {
   return `${day}/${month}/${year}`;
 }
 
+function buildRentToOwnSchedule({ assetPrice, rentalPayment, rentalMonths, startDate, paymentFrequency, buyAtEnd, isIncome }) {
+  const monthlyRental = paymentFrequency === 'biweekly' ? convertBiweeklyToMonthly(rentalPayment) : Math.abs(rentalPayment);
+  const sign = isIncome ? -1 : 1;
+  const schedule = Array.from({ length: rentalMonths }, (_, index) => ({
+    number: index + 1,
+    type: 'rental',
+    rentalNumber: index + 1,
+    rentalCount: rentalMonths,
+    amount: sign * monthlyRental,
+    targetDate: addMonthsToAnnualDate(startDate, index),
+    status: 'pending',
+  }));
+  const creditedRental = Math.min(Math.abs(assetPrice), Math.round(monthlyRental * rentalMonths * 100) / 100);
+  const buyoutAmount = Math.max(0, Math.round((Math.abs(assetPrice) - creditedRental) * 100) / 100);
+
+  if (buyAtEnd && buyoutAmount > 0) {
+    schedule.push({
+      number: schedule.length + 1,
+      type: 'buyout',
+      amount: sign * buyoutAmount,
+      targetDate: addMonthsToAnnualDate(startDate, rentalMonths),
+      status: 'pending',
+    });
+  }
+
+  return { schedule, monthlyRental, creditedRental, buyoutAmount };
+}
+
+function getInstallmentStageLabel(item, plan = null) {
+  const mode = item?.installmentMode || plan?.mode;
+  const stage = item?.installmentStage || item?.type;
+  if (mode !== 'rent_to_own') return '';
+  if (stage === 'buyout') return 'Compra pelo saldo';
+  const rentalNumber = Number(item?.rentalNumber || item?.installmentNumber || item?.number) || 0;
+  const rentalCount = Number(item?.rentalCount || plan?.rentalMonths) || 0;
+  return `Aluguel ${rentalNumber}/${rentalCount}`;
+}
+
 function updateAnnualInstallmentBuilder() {
   if (!annualInstallmentCheck || !annualInstallmentFields) return;
   const enabled = annualInstallmentCheck.checked && !editingAnnualId;
@@ -4948,12 +5055,14 @@ function updateAnnualInstallmentBuilder() {
   });
 
   const mode = getAnnualInstallmentMode();
+  const isRentToOwn = mode === 'rent_to_own';
   const canUseInterest = enabled && mode === 'purchase';
   const usesInterest = canUseInterest && Boolean(annualInterestCheck?.checked);
   const interestType = getAnnualInterestType();
-  const paymentFrequency = mode === 'purchase' ? getAnnualPaymentFrequency() : 'monthly';
+  const paymentFrequency = getAnnualPaymentFrequency();
 
-  if (annualPaymentFrequency) annualPaymentFrequency.hidden = !enabled || mode !== 'purchase';
+  if (annualPaymentFrequency) annualPaymentFrequency.hidden = !enabled;
+  if (annualRentToOwnFields) annualRentToOwnFields.hidden = !enabled || !isRentToOwn;
   if (annualInterestToggle) annualInterestToggle.hidden = !canUseInterest;
   if (annualInterestToggle) annualInterestToggle.classList.toggle('is-open', usesInterest);
   if (!canUseInterest && annualInterestCheck) annualInterestCheck.checked = false;
@@ -4966,13 +5075,19 @@ function updateAnnualInstallmentBuilder() {
     input.closest('.annual-payment-frequency-option')?.classList.toggle('is-selected', input.checked);
   });
 
-  if (mode === 'purchase') {
+  if (mode === 'purchase' || isRentToOwn) {
     annualInstallmentsInterval.value = '1';
     annualInstallmentsInterval.readOnly = true;
-    if (annualInstallmentsIntervalField) annualInstallmentsIntervalField.classList.add('is-locked');
+    if (annualInstallmentsIntervalField) {
+      annualInstallmentsIntervalField.classList.add('is-locked');
+      annualInstallmentsIntervalField.hidden = isRentToOwn;
+    }
   } else {
     annualInstallmentsInterval.readOnly = false;
-    if (annualInstallmentsIntervalField) annualInstallmentsIntervalField.classList.remove('is-locked');
+    if (annualInstallmentsIntervalField) {
+      annualInstallmentsIntervalField.classList.remove('is-locked');
+      annualInstallmentsIntervalField.hidden = false;
+    }
   }
 
   if (usesInterest && interestType === 'mortgage') {
@@ -4982,13 +5097,32 @@ function updateAnnualInstallmentBuilder() {
     if (annualInstallmentsCountLabel) annualInstallmentsCountLabel.textContent = 'Meses restantes no orçamento';
   } else {
     annualInstallmentsCount.readOnly = false;
+    annualInstallmentsCount.min = isRentToOwn ? '1' : '2';
     if (annualInstallmentsCountLabel) {
-      annualInstallmentsCountLabel.textContent = mode === 'repeat' ? 'Total de lançamentos' : paymentFrequency === 'biweekly' ? 'Prazo restante (meses)' : 'Total de parcelas';
+      annualInstallmentsCountLabel.textContent = isRentToOwn
+        ? 'Meses de aluguel'
+        : mode === 'repeat'
+          ? paymentFrequency === 'biweekly'
+            ? 'Meses no orçamento'
+            : 'Total de lançamentos'
+          : paymentFrequency === 'biweekly'
+            ? 'Prazo restante (meses)'
+            : 'Total de parcelas';
     }
   }
 
   if (annualAmountLabel) {
-    annualAmountLabel.textContent = enabled && mode === 'purchase' ? (usesInterest && interestType === 'mortgage' ? 'Saldo devedor atual (CAD)' : 'Valor financiado / da compra (CAD)') : 'Valor (CAD)';
+    annualAmountLabel.textContent = enabled
+      ? isRentToOwn
+        ? 'Valor do equipamento (CAD)'
+        : mode === 'purchase'
+          ? usesInterest && interestType === 'mortgage'
+            ? 'Saldo devedor atual (CAD)'
+            : 'Valor financiado / da compra (CAD)'
+          : paymentFrequency === 'biweekly'
+            ? 'Valor de cada pagamento bisemanal (CAD)'
+            : 'Valor (CAD)'
+      : 'Valor (CAD)';
   }
   if (annualDateLabel) annualDateLabel.textContent = enabled ? 'Data da primeira parcela' : 'Data (O ano será ignorado)';
   if (annualInstallmentAmountHint) {
@@ -5000,7 +5134,11 @@ function updateAnnualInstallmentBuilder() {
             ? 'Informe o saldo que ainda falta pagar. O cálculo usa a regra canadense de hipoteca fixa.'
             : 'Informe o valor financiado antes dos juros.'
           : 'O sistema dividirá este total sem perder centavos.'
-        : 'Este valor será usado em cada lançamento.'
+        : isRentToOwn
+          ? 'Informe o preço para compra. Os aluguéis pagos serão descontados deste valor.'
+          : paymentFrequency === 'biweekly'
+            ? 'O sistema converterá os 26 pagamentos anuais para a média mensal do orçamento.'
+            : 'Este valor será usado em cada lançamento.'
       : '';
   }
 
@@ -5018,7 +5156,7 @@ function updateAnnualInstallmentBuilder() {
   }
 
   const amount = parseAmount(annualAmountInput.value);
-  const count = Math.min(600, Math.max(2, parseInt(annualInstallmentsCount.value, 10) || 2));
+  const count = Math.min(600, Math.max(isRentToOwn ? 1 : 2, parseInt(annualInstallmentsCount.value, 10) || (isRentToOwn ? 3 : 2)));
   const interval = Math.max(1, parseInt(annualInstallmentsInterval.value, 10) || 1);
   const firstDate = annualDateInput.value;
   if (!Number.isFinite(amount) || amount <= 0) {
@@ -5027,7 +5165,20 @@ function updateAnnualInstallmentBuilder() {
   }
 
   const lastDate = firstDate ? addMonthsToAnnualDate(firstDate, (count - 1) * interval) : '';
-  if (mode === 'purchase') {
+  if (isRentToOwn) {
+    const rentalPayment = parseAmount(annualRentalAmount?.value);
+    if (!Number.isFinite(rentalPayment) || rentalPayment <= 0) {
+      annualInstallmentPreview.innerHTML = 'Informe o valor do aluguel para visualizar o controle.';
+      return;
+    }
+    const monthlyRental = paymentFrequency === 'biweekly' ? convertBiweeklyToMonthly(rentalPayment) : rentalPayment;
+    const rentalCredit = Math.min(amount, Math.round(monthlyRental * count * 100) / 100);
+    const remainingBalance = Math.max(0, Math.round((amount - rentalCredit) * 100) / 100);
+    const buyAtEnd = Boolean(annualRentBuyAtEnd?.checked);
+    const lastRentalDate = firstDate ? addMonthsToAnnualDate(firstDate, count - 1) : '';
+    const buyoutDate = firstDate ? addMonthsToAnnualDate(firstDate, count) : '';
+    annualInstallmentPreview.innerHTML = `<strong>${count} ${count === 1 ? 'mês' : 'meses'} de aluguel</strong> × ${formatCurrency(monthlyRental)} = ${formatCurrency(rentalCredit)} em créditos${paymentFrequency === 'biweekly' ? `<br>${formatCurrency(rentalPayment)} a cada duas semanas → ${formatCurrency(monthlyRental)} por mês no orçamento.` : ''}<br>Saldo estimado para compra: <strong>${formatCurrency(remainingBalance)}</strong>${lastRentalDate ? `<br>Aluguel até ${formatShortDate(lastRentalDate)}.` : ''}${buyAtEnd && buyoutDate ? ` Compra pelo saldo em <strong>${formatShortDate(buyoutDate)}</strong>.` : '<br>Sem compra automática ao final.'}`;
+  } else if (mode === 'purchase') {
     const rate = Number(annualInterestRate?.value);
     if (usesInterest && (!Number.isFinite(rate) || rate <= 0)) {
       annualInstallmentPreview.innerHTML = 'Informe a taxa anual para calcular as parcelas.';
@@ -5054,7 +5205,8 @@ function updateAnnualInstallmentBuilder() {
         ? `<strong>${count} parcelas mensais de aproximadamente ${formatCurrency(calculation.periodicPayment)}</strong><br>Valor financiado: ${formatCurrency(amount)} • Juros estimados: ${formatCurrency(calculation.totalInterest)} • Total estimado: ${formatCurrency(calculation.totalPaid)}${lastDate ? `<br>De ${formatShortDate(firstDate)} até ${formatShortDate(lastDate)}.` : ''}`
         : `<strong>${count} parcelas:</strong> ${composition} = ${formatCurrency(amount)}${lastDate ? `<br>De ${formatShortDate(firstDate)} até ${formatShortDate(lastDate)}.` : ''}`;
   } else {
-    annualInstallmentPreview.innerHTML = `<strong>${count} lançamentos</strong> de ${formatCurrency(amount)} • Total do período: ${formatCurrency(amount * count)}${lastDate ? `<br>De ${formatShortDate(firstDate)} até ${formatShortDate(lastDate)}.` : ''}`;
+    const repeatedAmount = paymentFrequency === 'biweekly' ? convertBiweeklyToMonthly(amount) : amount;
+    annualInstallmentPreview.innerHTML = `<strong>${count} lançamentos</strong> de ${formatCurrency(repeatedAmount)} • Total do período: ${formatCurrency(repeatedAmount * count)}${paymentFrequency === 'biweekly' ? `<br>${formatCurrency(amount)} a cada duas semanas → ${formatCurrency(repeatedAmount)} por mês no orçamento.` : ''}${lastDate ? `<br>De ${formatShortDate(firstDate)} até ${formatShortDate(lastDate)}.` : ''}`;
   }
 }
 
@@ -5065,9 +5217,10 @@ annualInstallmentModeInputs.forEach((input) => input.addEventListener('change', 
 annualInterestCheck?.addEventListener('change', updateAnnualInstallmentBuilder);
 annualInterestTypeInputs.forEach((input) => input.addEventListener('change', updateAnnualInstallmentBuilder));
 annualPaymentFrequencyInputs.forEach((input) => input.addEventListener('change', updateAnnualInstallmentBuilder));
-[annualAmountInput, annualDateInput, annualInstallmentsCount, annualInstallmentsInterval, annualInterestRate, annualMortgageAmortization].forEach((input) =>
+[annualAmountInput, annualDateInput, annualInstallmentsCount, annualInstallmentsInterval, annualInterestRate, annualMortgageAmortization, annualRentalAmount].forEach((input) =>
   input?.addEventListener('input', updateAnnualInstallmentBuilder),
 );
+annualRentBuyAtEnd?.addEventListener('change', updateAnnualInstallmentBuilder);
 
 let selectedAnnualType = '';
 const annualTypeChips = document.getElementById('annual-type-chips');
@@ -5180,12 +5333,26 @@ function renderInstallmentPlans() {
     const paid = installments.filter((installment) => installment.status === 'paid');
     const paidAmount = paid.reduce((total, installment) => total + Math.abs(Number(installment.paidAmount ?? installment.amount) || 0), 0);
     const totalAmount = Math.abs(Number(plan.totalAmount) || installments.reduce((total, installment) => total + Math.abs(Number(installment.amount) || 0), 0));
-    const progress = installments.length ? Math.min(100, (paid.length / installments.length) * 100) : 0;
+    const progress = plan.mode === 'rent_to_own' && totalAmount > 0
+      ? Math.min(100, (paidAmount / totalAmount) * 100)
+      : installments.length
+        ? Math.min(100, (paid.length / installments.length) * 100)
+        : 0;
     const canFullyEdit = canFullyEditInstallmentPlan(plan);
-    const modeLabel = plan.mode === 'repeat' ? 'Repetição' : 'Parcelamento';
+    const modeLabel = plan.mode === 'repeat' ? 'Repetição' : plan.mode === 'rent_to_own' ? 'Aluguel → compra' : 'Parcelamento';
     const interestLabel = plan.hasInterest
       ? `${plan.interestType === 'mortgage' ? 'Hipoteca' : 'Financiamento'} • ${Number(plan.annualInterestRate).toLocaleString('pt-BR')}% a.a.${plan.paymentFrequency === 'biweekly' ? ' • Bisemanal → mensal' : ''}`
       : '';
+    const rentalLabel = plan.mode === 'rent_to_own'
+      ? ` • ${plan.rentalMonths} ${Number(plan.rentalMonths) === 1 ? 'mês' : 'meses'} de aluguel${plan.buyAtEnd ? ' • compra automática pelo saldo' : ''}${plan.paymentFrequency === 'biweekly' ? ' • Bisemanal → mensal' : ''}`
+      : '';
+    const paidRentals = paid.filter((installment) => installment.type === 'rental');
+    const futureRentals = installments.filter((installment) => installment.type === 'rental' && !['paid', 'cancelled'].includes(installment.status));
+    const rentalCreditPaid = paidRentals.reduce((total, installment) => total + Math.abs(Number(installment.paidAmount ?? installment.amount) || 0), 0);
+    const remainingBuyout = Math.max(0, Math.round((Math.abs(Number(plan.assetPrice || plan.principalAmount) || 0) - rentalCreditPaid) * 100) / 100);
+    const countLabel = plan.mode === 'rent_to_own'
+      ? `${paidRentals.length} de ${plan.rentalMonths} aluguéis pagos${plan.buyAtEnd ? ` • saldo ${formatCurrency(remainingBuyout)}` : ''}`
+      : `${paid.length} de ${installments.length} pagas`;
     const details = document.createElement('details');
     details.className = 'installment-plan';
     details.innerHTML = `
@@ -5195,11 +5362,11 @@ function renderInstallmentPlans() {
             <strong>${escapeCardDetail(plan.name || 'Sem nome')}</strong>
             <span class="installment-plan-badge">${modeLabel}</span>
           </div>
-          <div class="installment-plan-meta">${escapeCardDetail(plan.category || '')} • ${escapeCardDetail(plan.owner || '')} • início em ${formatShortDate(plan.startDate)}${interestLabel ? ` • ${interestLabel}` : ''}</div>
+          <div class="installment-plan-meta">${escapeCardDetail(plan.category || '')} • ${escapeCardDetail(plan.owner || '')} • início em ${formatShortDate(plan.startDate)}${interestLabel ? ` • ${interestLabel}` : ''}${rentalLabel}</div>
         </div>
         <div class="installment-plan-numbers">
           <strong>${formatCurrency(paidAmount)}</strong> de ${formatCurrency(totalAmount)}
-          <div class="installment-plan-count">${paid.length} de ${installments.length} pagas</div>
+          <div class="installment-plan-count">${countLabel}</div>
         </div>
         <div class="installment-plan-progress" aria-label="${progress.toFixed(0)}% concluído"><span style="width:${progress}%"></span></div>
       </summary>
@@ -5207,8 +5374,9 @@ function renderInstallmentPlans() {
         ${installments
           .map((installment) => {
             const presentation = getInstallmentStatusPresentation(installment.status);
+            const stageLabel = getInstallmentStageLabel(installment, plan);
             return `<div class="installment-plan-item">
-              <strong>${installment.number}/${installments.length}</strong>
+              <strong>${stageLabel || `${installment.number}/${installments.length}`}</strong>
               <span>${formatShortDate(installment.targetDate)} • ${formatCurrency(Math.abs(installment.amount))}</span>
               <span class="installment-status installment-status--${presentation.className}">${presentation.label}</span>
             </div>`;
@@ -5217,7 +5385,7 @@ function renderInstallmentPlans() {
       </div>
       <div class="installment-plan-actions">
         <button type="button" class="action-btn${canFullyEdit ? '' : ' is-locked'}" onclick="startEditInstallmentPlan('${plan.id}', event)" title="${canFullyEdit ? 'Voltar este parcelamento ao formulário' : 'Há parcelas lançadas; o histórico está protegido'}">${canFullyEdit ? 'Editar cadastro' : '🔒 Editar cadastro'}</button>
-        <button type="button" class="action-btn" onclick="adjustFutureInstallments('${plan.id}', event)">Ajustar futuras</button>
+        ${plan.mode !== 'rent_to_own' || futureRentals.length > 0 ? `<button type="button" class="action-btn" onclick="adjustFutureInstallments('${plan.id}', event)">${plan.mode === 'rent_to_own' ? 'Ajustar aluguéis' : 'Ajustar futuras'}</button>` : ''}
         ${
           canFullyEdit
             ? `<button type="button" class="action-btn danger" onclick="deleteInstallmentPlanFully('${plan.id}', event)">Excluir parcelamento</button>`
@@ -5254,8 +5422,10 @@ window.startEditInstallmentPlan = function (planId, event) {
     annualInstallmentCheck.parentElement.parentElement.style.display = 'flex';
   }
   annualInstallmentModeInputs.forEach((input) => (input.checked = input.value === (plan.mode || 'purchase')));
-  annualInstallmentsCount.value = String(plan.installmentCount || plan.installments?.length || 2);
+  annualInstallmentsCount.value = String(plan.mode === 'rent_to_own' ? plan.rentalMonths || 3 : plan.installmentCount || plan.installments?.length || 2);
   annualInstallmentsInterval.value = String(plan.intervalMonths || 1);
+  if (annualRentalAmount) annualRentalAmount.value = plan.mode === 'rent_to_own' ? Math.abs(Number(plan.rentalAmount) || 0) : '';
+  if (annualRentBuyAtEnd) annualRentBuyAtEnd.checked = plan.mode === 'rent_to_own' ? Boolean(plan.buyAtEnd) : true;
   if (annualInterestCheck) annualInterestCheck.checked = Boolean(plan.hasInterest);
   annualInterestTypeInputs.forEach((input) => (input.checked = input.value === (plan.interestType || 'financing')));
   annualPaymentFrequencyInputs.forEach((input) => (input.checked = input.value === (plan.paymentFrequency || 'monthly')));
@@ -5275,15 +5445,58 @@ window.adjustFutureInstallments = async function (planId, event) {
   event?.preventDefault();
   event?.stopPropagation();
   const plan = getInstallmentPlan(planId);
-  const future = plan?.installments?.filter((installment) => !['paid', 'cancelled'].includes(installment.status)) || [];
+  const allFuture = plan?.installments?.filter((installment) => !['paid', 'cancelled'].includes(installment.status)) || [];
+  const future = plan?.mode === 'rent_to_own' ? allFuture.filter((installment) => installment.type === 'rental') : allFuture;
   if (!plan || future.length === 0) return showToast('Não há parcelas futuras para ajustar.', 'info');
 
-  const currentValue = Math.abs(Number(future[0].amount) || 0).toFixed(2).replace('.', ',');
-  const answer = await showPrompt(`Novo valor para as ${future.length} parcelas futuras de "${plan.name}"?\n\nAs parcelas já pagas não serão alteradas.`, currentValue);
+  const currentSourceValue = plan.mode === 'rent_to_own' && plan.paymentFrequency === 'biweekly' ? plan.rentalAmount : future[0].amount;
+  const currentValue = Math.abs(Number(currentSourceValue) || 0).toFixed(2).replace('.', ',');
+  const answer = await showPrompt(
+    plan.mode === 'rent_to_own'
+      ? `Novo valor para os ${future.length} aluguéis futuros de "${plan.name}"?\n\nO saldo final para compra será recalculado. Os aluguéis já pagos não serão alterados.`
+      : `Novo valor para as ${future.length} parcelas futuras de "${plan.name}"?\n\nAs parcelas já pagas não serão alteradas.`,
+    currentValue,
+  );
   if (answer === null) return;
   const newAmount = parseAmount(answer);
   if (!Number.isFinite(newAmount) || newAmount <= 0) return showToast('Informe um valor válido.', 'error');
-  if (!(await showConfirm(`Aplicar ${formatCurrency(newAmount)} em todas as parcelas futuras?`))) return;
+  if (!(await showConfirm(`Aplicar ${formatCurrency(newAmount)} em ${plan.mode === 'rent_to_own' ? 'todos os aluguéis futuros' : 'todas as parcelas futuras'}?`))) return;
+
+  if (plan.mode === 'rent_to_own') {
+    const monthlyRental = plan.paymentFrequency === 'biweekly' ? convertBiweeklyToMonthly(newAmount) : newAmount;
+    const signedRental = plan.isIncome ? -monthlyRental : monthlyRental;
+    const futureRentalNumbers = new Set(future.map((installment) => installment.number));
+    const paidRentalCredit = (plan.installments || [])
+      .filter((installment) => installment.type === 'rental' && installment.status === 'paid')
+      .reduce((total, installment) => total + Math.abs(Number(installment.paidAmount ?? installment.amount) || 0), 0);
+    const projectedCredit = Math.min(
+      Math.abs(Number(plan.assetPrice || plan.principalAmount) || 0),
+      Math.round((paidRentalCredit + monthlyRental * future.length) * 100) / 100,
+    );
+    const buyoutAmount = Math.max(0, Math.round((Math.abs(Number(plan.assetPrice || plan.principalAmount) || 0) - projectedCredit) * 100) / 100);
+    const updatedInstallments = plan.installments.map((installment) => {
+      if (futureRentalNumbers.has(installment.number)) return { ...installment, amount: signedRental };
+      if (installment.type === 'buyout' && !['paid', 'cancelled'].includes(installment.status)) {
+        return { ...installment, amount: plan.isIncome ? -buyoutAmount : buyoutAmount };
+      }
+      return installment;
+    });
+    await FinanceAPI.saveInstallmentPlan({
+      ...plan,
+      installments: updatedInstallments,
+      rentalAmount: newAmount,
+      rentalMonthlyAmount: monthlyRental,
+      paymentAmount: newAmount,
+      monthlyEquivalentAmount: monthlyRental,
+      projectedRentalCredit: projectedCredit,
+      projectedBuyoutAmount: buyoutAmount,
+      totalAmount: updatedInstallments.reduce((total, installment) => total + (Number(installment.amount) || 0), 0),
+      futureAmountAdjusted: true,
+      updatedAt: new Date().toISOString(),
+    });
+    showToast('Aluguéis futuros e saldo para compra recalculados.', 'success');
+    return;
+  }
 
   const signedAmount = plan.isIncome ? -Math.abs(newAmount) : Math.abs(newAmount);
   const futureNumbers = new Set(future.map((installment) => installment.number));
@@ -5383,14 +5596,17 @@ if (formAnnual) {
 
       const isInstallment = Boolean(annualInstallmentCheck?.checked && !editingAnnualId);
       if (isInstallment) {
-        const count = Math.min(600, Math.max(2, parseInt(annualInstallmentsCount.value, 10) || 2));
         const mode = getAnnualInstallmentMode();
-        const interval = mode === 'purchase' ? 1 : Math.min(12, Math.max(1, parseInt(annualInstallmentsInterval.value, 10) || 1));
+        const isRentToOwn = mode === 'rent_to_own';
+        const count = Math.min(600, Math.max(isRentToOwn ? 1 : 2, parseInt(annualInstallmentsCount.value, 10) || (isRentToOwn ? 3 : 2)));
+        const interval = mode === 'purchase' || isRentToOwn ? 1 : Math.min(12, Math.max(1, parseInt(annualInstallmentsInterval.value, 10) || 1));
         const hasInterest = mode === 'purchase' && Boolean(annualInterestCheck?.checked);
         const interestType = getAnnualInterestType();
-        const paymentFrequency = mode === 'purchase' ? getAnnualPaymentFrequency() : 'monthly';
+        const paymentFrequency = getAnnualPaymentFrequency();
         const annualRate = hasInterest ? Number(annualInterestRate?.value) : 0;
         const amortizationYears = hasInterest && interestType === 'mortgage' ? Number(annualMortgageAmortization?.value) : null;
+        const rentalPayment = isRentToOwn ? parseAmount(annualRentalAmount?.value) : null;
+        const buyAtEnd = isRentToOwn ? Boolean(annualRentBuyAtEnd?.checked) : false;
 
         if (hasInterest && (!Number.isFinite(annualRate) || annualRate <= 0)) {
           return showToast('Informe uma taxa anual válida.', 'error');
@@ -5398,22 +5614,36 @@ if (formAnnual) {
         if (hasInterest && interestType === 'mortgage' && (!Number.isFinite(amortizationYears) || amortizationYears <= 0)) {
           return showToast('Informe a amortização restante da hipoteca.', 'error');
         }
+        if (isRentToOwn && (!Number.isFinite(rentalPayment) || rentalPayment <= 0)) {
+          return showToast('Informe o valor mensal do aluguel.', 'error');
+        }
 
         const paymentCalculation = mode === 'purchase' && (hasInterest || paymentFrequency === 'biweekly')
           ? calculateInstallmentScheduleWithInterest(rawAmount, annualRate, count, interestType, paymentFrequency)
           : null;
-        const absoluteAmounts =
-          mode === 'purchase' ? paymentCalculation?.amounts || distributeCurrencyAmount(rawAmount, count) : Array.from({ length: count }, () => Math.abs(rawAmount));
+        const rentCalculation = isRentToOwn
+          ? buildRentToOwnSchedule({
+              assetPrice: rawAmount,
+              rentalPayment,
+              rentalMonths: count,
+              startDate: dateVal,
+              paymentFrequency,
+              buyAtEnd,
+              isIncome,
+            })
+          : null;
+        const repeatedMonthlyAmount = mode === 'repeat' && paymentFrequency === 'biweekly' ? convertBiweeklyToMonthly(rawAmount) : Math.abs(rawAmount);
+        const absoluteAmounts = mode === 'purchase'
+          ? paymentCalculation?.amounts || distributeCurrencyAmount(rawAmount, count)
+          : Array.from({ length: count }, () => repeatedMonthlyAmount);
         const signedAmounts = absoluteAmounts.map((value) => (isIncome ? -value : value));
-        const schedule = signedAmounts.map((installmentAmount, index) => {
-          const targetDate = addMonthsToAnnualDate(dateVal, index * interval);
-          return {
-            number: index + 1,
-            amount: installmentAmount,
-            targetDate,
-            status: 'pending',
-          };
-        });
+        const schedule = rentCalculation?.schedule || signedAmounts.map((installmentAmount, index) => ({
+          number: index + 1,
+          amount: installmentAmount,
+          targetDate: addMonthsToAnnualDate(dateVal, index * interval),
+          status: 'pending',
+        }));
+        const scheduleCount = schedule.length;
         const existingPlan = editingInstallmentPlanId ? getInstallmentPlan(editingInstallmentPlanId) : null;
         if (editingInstallmentPlanId && !existingPlan) return showToast('Não foi possível localizar o parcelamento em edição.', 'error');
         if (existingPlan && !canFullyEditInstallmentPlan(existingPlan)) {
@@ -5428,22 +5658,29 @@ if (formAnnual) {
           observation,
           isIncome,
           mode,
-          automationMode: mode === 'purchase' ? 'fixed-static-clone' : 'annual-events',
+          automationMode: mode === 'purchase' || isRentToOwn ? 'fixed-static-clone' : 'annual-events',
           status: 'active',
           startDate: dateVal,
           intervalMonths: interval,
-          installmentCount: count,
-          principalAmount: mode === 'purchase' ? Math.abs(rawAmount) : null,
-          totalAmount: signedAmounts.reduce((total, value) => total + value, 0),
+          installmentCount: scheduleCount,
+          principalAmount: mode === 'purchase' || isRentToOwn ? Math.abs(rawAmount) : null,
+          totalAmount: schedule.reduce((total, value) => total + (Number(value.amount) || 0), 0),
           hasInterest,
           interestType: hasInterest ? interestType : null,
           annualInterestRate: hasInterest ? annualRate : null,
-          paymentFrequency: mode === 'purchase' ? paymentFrequency : null,
+          paymentFrequency,
           paymentCount: paymentCalculation?.paymentCount || count,
-          paymentAmount: paymentCalculation?.periodicPayment || null,
-          monthlyEquivalentAmount: paymentCalculation?.monthlyEquivalent || null,
+          paymentAmount: isRentToOwn ? Math.abs(rentalPayment) : paymentCalculation?.periodicPayment || (paymentFrequency === 'biweekly' ? Math.abs(rawAmount) : null),
+          monthlyEquivalentAmount: isRentToOwn ? rentCalculation.monthlyRental : paymentCalculation?.monthlyEquivalent || (paymentFrequency === 'biweekly' ? repeatedMonthlyAmount : null),
           amortizationYears: hasInterest && interestType === 'mortgage' ? amortizationYears : null,
           estimatedInterest: paymentCalculation?.totalInterest || 0,
+          rentalMonths: isRentToOwn ? count : null,
+          rentalAmount: isRentToOwn ? Math.abs(rentalPayment) : null,
+          rentalMonthlyAmount: isRentToOwn ? rentCalculation.monthlyRental : null,
+          assetPrice: isRentToOwn ? Math.abs(rawAmount) : null,
+          buyAtEnd: isRentToOwn ? buyAtEnd : null,
+          projectedRentalCredit: isRentToOwn ? rentCalculation.creditedRental : null,
+          projectedBuyoutAmount: isRentToOwn ? rentCalculation.buyoutAmount : null,
           installments: schedule,
           createdAt: existingPlan?.createdAt || new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -5452,10 +5689,10 @@ if (formAnnual) {
         const planId = existingPlan ? existingPlan.id : await FinanceAPI.saveInstallmentPlan(planData);
         const savedSchedule = [];
 
-        if (mode === 'purchase') {
+        if (mode === 'purchase' || isRentToOwn) {
           const firstInstallment = schedule[0];
           const targetMonth = firstInstallment.targetDate.substring(0, 7);
-          const currentName = `${name} (1/${count})`;
+          const currentName = isRentToOwn ? `${name} • ${getInstallmentStageLabel(firstInstallment, planData)}` : `${name} (1/${scheduleCount})`;
           const staticSyncId = `installment_${planId}_1`;
           const previousFirstInstallment = existingPlan?.installments?.find((installment) => Number(installment.number) === 1);
           const previousPlannedMonth = previousFirstInstallment?.plannedMonth || previousFirstInstallment?.targetDate?.substring(0, 7);
@@ -5474,17 +5711,20 @@ if (formAnnual) {
             staticSyncId,
             installmentPlanId: planId,
             installmentNumber: 1,
-            installmentCount: count,
+            installmentCount: scheduleCount,
             installmentMode: mode,
+            installmentStage: firstInstallment.type || null,
+            rentalNumber: firstInstallment.rentalNumber || null,
+            rentalCount: firstInstallment.rentalCount || null,
             installmentOriginalName: name,
             installmentAutomationMode: 'fixed-static-clone',
           };
           if (previousFirstInstallment?.plannedId && previousPlannedMonth === targetMonth) {
             plannedData.id = previousFirstInstallment.plannedId;
           }
-          if (paymentFrequency === 'biweekly' && paymentCalculation) {
+          if (paymentFrequency === 'biweekly') {
             plannedData.isBiweeklyConverted = true;
-            plannedData.biweeklyAmount = paymentCalculation.periodicPayment;
+            plannedData.biweeklyAmount = isRentToOwn ? rentalPayment : paymentCalculation?.periodicPayment || rawAmount;
             plannedData.biweeklyMonthlyAmount = firstInstallment.amount;
           }
           const plannedId = await FinanceAPI.savePlanned(targetMonth, plannedData);
@@ -5501,17 +5741,20 @@ if (formAnnual) {
             linkedPlannedId: plannedId,
             installmentPlanId: planId,
             installmentNumber: 1,
-            installmentCount: count,
+            installmentCount: scheduleCount,
             installmentMode: mode,
+            installmentStage: firstInstallment.type || null,
+            rentalNumber: firstInstallment.rentalNumber || null,
+            rentalCount: firstInstallment.rentalCount || null,
             installmentOriginalName: name,
             installmentAutomationMode: 'fixed-static-clone',
           };
           if (previousFirstInstallment?.receiptId && previousReceiptMonth === targetMonth) {
             receiptData.id = previousFirstInstallment.receiptId;
           }
-          if (paymentFrequency === 'biweekly' && paymentCalculation) {
+          if (paymentFrequency === 'biweekly') {
             receiptData.isBiweeklyConverted = true;
-            receiptData.biweeklyAmount = paymentCalculation.periodicPayment;
+            receiptData.biweeklyAmount = isRentToOwn ? rentalPayment : paymentCalculation?.periodicPayment || rawAmount;
             receiptData.biweeklyMonthlyAmount = firstInstallment.amount;
           }
           const receiptId = await FinanceAPI.saveReceipt(targetMonth, receiptData);
@@ -5526,7 +5769,14 @@ if (formAnnual) {
             paidAt: firstInstallment.targetDate,
           });
           savedSchedule.push(...schedule.slice(1));
-          await FinanceAPI.saveInstallmentPlan({ ...planData, id: planId, installments: savedSchedule, updatedAt: new Date().toISOString() });
+          await FinanceAPI.saveInstallmentPlan({
+            ...planData,
+            id: planId,
+            status: scheduleCount === 1 ? 'completed' : 'active',
+            installments: savedSchedule,
+            completedAt: scheduleCount === 1 ? firstInstallment.targetDate : null,
+            updatedAt: new Date().toISOString(),
+          });
           if (existingPlan) {
             await deleteInstallmentLinkedRecords(existingPlan, {
               plannedKeys: new Set([`${targetMonth}:${plannedId}`]),
@@ -5535,14 +5785,21 @@ if (formAnnual) {
           }
           const wasEditingPlan = Boolean(existingPlan);
           resetAnnualForm();
-          showToast(wasEditingPlan ? 'Parcelamento atualizado e recriado sem duplicar parcelas.' : 'Parcelamento criado como Fixo e Estático. A próxima parcela entrará ao clonar o mês.', 'success');
+          showToast(
+            wasEditingPlan
+              ? 'Controle atualizado e recriado sem duplicar pagamentos.'
+              : isRentToOwn
+                ? `Aluguel controlado por ${count} ${count === 1 ? 'mês' : 'meses'}${buyAtEnd ? '; a compra pelo saldo entrará no mês seguinte.' : '.'}`
+                : 'Parcelamento criado como Fixo e Estático. A próxima parcela entrará ao clonar o mês.',
+            'success',
+          );
           return;
         }
 
         for (const installment of schedule) {
           const [, currentTargetMonth, currentDay] = installment.targetDate.split('-');
           const currentTargetYear = installment.targetDate.split('-')[0];
-          const currentName = `${name} (${installment.number}/${count})`;
+          const currentName = `${name} (${installment.number}/${scheduleCount})`;
           const itemData = {
             name: currentName,
             installmentOriginalName: name,
@@ -5558,9 +5815,14 @@ if (formAnnual) {
             isIncome,
             installmentPlanId: planId,
             installmentNumber: installment.number,
-            installmentCount: count,
+            installmentCount: scheduleCount,
             installmentMode: mode,
           };
+          if (paymentFrequency === 'biweekly') {
+            itemData.isBiweeklyConverted = true;
+            itemData.biweeklyAmount = rawAmount;
+            itemData.biweeklyMonthlyAmount = installment.amount;
+          }
           const annualEventId = await FinanceAPI.saveAnnualEvent(itemData);
           savedSchedule.push({ ...installment, annualEventId });
           logActivity('Adicionou', `Evento Anual: ${currentName} - ${formatCurrency(installment.amount)}`);
@@ -5631,6 +5893,8 @@ function resetAnnualForm() {
   if (annualInterestCheck) annualInterestCheck.checked = false;
   annualInterestTypeInputs.forEach((input) => (input.checked = input.value === 'financing'));
   annualPaymentFrequencyInputs.forEach((input) => (input.checked = input.value === 'monthly'));
+  if (annualRentalAmount) annualRentalAmount.value = '';
+  if (annualRentBuyAtEnd) annualRentBuyAtEnd.checked = true;
   if (annualInterestRate) annualInterestRate.value = '';
   if (annualMortgageAmortization) annualMortgageAmortization.value = '';
   if (annualInstallmentsCount) annualInstallmentsCount.readOnly = false;
@@ -5929,6 +6193,7 @@ function renderAnnualList() {
         const installmentBadge = item.installmentPlanId
           ? ` <span class="annual-plan-badge">${item.installmentMode === 'repeat' ? 'Repetição' : 'Parcela'}</span>`
           : '';
+        const biweeklyBadge = renderBiweeklyConversionBadge(item);
         const targetYearBadge = item.targetYear ? ` <span class="annual-plan-badge">${item.targetYear}</span>` : '';
 
         const isIncome = item.amount < 0 || item.isIncome;
@@ -5939,7 +6204,7 @@ function renderAnnualList() {
         el.innerHTML = `
         <button type="button" class="annual-drag-handle" aria-label="Mover ${item.name}" title="Pressione e arraste para outro mês">⠿</button>
         <div class="receipt-main">
-          <div class="receipt-line">${item.name}${oneOffBadge}${installmentBadge}${targetYearBadge}${incomeBadge} <span style="color:#fddf7b; font-size: 0.75rem; margin-left: 4px;">[${diaText}]</span></div>
+          <div class="receipt-line">${item.name}${oneOffBadge}${installmentBadge}${biweeklyBadge}${targetYearBadge}${incomeBadge} <span style="color:#fddf7b; font-size: 0.75rem; margin-left: 4px;">[${diaText}]</span></div>
           ${obsHtml}
           <div class="receipt-meta" style="margin-top:2px;">${item.category} • Resp: ${item.owner}${payStr}</div>
         </div>
@@ -6049,6 +6314,7 @@ function checkAnnualAlerts() {
     el.style.border = '1px solid rgba(247, 200, 74, 0.3)';
 
     const oneOffBadge = ev.isOneOff ? ' <span style="color:#ff7b7b; font-size:0.7rem; font-weight:bold;">(Único)</span>' : '';
+    const biweeklyBadge = renderBiweeklyConversionBadge(ev);
     const obsHtml = ev.observation ? `<div style="font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">↳ ${ev.observation}</div>` : '';
 
     const isIncome = ev.amount < 0 || ev.isIncome;
@@ -6058,7 +6324,7 @@ function checkAnnualAlerts() {
 
     el.innerHTML = `
       <div>
-        <div style="font-weight: 600; font-size: 0.9rem; color: #f5f5f5;">${ev.name}${oneOffBadge}${incomeBadge} (Dia ${ev.dayTarget || '01'})</div>
+        <div style="font-weight: 600; font-size: 0.9rem; color: #f5f5f5;">${ev.name}${oneOffBadge}${biweeklyBadge}${incomeBadge} (Dia ${ev.dayTarget || '01'})</div>
         ${obsHtml}
         <div style="font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">Previsto: <span style="color: ${amountColor}; font-weight: 600;">${displayAmount}</span> • ${ev.owner}</div>
       </div>
@@ -6097,6 +6363,11 @@ window.launchAnnualToBudget = async function (eventId, targetMonthStr) {
     itemData.installmentNumber = ev.installmentNumber;
     itemData.installmentCount = ev.installmentCount;
     itemData.installmentMode = ev.installmentMode;
+  }
+  if (ev.isBiweeklyConverted) {
+    itemData.isBiweeklyConverted = true;
+    itemData.biweeklyAmount = ev.biweeklyAmount;
+    itemData.biweeklyMonthlyAmount = ev.biweeklyMonthlyAmount ?? ev.amount;
   }
 
   const plannedId = await FinanceAPI.savePlanned(targetMonthStr, itemData);

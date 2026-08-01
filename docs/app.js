@@ -703,15 +703,20 @@ function getCurrentMonth() {
   return monthInput.value;
 }
 
-function loadIncomeToInputs(month) {
-  let income = incomes.find((i) => i.month === month);
+function hasIncomeData(income) {
+  return Boolean(income && (income.luana !== undefined || income.gabriel !== undefined));
+}
 
-  if (!income) {
-    const pastIncomes = incomes.filter((i) => i.month < month).sort((a, b) => b.month.localeCompare(a.month));
-    if (pastIncomes.length > 0) {
-      income = pastIncomes[0];
-    }
-  }
+function getIncomeRecordForMonth(month, allowPrevious = true) {
+  const exact = incomes.find((income) => income.month === month && hasIncomeData(income));
+  if (exact || !allowPrevious) return exact || null;
+  return incomes
+    .filter((income) => income.month < month && hasIncomeData(income))
+    .sort((a, b) => b.month.localeCompare(a.month))[0] || null;
+}
+
+function loadIncomeToInputs(month) {
+  const income = getIncomeRecordForMonth(month);
 
   const luanaIsBiweekly = Boolean(income?.luanaIsBiweekly);
   const gabrielIsBiweekly = Boolean(income?.gabrielIsBiweekly);
@@ -859,7 +864,7 @@ function validateBackupPayload(payload) {
 
 async function buildFullBackupPayload() {
   const rawData = await FinanceAPI.getFullBackupData();
-  return {
+  const payload = {
     format: BACKUP_FORMAT,
     schemaVersion: BACKUP_SCHEMA_VERSION,
     exportedAt: new Date().toISOString(),
@@ -868,6 +873,11 @@ async function buildFullBackupPayload() {
     stats: getBackupStats(rawData),
     data: serializeBackupValue(rawData),
   };
+
+  // Valida tambem o arquivo gerado pelo proprio app antes de grava-lo. Assim,
+  // um campo incompatível ou uma estrutura incompleta nunca vira um backup
+  // aparentemente valido que so falharia no momento da restauracao.
+  return validateBackupPayload(payload);
 }
 
 function openBackupDirectoryDatabase() {
@@ -1205,13 +1215,38 @@ btnLoadMonth.addEventListener('click', async () => {
   btnLoadMonth.disabled = true;
 
   try {
-    const hasItems = plannedItems.some((p) => p.month === targetMonth);
+    // Confere diretamente no Firebase para evitar uma segunda clonagem caso o
+    // listener da tela ainda não tenha terminado de carregar o mês.
+    const targetItems = await FinanceAPI.getPlannedOnce(targetMonth);
+    const hasItems = targetItems.length > 0;
+    const [year, month] = targetMonth.split('-');
+    const prevDate = new Date(year, parseInt(month) - 2, 1);
+    const prevMonthStr = prevDate.getFullYear() + '-' + String(prevDate.getMonth() + 1).padStart(2, '0');
+    let incomeWasCloned = false;
+
+    // O marcador usado pelo backup cria o documento do mês, mas não representa
+    // uma renda cadastrada. Ao carregar um mês novo, persiste explicitamente a
+    // última renda para que o resumo e o formulário não apareçam zerados.
+    const targetIncome = await FinanceAPI.getIncomeOnce(targetMonth);
+    const previousIncome = (await FinanceAPI.getIncomeOnce(prevMonthStr)) || getIncomeRecordForMonth(targetMonth);
+    if (!targetIncome && previousIncome) {
+      const conversionData = {
+        luanaIsBiweekly: Boolean(previousIncome.luanaIsBiweekly),
+        gabrielIsBiweekly: Boolean(previousIncome.gabrielIsBiweekly),
+        luanaBiweeklyAmount: previousIncome.luanaBiweeklyAmount ?? null,
+        gabrielBiweeklyAmount: previousIncome.gabrielBiweeklyAmount ?? null,
+      };
+      await FinanceAPI.saveIncome(targetMonth, previousIncome.luana || 0, previousIncome.gabriel || 0, conversionData);
+      const incomeIndex = incomes.findIndex((income) => income.month === targetMonth);
+      const clonedIncome = { month: targetMonth, luana: previousIncome.luana || 0, gabriel: previousIncome.gabriel || 0, ...conversionData };
+      if (incomeIndex >= 0) incomes[incomeIndex] = clonedIncome;
+      else incomes.push(clonedIncome);
+      incomeWasCloned = true;
+      shouldOfferBackup = true;
+    }
 
     if (!hasItems) {
       await FinanceAPI.ensureMonth(targetMonth);
-      const [year, month] = targetMonth.split('-');
-      let prevDate = new Date(year, parseInt(month) - 2, 1);
-      const prevMonthStr = prevDate.getFullYear() + '-' + String(prevDate.getMonth() + 1).padStart(2, '0');
 
       const prevItems = await FinanceAPI.getPlannedOnce(prevMonthStr);
       const fixedItemsToClone = prevItems.filter((p) => p.fixed);
@@ -1288,6 +1323,15 @@ btnLoadMonth.addEventListener('click', async () => {
           }
         }
 
+        // Itens estáticos antigos podem não possuir o identificador de sincronização.
+        // Ao clonar, cria um vínculo estável para manter Orçamento e Nota conectados.
+        if (sourceItem.isStatic && !sourceItem.staticSyncId) {
+          sourceItem = {
+            ...sourceItem,
+            staticSyncId: `sync_${sourceItem.id || `${prevMonthStr}_${Date.now()}`}`,
+          };
+        }
+
         let newDate = '';
 
         if (installmentEntry?.targetDate) {
@@ -1335,7 +1379,17 @@ btnLoadMonth.addEventListener('click', async () => {
             receiptData.installmentOriginalName = sourceItem.installmentOriginalName;
             receiptData.installmentAutomationMode = sourceItem.installmentAutomationMode;
           }
-          const receiptId = await FinanceAPI.saveReceipt(targetMonth, receiptData);
+          Object.keys(receiptData).forEach((key) => {
+            if (receiptData[key] === undefined) delete receiptData[key];
+          });
+          let receiptId;
+          try {
+            receiptId = await FinanceAPI.saveReceipt(targetMonth, receiptData);
+          } catch (error) {
+            // Evita deixar um item solto no Orçamento quando a Nota correspondente falhar.
+            await FinanceAPI.deletePlanned(targetMonth, plannedId);
+            throw error;
+          }
 
           if (installmentPlan && installmentEntry) {
             const updatedInstallments = installmentPlan.installments.map((entry) =>
@@ -1372,7 +1426,12 @@ btnLoadMonth.addEventListener('click', async () => {
       }
       shouldOfferBackup = true;
     } else {
-      showToast('Este mês já possui itens. A cópia automática só funciona em meses vazios.', 'error');
+      showToast(
+        incomeWasCloned
+          ? `Renda copiada de ${prevMonthStr}. As contas não foram copiadas novamente porque este mês já possui itens.`
+          : 'Este mês já possui itens. A cópia automática só funciona em meses vazios.',
+        incomeWasCloned ? 'success' : 'error',
+      );
     }
 
     loadIncomeToInputs(targetMonth);
@@ -1424,10 +1483,8 @@ btnSaveIncome.addEventListener('click', async () => {
 });
 
 function getIncomeTotalForMonth(month) {
-  const exact = incomes.find((i) => i.month === month);
-  if (exact) return (exact.luana || 0) + (exact.gabriel || 0);
-  const past = incomes.filter((i) => i.month < month).sort((a, b) => b.month.localeCompare(a.month));
-  return past.length > 0 ? past[0].luana + past[0].gabriel : 0;
+  const income = getIncomeRecordForMonth(month);
+  return income ? (income.luana || 0) + (income.gabriel || 0) : 0;
 }
 
 monthInput.addEventListener('change', () => {
@@ -3089,7 +3146,19 @@ function getPendingFixedExpenses(month) {
 
   return Array.from(fixedByCategory.values())
     .map((group) => {
-      const actualAmount = receipts.filter((receipt) => receipt.date.startsWith(month) && receipt.amount > 0 && !receipt.isReimbursement && receipt.category === group.category).reduce((total, receipt) => total + receipt.amount, 0);
+      // Notas estáticas já estão incluídas no Real automaticamente e pertencem
+      // aos seus próprios itens previstos. Elas não podem quitar outro fixo não
+      // estático da mesma categoria (ex.: CARRO não quita ESTACIONAMENTO).
+      const actualAmount = receipts
+        .filter(
+          (receipt) =>
+            receipt.date.startsWith(month) &&
+            receipt.amount > 0 &&
+            !receipt.isReimbursement &&
+            !receipt.isStatic &&
+            receipt.category === group.category,
+        )
+        .reduce((total, receipt) => total + receipt.amount, 0);
       const remainingAmount = Math.max(group.amount - actualAmount, 0);
       const sortedDates = group.dates.sort();
       return {
@@ -3264,7 +3333,7 @@ async function preloadAllIncomes() {
         if (data.luana !== undefined || data.gabriel !== undefined) {
           const exists = incomes.find((i) => i.month === doc.id);
           if (!exists) {
-            incomes.push({ month: doc.id, luana: data.luana || 0, gabriel: data.gabriel || 0 });
+            incomes.push({ month: doc.id, ...data, luana: data.luana || 0, gabriel: data.gabriel || 0 });
           }
         }
       }
@@ -3309,7 +3378,7 @@ async function initAppUI() {
         if (data.luana !== undefined || data.gabriel !== undefined) {
           const exists = incomes.find((i) => i.month === doc.id);
           if (!exists) {
-            incomes.push({ month: doc.id, luana: data.luana || 0, gabriel: data.gabriel || 0 });
+            incomes.push({ month: doc.id, ...data, luana: data.luana || 0, gabriel: data.gabriel || 0 });
           }
         }
       }
@@ -4693,6 +4762,8 @@ function syncData(month) {
     if (inc) {
       if (idx >= 0) incomes[idx] = { month, ...inc };
       else incomes.push({ month, ...inc });
+    } else if (idx >= 0) {
+      incomes.splice(idx, 1);
     }
     loadIncomeToInputs(month);
     refreshAll();

@@ -81,8 +81,19 @@ window.FinanceAPI = {
       .doc(this.familyId)
       .collection('meses')
       .doc(month)
-      .onSnapshot((doc) => callback(doc.exists ? doc.data() : null));
+      .onSnapshot((doc) => {
+        const data = doc.exists ? doc.data() : null;
+        const hasIncome = data && (data.luana !== undefined || data.gabriel !== undefined);
+        callback(hasIncome ? data : null);
+      });
     this.unsubscribers.push(unsub);
+  },
+
+  async getIncomeOnce(month) {
+    const document = await db.collection('familias').doc(this.familyId).collection('meses').doc(month).get();
+    if (!document.exists) return null;
+    const data = document.data();
+    return data.luana !== undefined || data.gabriel !== undefined ? data : null;
   },
 
   async saveIncome(month, luana, gabriel, conversionData = {}) {

@@ -226,6 +226,8 @@ const plannedItems = [];
 const receipts = [];
 const incomes = [];
 let paymentMethods = [];
+let creditCardPayments = {};
+let previousCreditCardPayments = {};
 
 const openPlannedCats = new Set();
 const openReceiptCats = new Set();
@@ -486,9 +488,12 @@ formReimbursement.addEventListener('submit', async (e) => {
 const formPayment = document.getElementById('form-payment');
 const payTypeSelect = document.getElementById('pay-type');
 const payCreditFields = document.getElementById('pay-credit-fields');
+const payMonthlyLimitInput = document.getElementById('pay-monthly-limit');
 
 payTypeSelect.addEventListener('change', (e) => {
-  payCreditFields.style.display = e.target.value === 'credito' ? 'flex' : 'none';
+  const isCredit = e.target.value === 'credito';
+  payCreditFields.style.display = isCredit ? 'flex' : 'none';
+  payMonthlyLimitInput.required = isCredit;
 });
 
 let editingPaymentId = null;
@@ -500,20 +505,27 @@ formPayment.addEventListener('submit', async (e) => {
   const type = payTypeSelect.value;
   const closing = document.getElementById('pay-closing').value;
   const due = document.getElementById('pay-due').value;
+  const monthlyLimit = parseAmount(document.getElementById('pay-monthly-limit').value);
 
   if (!name) return;
+  if (type === 'credito' && (!Number.isFinite(monthlyLimit) || monthlyLimit <= 0)) {
+    payMonthlyLimitInput.focus();
+    return showToast('Informe o limite real do cartão.', 'error');
+  }
 
   let updatedMethods = [...paymentMethods];
 
   if (editingPaymentId) {
     const idx = updatedMethods.findIndex((m) => m.id === editingPaymentId);
-    if (idx !== -1) {
-      updatedMethods[idx] = {
-        id: editingPaymentId,
+      if (idx !== -1) {
+        updatedMethods[idx] = {
+          ...updatedMethods[idx],
+          id: editingPaymentId,
         name,
         type,
         closing: type === 'credito' ? parseInt(closing) || null : null,
         due: type === 'credito' ? parseInt(due) || null : null,
+        monthlyLimit: type === 'credito' && Number.isFinite(monthlyLimit) && monthlyLimit > 0 ? monthlyLimit : null,
       };
     }
   } else {
@@ -523,6 +535,7 @@ formPayment.addEventListener('submit', async (e) => {
       type,
       closing: type === 'credito' ? parseInt(closing) || null : null,
       due: type === 'credito' ? parseInt(due) || null : null,
+      monthlyLimit: type === 'credito' && Number.isFinite(monthlyLimit) && monthlyLimit > 0 ? monthlyLimit : null,
     };
     updatedMethods.push(newMethod);
   }
@@ -543,6 +556,7 @@ function resetPaymentForm() {
   paySubmitBtn.textContent = 'Salvar Cartão';
   paySubmitBtn.disabled = false;
   payCreditFields.style.display = payTypeSelect.value === 'credito' ? 'flex' : 'none';
+  payMonthlyLimitInput.required = payTypeSelect.value === 'credito';
 }
 
 function startEditPayment(id) {
@@ -555,12 +569,16 @@ function startEditPayment(id) {
 
   if (method.type === 'credito') {
     payCreditFields.style.display = 'flex';
+    payMonthlyLimitInput.required = true;
     document.getElementById('pay-closing').value = method.closing || '';
     document.getElementById('pay-due').value = method.due || '';
+    document.getElementById('pay-monthly-limit').value = method.monthlyLimit || '';
   } else {
     payCreditFields.style.display = 'none';
+    payMonthlyLimitInput.required = false;
     document.getElementById('pay-closing').value = '';
     document.getElementById('pay-due').value = '';
+    document.getElementById('pay-monthly-limit').value = '';
   }
 
   paySubmitBtn.textContent = 'Salvar Alterações';
@@ -587,7 +605,8 @@ function renderPaymentMethodsList() {
     let detailText = '';
     if (method.type === 'credito' && method.closing) {
       const dueText = method.due < method.closing ? `Vence dia ${method.due} (mês seg.)` : `Vence dia ${method.due}`;
-      detailText = ` • Fecha dia ${method.closing} • ${dueText}`;
+      const limitText = method.monthlyLimit ? ` • Limite real ${formatCurrency(method.monthlyLimit)}` : ' • Limite não informado';
+      detailText = ` • Fecha dia ${method.closing} • ${dueText}${limitText}`;
     }
 
     item.innerHTML = `
@@ -3196,30 +3215,40 @@ function renderFreeProjectionDetails(month, pendingItems, projectedBalance) {
   const freeCard = document.querySelector('.dash-item-free');
   const arrow = document.getElementById('summary-free-projection-arrow');
   const afterFixed = document.getElementById('summary-free-after-fixed');
+  const cardsDue = document.getElementById('summary-credit-cards-due');
   const hasPendingItems = pendingItems.length > 0;
+  const cardInvoices = getCreditCardInvoicesForMonth(month);
+  const hasCreditCards = cardInvoices.length > 0;
+  const hasDetails = hasPendingItems || hasCreditCards;
+  const cardInvoicesTotal = Math.round(cardInvoices.reduce((sum, invoice) => sum + invoice.total, 0) * 100) / 100;
 
   if (!summaryFreeProjectionToggle || !details || !freeCard || !arrow) return;
 
-  if (!hasPendingItems) isFreeProjectionExpanded = false;
+  if (!hasDetails) isFreeProjectionExpanded = false;
 
-  summaryFreeProjectionToggle.classList.toggle('is-available', hasPendingItems);
-  summaryFreeProjectionToggle.setAttribute('aria-disabled', String(!hasPendingItems));
-  summaryFreeProjectionToggle.setAttribute('aria-expanded', String(hasPendingItems && isFreeProjectionExpanded));
+  summaryFreeProjectionToggle.classList.toggle('is-available', hasDetails);
+  summaryFreeProjectionToggle.setAttribute('aria-disabled', String(!hasDetails));
+  summaryFreeProjectionToggle.setAttribute('aria-expanded', String(hasDetails && isFreeProjectionExpanded));
+  summaryFreeProjectionToggle.title = hasDetails ? 'Ver fixos pendentes e faturas de cartões' : 'Nenhum compromisso pendente';
   arrow.textContent = isFreeProjectionExpanded ? '▼' : '▶';
   if (afterFixed) {
     afterFixed.textContent = hasPendingItems ? `Após fixos: ${formatCurrency(projectedBalance)}` : '';
     afterFixed.classList.toggle('visible', hasPendingItems);
   }
+  if (cardsDue) {
+    cardsDue.textContent = hasCreditCards ? `Cartões a pagar: ${formatCurrency(cardInvoicesTotal)}` : '';
+    cardsDue.classList.toggle('visible', hasCreditCards);
+  }
 
-  if (!hasPendingItems || !isFreeProjectionExpanded) {
+  if (!hasDetails || !isFreeProjectionExpanded) {
     details.innerHTML = '';
     details.classList.remove('visible');
     freeCard.classList.remove('is-expanded');
     return;
   }
 
-  const projectionEnd = getPendingFixedProjectionEnd(month, pendingItems);
-  const rows = [...pendingItems]
+  const projectionEnd = hasPendingItems ? getPendingFixedProjectionEnd(month, pendingItems) : '';
+  const fixedRows = [...pendingItems]
     .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
     .map((item) => {
       const percent = (item.actualAmount / item.amount) * 100;
@@ -3242,12 +3271,32 @@ function renderFreeProjectionDetails(month, pendingItems, projectedBalance) {
     })
     .join('');
 
+  const cardRows = cardInvoices
+    .map((invoice) => {
+      const payment = getCreditCardPaymentInfo(invoice);
+      const dueLabel = payment.dueDate ? payment.dueDate.split('-').reverse().join('/') : '—';
+      return `<tr>
+        <td class="dash-fixed-name"><span>${escapeCardDetail(invoice.card.name)}</span><small>Vence em ${dueLabel} · já descontado nas compras</small></td>
+        <td>${formatCurrency(invoice.total)}</td>
+        <td>${formatCurrency(payment.paidAmount)}</td>
+        <td><span class="credit-card-status ${payment.statusClass}">${payment.status}</span></td>
+      </tr>`;
+    })
+    .join('');
+
   details.innerHTML = `
-    <div class="dash-free-details-title">Fixos pendentes até ${formatShortDate(projectionEnd)}</div>
-    <table class="dash-fixed-table">
-      <thead><tr><th>Fixo</th><th>Prev.</th><th>Real</th><th>Diferença</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
+    ${
+      hasPendingItems
+        ? `<div class="dash-free-details-title">Fixos pendentes até ${formatShortDate(projectionEnd)}</div>
+           <table class="dash-fixed-table"><thead><tr><th>Fixo</th><th>Prev.</th><th>Real</th><th>Diferença</th></tr></thead><tbody>${fixedRows}</tbody></table>`
+        : ''
+    }
+    ${
+      hasCreditCards
+        ? `<div class="dash-free-details-title dash-card-invoices-title">Cartões a pagar no mês <small>Informativo: estes valores já reduziram o Livre nas compras.</small></div>
+           <table class="dash-fixed-table dash-card-invoices-table"><thead><tr><th>Cartão</th><th>Fatura</th><th>Pago</th><th>Situação</th></tr></thead><tbody>${cardRows}</tbody></table>`
+        : ''
+    }
   `;
   details.classList.add('visible');
   freeCard.classList.add('is-expanded');
@@ -4429,6 +4478,49 @@ function updateHistoricalChart() {
 
 // ===== Dashboard de Cartões de Crédito =====
 const openCreditCardDetails = new Set();
+const creditCardFilters = new Map();
+
+function getCreditCardFilter(cardId) {
+  if (!creditCardFilters.has(cardId)) {
+    creditCardFilters.set(cardId, { search: '', sortType: 'date', sortOrder: 'desc' });
+  }
+  return creditCardFilters.get(cardId);
+}
+
+function filterAndSortCreditCardEntries(entries, filter) {
+  const normalizedSearch = normalizeSearchText(filter.search);
+  const includedIds = new Set();
+  entries.forEach((entry) => {
+    const searchable = [entry.merchant, entry.category, entry.observation, entry.owner, formatCurrency(entry.amount), entry.isReimbursement ? 'reembolso' : 'compra']
+      .map(normalizeSearchText)
+      .join(' ');
+    if (!normalizedSearch || searchable.includes(normalizedSearch)) includedIds.add(entry.id);
+  });
+
+  if (normalizedSearch) {
+    entries.forEach((entry) => {
+      if (entry.isReimbursement && includedIds.has(entry.id)) {
+        const source = findReimbursementSource(entry, entries);
+        if (source) includedIds.add(source.id);
+      } else if (!entry.isReimbursement && includedIds.has(entry.id)) {
+        entries
+          .filter((candidate) => candidate.isReimbursement && findReimbursementSource(candidate, entries)?.id === entry.id)
+          .forEach((reimbursement) => includedIds.add(reimbursement.id));
+      }
+    });
+  }
+
+  return entries
+    .filter((entry) => includedIds.has(entry.id))
+    .sort((a, b) => {
+      let valueA = a[filter.sortType] ?? '';
+      let valueB = b[filter.sortType] ?? '';
+      if (typeof valueA === 'string') valueA = normalizeSearchText(valueA);
+      if (typeof valueB === 'string') valueB = normalizeSearchText(valueB);
+      const comparison = valueA < valueB ? -1 : valueA > valueB ? 1 : 0;
+      return filter.sortOrder === 'asc' ? comparison : -comparison;
+    });
+}
 
 function escapeCardDetail(value) {
   return String(value || '').replace(
@@ -4442,6 +4534,116 @@ function escapeCardDetail(value) {
         '"': '&quot;',
       })[character],
   );
+}
+
+function shiftReferenceMonth(referenceMonth, offset) {
+  const [year, month] = String(referenceMonth || '').split('-').map(Number);
+  if (!year || !month) return referenceMonth;
+  const shifted = new Date(year, month - 1 + offset, 1);
+  return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function formatReferenceMonthLabel(referenceMonth) {
+  const [year, month] = String(referenceMonth || '').split('-').map(Number);
+  if (!year || !month) return referenceMonth || '';
+  return new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(new Date(year, month - 1, 1));
+}
+
+function getCreditCardInvoiceDueMonth(receiptDate, card) {
+  const [purchaseMonth, dayText] = String(receiptDate || '').match(/^(\d{4}-\d{2})-(\d{2})$/)?.slice(1) || [];
+  if (!purchaseMonth) return null;
+
+  const closingDay = Number(card?.closing);
+  const dueDay = Number(card?.due);
+  if (!closingDay || !dueDay) return purchaseMonth;
+
+  const closingMonth = Number(dayText) <= closingDay ? purchaseMonth : shiftReferenceMonth(purchaseMonth, 1);
+  return dueDay > closingDay ? closingMonth : shiftReferenceMonth(closingMonth, 1);
+}
+
+function getCreditCardInvoiceSnapshot(card, dueMonth) {
+  const entries = receipts
+    .filter((receipt) => receipt.paymentMethodId === card.id && getCreditCardInvoiceDueMonth(receipt.date, card) === dueMonth)
+    .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+  const total = Math.max(0, Math.round(entries.reduce((sum, receipt) => sum + (Number(receipt.amount) || 0), 0) * 100) / 100);
+  return { card, dueMonth, entries, total };
+}
+
+function getCreditCardInvoiceDueDate(card, dueMonth) {
+  const [year, month] = String(dueMonth || '').split('-').map(Number);
+  if (!year || !month) return '';
+  const lastDay = new Date(year, month, 0).getDate();
+  const dueDay = Math.min(Math.max(Number(card?.due) || 1, 1), lastDay);
+  return `${dueMonth}-${String(dueDay).padStart(2, '0')}`;
+}
+
+function getTodayISO() {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+}
+
+function getCreditCardPaymentInfo(snapshot, paymentRecords = creditCardPayments) {
+  const record = paymentRecords[snapshot.card.id] || null;
+  const dueDate = getCreditCardInvoiceDueDate(snapshot.card, snapshot.dueMonth);
+  const dueReached = Boolean(dueDate && getTodayISO() >= dueDate);
+  const manualAmount = record ? Math.max(0, Number(record.amount) || 0) : 0;
+  const assumedPaid = !record && snapshot.total > 0.005 && dueReached;
+  const paidAmount = assumedPaid ? snapshot.total : manualAmount;
+  const remaining = Math.max(0, Math.round((snapshot.total - paidAmount) * 100) / 100);
+
+  let status = 'Sem fatura';
+  let statusClass = 'is-empty';
+  if (snapshot.total > 0.005) {
+    if (assumedPaid) {
+      status = 'Pago automaticamente';
+      statusClass = 'is-paid';
+    } else if (record && remaining <= 0.005) {
+      status = 'Pagamento confirmado';
+      statusClass = 'is-paid';
+    } else if (record && paidAmount > 0.005) {
+      status = 'Pago parcialmente';
+      statusClass = 'is-partial';
+    } else {
+      status = dueReached ? 'Pagamento não informado' : 'Fatura em aberto';
+      statusClass = dueReached ? 'is-overdue' : 'is-pending';
+    }
+  }
+
+  return { record, dueDate, paidAmount, remaining, assumedPaid, status, statusClass };
+}
+
+function getSuggestedCreditCardLimit(card, month) {
+  const recurringItems = plannedItems.filter((item) => {
+    const isAnnualEvent = Boolean(item.linkedAnnualId) || item.category === 'Eventos';
+    const isInstallment = Boolean(item.installmentPlanId || item.installmentMode || item.installmentCount);
+    return item.month === month && item.paymentMethodId === card.id && item.fixed && !isAnnualEvent && !isInstallment && Number(item.amount) > 0;
+  });
+  const plannedGross = recurringItems.reduce((sum, item) => sum + Number(item.amount), 0);
+  const reimbursementIds = new Set();
+  const reimbursementCredit = recurringItems.reduce((sum, item) => {
+    const itemCredits = getPlannedItemReimbursements(item, month).filter(
+      (reimbursement) => reimbursement.paymentMethodId === card.id && !reimbursementIds.has(reimbursement.id),
+    );
+    itemCredits.forEach((reimbursement) => reimbursementIds.add(reimbursement.id));
+    return sum + itemCredits.reduce((creditSum, reimbursement) => creditSum + Math.abs(Number(reimbursement.amount) || 0), 0);
+  }, 0);
+  const value = Math.max(0, plannedGross - reimbursementCredit);
+
+  return {
+    value: Math.round(value * 100) / 100,
+    plannedGross: Math.round(plannedGross * 100) / 100,
+    reimbursementCredit: Math.round(reimbursementCredit * 100) / 100,
+  };
+}
+
+function getCreditCardInvoicesForMonth(month) {
+  return paymentMethods.filter((method) => method.type === 'credito').map((card) => getCreditCardInvoiceSnapshot(card, month));
+}
+
+function getCreditCardLimitState(percent) {
+  if (percent > 100) return { className: 'is-over-limit', label: 'Limite ultrapassado' };
+  if (percent > 75) return { className: 'is-near-limit', label: 'Atenção ao limite' };
+  return { className: 'is-safe', label: 'Dentro do limite' };
 }
 
 function updateCreditCardsDashboard() {
@@ -4458,149 +4660,363 @@ function updateCreditCardsDashboard() {
     return;
   }
 
-  const [year, m] = month.split('-');
-  const prevDate = new Date(year, parseInt(m) - 2, 1);
-  const prevMonthStr = prevDate.getFullYear() + '-' + String(prevDate.getMonth() + 1).padStart(2, '0');
-
-  const currentMonthReceipts = receipts.filter((r) => r.date.startsWith(month));
-  const prevMonthReceipts = receipts.filter((r) => r.date.startsWith(prevMonthStr));
-
-  let hasAnySpending = false;
+  const currentMonthReceipts = receipts.filter((receipt) => typeof receipt.date === 'string' && receipt.date.startsWith(month));
+  const todayISO = getTodayISO();
   let html = '';
 
   creditCards.forEach((card) => {
-    let currentInvoice = 0;
-    let nextInvoice = 0;
-    let monthSpend = 0;
-    let prevRollover = 0;
-    let currentMonthInsideInvoice = 0;
-    const currentInvoiceEntries = [];
-    const nextInvoiceEntries = [];
+    const previousMonth = shiftReferenceMonth(month, -1);
+    const previousSnapshot = getCreditCardInvoiceSnapshot(card, previousMonth);
+    const currentSnapshot = getCreditCardInvoiceSnapshot(card, month);
+    const nextSnapshot = getCreditCardInvoiceSnapshot(card, shiftReferenceMonth(month, 1));
+    const previousPaymentInfo = getCreditCardPaymentInfo(previousSnapshot, previousCreditCardPayments);
+    const paymentInfo = getCreditCardPaymentInfo(currentSnapshot);
+    const isExpanded = openCreditCardDetails.has(card.id);
+    const cardFilter = getCreditCardFilter(card.id);
+    const filteredNextEntries = filterAndSortCreditCardEntries(nextSnapshot.entries, cardFilter);
+    const hasActiveCardSearch = Boolean(normalizeSearchText(cardFilter.search));
+    const monthSpend = Math.max(
+      0,
+      Math.round(
+        currentMonthReceipts.filter((receipt) => receipt.paymentMethodId === card.id).reduce((sum, receipt) => sum + (Number(receipt.amount) || 0), 0) * 100,
+      ) / 100,
+    );
+    const suggestedLimitDetails = getSuggestedCreditCardLimit(card, month);
+    const suggestedLimit = suggestedLimitDetails.value;
+    const hasSuggestionCredit = suggestedLimitDetails.reimbursementCredit > 0.005;
+    const suggestedLimitTitle = hasSuggestionCredit
+      ? `Base recorrente ${formatCurrency(suggestedLimitDetails.plannedGross)} menos créditos e reembolsos de ${formatCurrency(suggestedLimitDetails.reimbursementCredit)} neste cartão.`
+      : 'Soma somente dos itens fixos recorrentes vinculados a este cartão; eventos e parcelamentos ficam de fora.';
+    const realCardLimit = Math.max(0, Number(card.monthlyLimit) || 0);
+    const savedControlLimit = Math.max(0, Number(card.controlLimit) || 0);
+    const controlLimit = savedControlLimit || suggestedLimit || realCardLimit;
+    const limitPercent = controlLimit > 0 ? (monthSpend / controlLimit) * 100 : 0;
+    const limitState = getCreditCardLimitState(limitPercent);
+    const limitReferenceMax = Math.max(realCardLimit, suggestedLimit, controlLimit, monthSpend, 1);
+    const controlLimitPosition = Math.min((controlLimit / limitReferenceMax) * 100, 100);
+    const suggestedLimitPosition = Math.min((suggestedLimit / limitReferenceMax) * 100, 100);
+    const dueMonthLabel = formatReferenceMonthLabel(month);
+    const previousMonthLabel = formatReferenceMonthLabel(previousMonth);
+    const nextMonthLabel = formatReferenceMonthLabel(nextSnapshot.dueMonth);
+    const paymentDateLabel = paymentInfo.dueDate ? paymentInfo.dueDate.split('-').reverse().join('/') : 'data não informada';
+    const nextPaymentDate = getCreditCardInvoiceDueDate(card, nextSnapshot.dueMonth);
+    const nextPaymentDateLabel = nextPaymentDate ? nextPaymentDate.split('-').reverse().join('/') : nextMonthLabel;
+    const previousPaymentDateLabel = (previousPaymentInfo.record?.date || previousPaymentInfo.dueDate || '').split('-').reverse().join('/');
+    const renderRows = (entries, { showTimingStatus = false } = {}) => {
+      const orderedEntries = [];
+      const attachedReimbursementIds = new Set();
+      entries
+        .filter((entry) => !entry.isReimbursement)
+        .forEach((entry) => {
+          orderedEntries.push(entry);
+          entries
+            .filter((candidate) => candidate.isReimbursement && findReimbursementSource(candidate, entries)?.id === entry.id)
+            .forEach((reimbursement) => {
+              orderedEntries.push(reimbursement);
+              attachedReimbursementIds.add(reimbursement.id);
+            });
+        });
+      entries
+        .filter((entry) => entry.isReimbursement && !attachedReimbursementIds.has(entry.id))
+        .forEach((reimbursement) => orderedEntries.push(reimbursement));
 
-    const cardCurrentReceipts = currentMonthReceipts.filter((r) => r.paymentMethodId === card.id);
-    cardCurrentReceipts.forEach((r) => {
-      monthSpend += r.amount;
-      const rDay = parseInt(r.date.split('-')[2]);
-
-      if (card.closing && rDay > card.closing) {
-        nextInvoice += r.amount;
-        nextInvoiceEntries.push({ receipt: r, source: 'Lançado após o fechamento' });
-      } else {
-        currentInvoice += r.amount;
-        currentMonthInsideInvoice += r.amount;
-        currentInvoiceEntries.push({ receipt: r, source: 'Lançado neste mês' });
-      }
-    });
-
-    const cardPrevReceipts = prevMonthReceipts.filter((r) => r.paymentMethodId === card.id);
-    cardPrevReceipts.forEach((r) => {
-      const rDay = parseInt(r.date.split('-')[2]);
-      if (card.closing && rDay > card.closing) {
-        currentInvoice += r.amount;
-        prevRollover += r.amount;
-        currentInvoiceEntries.push({ receipt: r, source: 'Mês anterior, após o fechamento' });
-      }
-    });
-
-    const visualTotal = currentInvoice + nextInvoice;
-
-    if (visualTotal > 0 || monthSpend > 0) {
-      hasAnySpending = true;
-      const isExpanded = openCreditCardDetails.has(card.id);
-      const pPrev = visualTotal > 0 ? (prevRollover / visualTotal) * 100 : 0;
-      const pCurr = visualTotal > 0 ? (currentMonthInsideInvoice / visualTotal) * 100 : 0;
-      const pNext = visualTotal > 0 ? (nextInvoice / visualTotal) * 100 : 0;
-      const currentInvoiceRows = currentInvoiceEntries
-        .sort((a, b) => b.receipt.date.localeCompare(a.receipt.date))
-        .map(({ receipt, source }) => {
+      return orderedEntries
+        .map((receipt) => {
+          const isCredit = Number(receipt.amount) < 0 || receipt.isReimbursement;
+          const reimbursementSource = receipt.isReimbursement ? findReimbursementSource(receipt, entries) : null;
+          const isLinkedReimbursement = Boolean(reimbursementSource);
+          const isPendingEntry = showTimingStatus && String(receipt.date || '') > todayISO;
+          const timingBadge = showTimingStatus
+            ? `<span class="credit-card-entry-timing ${isPendingEntry ? 'is-pending' : 'is-posted'}">${isPendingEntry ? 'Ainda vai bater' : 'Já lançado'}</span>`
+            : '';
           const observation = receipt.observation ? `<div class="credit-card-detail-observation">↳ ${escapeCardDetail(receipt.observation)}</div>` : '';
-          return `
-            <div class="credit-card-detail-row">
-              <div>
-                <strong>${escapeCardDetail(receipt.merchant)}</strong>
-                <span>${receipt.date.split('-').reverse().join('/')} · ${escapeCardDetail(receipt.category)} · ${escapeCardDetail(source)}</span>
-                ${observation}
-              </div>
-              <b>${formatCurrency(receipt.amount)}</b>
+          return `<div class="credit-card-detail-row ${isCredit ? 'is-credit' : ''} ${isLinkedReimbursement ? 'is-linked-reimbursement' : ''} ${isPendingEntry ? 'is-pending-entry' : 'is-posted-entry'}">
+            <div class="credit-card-detail-main">
+              <div class="credit-card-detail-name">${isLinkedReimbursement ? '<span class="credit-card-reimbursement-arrow" aria-hidden="true">↳</span>' : ''}<strong>${escapeCardDetail(receipt.merchant)}</strong><span class="credit-card-entry-badge">${isCredit ? 'Reembolso' : 'Compra'}</span>${timingBadge}</div>
+              <span class="credit-card-detail-meta">${receipt.date.split('-').reverse().join('/')} · ${escapeCardDetail(receipt.category)}</span>
+              ${observation}
             </div>
-          `;
+            <b>${formatCurrency(receipt.amount)}</b>
+          </div>`;
         })
         .join('');
-      const nextInvoiceSummary = nextInvoiceEntries.length > 0 ? `<div class="credit-card-next-invoice">Próxima fatura: ${formatCurrency(nextInvoice)} em ${nextInvoiceEntries.length} lançamento${nextInvoiceEntries.length > 1 ? 's' : ''}.</div>` : '';
+    };
 
-      html += `
-        <div class="credit-card-card ${isExpanded ? 'is-expanded' : ''}">
-          <div class="credit-card-summary" data-credit-card-id="${card.id}" role="button" tabindex="0" aria-expanded="${isExpanded}" title="${isExpanded ? 'Fechar detalhes da fatura' : 'Ver lançamentos da fatura'}">
-            <div style="display: flex; align-items: center; gap: 10px;">
-              <span class="toggle-icon credit-card-toggle-icon" aria-hidden="true">${isExpanded ? '&#9660;' : '&#9654;'}</span>
-              <span class="credit-card-brand-icon" style="background: rgba(253, 223, 123, 0.1); color: #fddf7b; padding: 6px; border-radius: 8px; font-size: 1.1rem; border: 1px solid rgba(253, 223, 123, 0.2);">💳</span>
-              <div>
-                <div style="font-weight: 600; color: #f5f5f5; font-size: 0.95rem;">${card.name}</div>
-                <div class="credit-card-dates" style="font-size: 0.72rem; color: #a6a6c0;">Fecha dia ${card.closing || '?'} • Vence dia ${card.due || '?'}</div>
-              </div>
+    const previousPaymentLine =
+      previousSnapshot.total > 0.005
+        ? `<div class="credit-card-history-payment ${previousPaymentInfo.statusClass}">
+            <span class="credit-card-history-icon" aria-hidden="true">${previousPaymentInfo.remaining <= 0.005 ? '✓' : '…'}</span>
+            <div class="credit-card-history-copy">
+              <strong>${previousPaymentInfo.remaining <= 0.005 ? 'Pagamento da fatura anterior' : 'Fatura anterior ainda em aberto'}</strong>
+              <small>${previousMonthLabel}${previousPaymentDateLabel ? ` · ${previousPaymentDateLabel}` : ''} · apenas informativo</small>
             </div>
-            <div class="credit-card-invoice" style="text-align: right;">
-              <div style="font-size: 0.72rem; color: #a6a6c0; text-transform: uppercase; font-weight: 600;">Fatura Atual</div>
-              <div class="credit-card-invoice-value" style="font-weight: 800; color: #62c462; font-size: 1.25rem; letter-spacing: -0.5px;">${formatCurrency(currentInvoice)}</div>
+            <div class="credit-card-history-value">
+              <b>${formatCurrency(previousPaymentInfo.paidAmount)}</b>
+              <span>${previousPaymentInfo.status}</span>
             </div>
+            <details class="credit-card-history-adjust">
+              <summary>
+                <span>Ajustar valor real pago</span>
+                <small>Conferir com o banco</small>
+              </summary>
+              <form class="credit-card-payment-form is-history" data-card-id="${card.id}" data-due-month="${previousMonth}">
+                <label>Valor pago no banco<input type="number" min="0" step="0.01" name="amount" value="${previousPaymentInfo.record ? previousPaymentInfo.paidAmount.toFixed(2) : previousSnapshot.total.toFixed(2)}" required></label>
+                <label>Data do pagamento<input type="date" name="date" value="${previousPaymentInfo.record?.date || previousPaymentInfo.dueDate || ''}" required></label>
+                <button type="submit" class="action-btn credit-card-payment-save">${previousPaymentInfo.record ? 'Salvar correção' : 'Confirmar valor real'}</button>
+                ${previousPaymentInfo.record ? '<button type="button" class="action-btn credit-card-payment-auto">Voltar ao automático</button>' : ''}
+              </form>
+            </details>
+          </div>`
+        : '';
+
+    const currentPaymentCopy = currentSnapshot.total <= 0.005
+      ? 'Nenhum valor previsto para pagamento neste mês.'
+      : paymentInfo.assumedPaid
+        ? `Pagamento integral considerado em ${paymentDateLabel}.`
+        : paymentInfo.record
+          ? `Pagamento informado em ${(paymentInfo.record.date || '').split('-').reverse().join('/')}: ${formatCurrency(paymentInfo.paidAmount)}.`
+          : `Sem ação necessária: o pagamento integral será considerado em ${paymentDateLabel}.`;
+    const paymentStateValue = currentSnapshot.total <= 0.005
+      ? 'Sem saldo'
+      : paymentInfo.remaining > 0.005
+        ? `Saldo ${formatCurrency(paymentInfo.remaining)}`
+        : 'Conciliada';
+    const paymentStateIcon = currentSnapshot.total <= 0.005
+      ? '&mdash;'
+      : paymentInfo.remaining > 0.005
+        ? '&#9677;'
+        : '&#10003;';
+
+    html += `
+      <div class="credit-card-card ${isExpanded ? 'is-expanded' : ''}">
+        <div class="credit-card-summary" data-credit-card-id="${card.id}" role="button" tabindex="0" aria-expanded="${isExpanded}" title="${isExpanded ? 'Fechar detalhes da fatura' : 'Ver lançamentos e pagamento'}">
+          <div class="credit-card-heading">
+            <span class="toggle-icon credit-card-toggle-icon" aria-hidden="true">${isExpanded ? '&#9660;' : '&#9654;'}</span>
+            <span class="credit-card-brand-icon">💳</span>
+            <div><strong>${escapeCardDetail(card.name)}</strong><small>Fecha dia ${card.closing || '?'} · Vence dia ${card.due || '?'}</small></div>
           </div>
-          
-          ${
-            card.closing
-              ? `
-          <div class="credit-card-composition-bar" style="display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: #0b0b10; margin-top: 4px; border: 1px solid #27273a;">
-            ${pPrev > 0 ? `<div style="width: ${pPrev}%; background: #4a90e2;" title="Mês Passado"></div>` : ''}
-            ${pCurr > 0 ? `<div style="width: ${pCurr}%; background: #62c462;" title="Fatura Atual (Este Mês)"></div>` : ''}
-            ${pNext > 0 ? `<div style="width: ${pNext}%; background: #f7c84a;" title="Próxima Fatura"></div>` : ''}
-          </div>
-          
-          <div class="credit-card-composition-legend" style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem; color: #a6a6c0; margin-top: 4px;">
-            <span style="display: flex; align-items: center; gap: 6px;">
-              <span><strong style="color: #4a90e2;">■</strong> Passado: <span style="color: #c3c3d5;">${formatCurrency(prevRollover)}</span></span>
-              <span style="color: #4a4a6a;">|</span>
-              <span><strong style="color: #62c462;">■</strong> Gasto no Mês: <span style="color: #c3c3d5;">${formatCurrency(monthSpend)}</span></span>
-            </span>
-            <span><strong style="color: #f7c84a;">■</strong> Próx. Fatura: <span style="color: #f5f5f5;">${formatCurrency(nextInvoice)}</span></span>
-          </div>
-          `
-              : ''
-          }
-          ${
-            isExpanded
-              ? `<div class="credit-card-details">
-                  <div class="credit-card-details-title"><span>Composição da fatura atual</span><strong>${formatCurrency(currentInvoice)}</strong></div>
-                  ${currentInvoiceRows || '<p class="hint">Nenhum lançamento compõe esta fatura.</p>'}
-                  ${nextInvoiceSummary}
-                </div>`
-              : ''
-          }
+          <div class="credit-card-invoice"><small>Fatura a pagar em ${dueMonthLabel}</small><strong>${formatCurrency(currentSnapshot.total)}</strong><span class="credit-card-status ${paymentInfo.statusClass}">${paymentInfo.status}</span></div>
         </div>
-      `;
-    }
+
+        <div class="credit-card-limit-block ${limitState.className}">
+          <div class="credit-card-limit-copy"><span>Uso no mês: <strong>${formatCurrency(monthSpend)}</strong></span><span>${controlLimit > 0 ? `${limitState.label} · ${Math.round(limitPercent * 10) / 10}% do controle` : 'Defina um limite para acompanhar'}</span></div>
+          <div class="credit-card-limit-track"><span style="width:${Math.min(limitPercent, 100)}%"></span></div>
+          <div class="credit-card-limit-meta"><span>Limite de controle: ${formatCurrency(controlLimit)}</span><span>Limite real: ${formatCurrency(realCardLimit)}</span></div>
+        </div>
+
+        <div class="credit-card-limit-reference" style="--control-limit-position:${controlLimitPosition}%; --suggested-limit-position:${suggestedLimitPosition}%">
+          <div class="credit-card-limit-reference-head">
+            <strong>Limite mensal de controle: <b class="credit-card-control-value">${formatCurrency(controlLimit)}</b></strong>
+            <small>Arraste a bolinha; não altera o limite real nem o Livre.</small>
+          </div>
+          <div class="credit-card-limit-reference-track">
+            <span class="credit-card-control-limit-fill"></span>
+            ${suggestedLimit > 0 ? '<i class="credit-card-recurring-marker"></i>' : ''}
+            <input class="credit-card-control-slider" type="range" min="0" max="${limitReferenceMax}" step="0.01" value="${controlLimit}" data-card-id="${card.id}" aria-label="Limite mensal de controle de ${escapeCardDetail(card.name)}">
+          </div>
+          <div class="credit-card-limit-reference-meta">
+            <span>CAD 0</span>
+            ${
+              suggestedLimit > 0
+                ? `<button type="button" class="credit-card-use-suggested" data-card-id="${card.id}" data-suggested-limit="${suggestedLimit}" title="${suggestedLimitTitle}">${hasSuggestionCredit ? 'Base líquida' : 'Base recorrente'}: ${formatCurrency(suggestedLimit)}</button>`
+                : '<b>Sem base recorrente</b>'
+            }
+            <span>Limite real: ${formatCurrency(realCardLimit)}</span>
+          </div>
+        </div>
+
+        ${
+          isExpanded
+            ? `<div class="credit-card-details">
+                <section class="credit-card-invoice-section is-forming">
+                  <div class="credit-card-details-title credit-card-details-toolbar">
+                    <div class="credit-card-details-heading">
+                      <div class="credit-card-cycle-title">
+                        <strong>Fatura em formação</strong>
+                        <span>Compras atuais · vence em ${nextPaymentDateLabel} · ${hasActiveCardSearch ? `${filteredNextEntries.length} de ` : ''}${nextSnapshot.entries.length} lançamento${nextSnapshot.entries.length === 1 ? '' : 's'}</span>
+                      </div>
+                      <strong>${formatCurrency(nextSnapshot.total)}</strong>
+                    </div>
+                    <div class="credit-card-filter-actions">
+                      <input class="list-search credit-card-search" type="search" value="${escapeCardDetail(cardFilter.search)}" placeholder="Buscar..." aria-label="Buscar na fatura em formação de ${escapeCardDetail(card.name)}" data-card-id="${card.id}">
+                      <select class="filter-select credit-card-sort-type" aria-label="Ordenar fatura em formação de ${escapeCardDetail(card.name)}" data-card-id="${card.id}">
+                        <option value="date" ${cardFilter.sortType === 'date' ? 'selected' : ''}>Data</option>
+                        <option value="amount" ${cardFilter.sortType === 'amount' ? 'selected' : ''}>Valor</option>
+                        <option value="merchant" ${cardFilter.sortType === 'merchant' ? 'selected' : ''}>Nome</option>
+                      </select>
+                      <button type="button" class="action-btn btn-icon-only credit-card-sort-order" data-card-id="${card.id}" title="Inverter ordem" aria-label="Inverter ordem da fatura em formação">${cardFilter.sortOrder === 'asc' ? '⬆️' : '⬇️'}</button>
+                    </div>
+                  </div>
+                  <div class="credit-card-timing-legend" aria-label="Situação dos lançamentos">
+                    <span><i class="is-posted"></i> Já lançado</span>
+                    <span><i class="is-pending"></i> Ainda vai bater</span>
+                  </div>
+                  <div class="credit-card-detail-list is-forming">${renderRows(filteredNextEntries, { showTimingStatus: true }) || `<p class="hint">${hasActiveCardSearch ? 'Nenhum lançamento encontrado nesta fatura.' : 'Nenhum lançamento conhecido para a fatura em formação.'}</p>`}</div>
+                </section>
+
+                <section class="credit-card-invoice-section is-closed">
+                  <div class="credit-card-details-title credit-card-closed-title">
+                    <div class="credit-card-cycle-title">
+                      <strong>Fatura fechada</strong>
+                      <span>Pagamento em ${paymentDateLabel} · ${currentSnapshot.entries.length} lançamento${currentSnapshot.entries.length === 1 ? '' : 's'}</span>
+                    </div>
+                    <strong>${formatCurrency(currentSnapshot.total)}</strong>
+                  </div>
+                  <div class="credit-card-detail-list is-closed">${renderRows(currentSnapshot.entries) || '<p class="hint">Nenhum lançamento compõe a fatura fechada.</p>'}</div>
+                  ${previousPaymentLine}
+                  <div class="credit-card-payment-panel ${paymentInfo.statusClass}">
+                    <div class="credit-card-payment-state">
+                      <span class="credit-card-payment-state-icon" aria-hidden="true">${paymentStateIcon}</span>
+                      <div class="credit-card-payment-state-copy">
+                        <strong>${paymentInfo.status}</strong>
+                        <small>${currentPaymentCopy}</small>
+                      </div>
+                      <b>${paymentStateValue}</b>
+                    </div>
+                    ${
+                      currentSnapshot.total > 0.005
+                        ? `<details class="credit-card-payment-control">
+                            <summary>
+                              <span>${paymentInfo.record ? 'Editar pagamento informado' : 'Informar pagamento diferente'}</span>
+                              <small>Opcional</small>
+                            </summary>
+                            <form class="credit-card-payment-form" data-card-id="${card.id}" data-due-month="${month}">
+                              <label>Valor pago<input type="number" min="0" step="0.01" name="amount" value="${paymentInfo.record ? paymentInfo.paidAmount.toFixed(2) : currentSnapshot.total.toFixed(2)}" required></label>
+                              <label>Data do pagamento<input type="date" name="date" value="${paymentInfo.record?.date || paymentInfo.dueDate || ''}" required></label>
+                              <button type="submit" class="action-btn credit-card-payment-save">${paymentInfo.record ? 'Salvar alteração' : 'Confirmar pagamento'}</button>
+                              ${paymentInfo.record ? '<button type="button" class="action-btn credit-card-payment-auto">Voltar ao automático</button>' : ''}
+                            </form>
+                          </details>`
+                        : ''
+                    }
+                  </div>
+                </section>
+              </div>`
+            : ''
+        }
+      </div>`;
   });
 
-  if (hasAnySpending) {
-    container.innerHTML = html;
-    container.querySelectorAll('.credit-card-summary').forEach((summary) => {
-      const toggleDetails = () => {
-        const cardId = summary.dataset.creditCardId;
-        if (openCreditCardDetails.has(cardId)) openCreditCardDetails.delete(cardId);
-        else openCreditCardDetails.add(cardId);
-        updateCreditCardsDashboard();
-      };
+  container.innerHTML = html;
+  container.querySelectorAll('.credit-card-summary').forEach((summary) => {
+    const toggleDetails = () => {
+      const cardId = summary.dataset.creditCardId;
+      if (openCreditCardDetails.has(cardId)) openCreditCardDetails.delete(cardId);
+      else openCreditCardDetails.add(cardId);
+      updateCreditCardsDashboard();
+    };
+    summary.addEventListener('click', toggleDetails);
+    summary.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        toggleDetails();
+      }
+    });
+  });
 
-      summary.addEventListener('click', toggleDetails);
-      summary.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          toggleDetails();
-        }
+  container.querySelectorAll('.credit-card-search').forEach((input) => {
+    input.addEventListener('input', () => {
+      const cardId = input.dataset.cardId;
+      const cursorPosition = input.selectionStart ?? input.value.length;
+      getCreditCardFilter(cardId).search = input.value;
+      updateCreditCardsDashboard();
+      requestAnimationFrame(() => {
+        const refreshedInput = [...container.querySelectorAll('.credit-card-search')].find((item) => item.dataset.cardId === cardId);
+        if (!refreshedInput) return;
+        refreshedInput.focus();
+        refreshedInput.setSelectionRange(cursorPosition, cursorPosition);
       });
     });
-    cardWrapper.style.display = 'block';
-  } else {
-    cardWrapper.style.display = 'none';
-  }
+  });
+
+  container.querySelectorAll('.credit-card-sort-type').forEach((select) => {
+    select.addEventListener('change', () => {
+      getCreditCardFilter(select.dataset.cardId).sortType = select.value;
+      updateCreditCardsDashboard();
+    });
+  });
+
+  container.querySelectorAll('.credit-card-sort-order').forEach((button) => {
+    button.addEventListener('click', () => {
+      const filter = getCreditCardFilter(button.dataset.cardId);
+      filter.sortOrder = filter.sortOrder === 'asc' ? 'desc' : 'asc';
+      updateCreditCardsDashboard();
+    });
+  });
+
+  container.querySelectorAll('.credit-card-control-slider').forEach((slider) => {
+    const reference = slider.closest('.credit-card-limit-reference');
+    const valueLabel = reference?.querySelector('.credit-card-control-value');
+    const updateSliderVisual = () => {
+      const value = Math.max(0, Number(slider.value) || 0);
+      const max = Math.max(1, Number(slider.max) || 1);
+      reference?.style.setProperty('--control-limit-position', `${Math.min((value / max) * 100, 100)}%`);
+      if (valueLabel) valueLabel.textContent = formatCurrency(value);
+    };
+
+    slider.addEventListener('input', updateSliderVisual);
+    slider.addEventListener('change', async () => {
+      const controlLimit = Math.round(Math.max(0, Number(slider.value) || 0) * 100) / 100;
+      const cardIndex = paymentMethods.findIndex((method) => method.id === slider.dataset.cardId);
+      if (cardIndex < 0) return;
+
+      slider.disabled = true;
+      const updatedMethods = paymentMethods.map((method, index) => (index === cardIndex ? { ...method, controlLimit } : method));
+      try {
+        await FinanceAPI.savePaymentMethods(updatedMethods);
+        showToast(`Limite mensal de controle definido em ${formatCurrency(controlLimit)}.`, 'success');
+      } catch (error) {
+        console.error('Erro ao salvar limite mensal de controle:', error);
+        showToast('Não foi possível salvar o limite de controle.', 'error');
+        slider.disabled = false;
+      }
+    });
+  });
+
+  container.querySelectorAll('.credit-card-use-suggested').forEach((button) => {
+    button.addEventListener('click', () => {
+      const slider = [...container.querySelectorAll('.credit-card-control-slider')].find((item) => item.dataset.cardId === button.dataset.cardId);
+      if (!slider || slider.disabled) return;
+      slider.value = button.dataset.suggestedLimit;
+      slider.dispatchEvent(new Event('input', { bubbles: true }));
+      slider.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  });
+
+  container.querySelectorAll('.credit-card-payment-form').forEach((form) => {
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const amount = Number(form.elements.amount.value);
+      const date = form.elements.date.value;
+      if (!Number.isFinite(amount) || amount < 0 || !date) return showToast('Informe um valor e uma data válidos.', 'error');
+      const submit = form.querySelector('button[type="submit"]');
+      submit.disabled = true;
+      try {
+        await FinanceAPI.saveCreditCardPayment(form.dataset.dueMonth, form.dataset.cardId, { amount: Math.round(amount * 100) / 100, date, updatedAt: new Date().toISOString() });
+        showToast('Pagamento da fatura registrado apenas para controle.', 'success');
+      } catch (error) {
+        console.error('Erro ao registrar pagamento da fatura:', error);
+        showToast('Não foi possível registrar o pagamento.', 'error');
+        submit.disabled = false;
+      }
+    });
+  });
+
+  container.querySelectorAll('.credit-card-payment-auto').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const form = button.closest('.credit-card-payment-form');
+      if (!form || !(await showConfirm('Remover o valor manual e voltar ao pagamento automático da fatura?'))) return;
+      try {
+        await FinanceAPI.deleteCreditCardPayment(form.dataset.dueMonth, form.dataset.cardId);
+        showToast('Pagamento automático restaurado.', 'success');
+      } catch (error) {
+        console.error('Erro ao remover pagamento manual:', error);
+        showToast('Não foi possível restaurar o pagamento automático.', 'error');
+      }
+    });
+  });
+
+  cardWrapper.style.display = 'block';
 }
 
 // === Função de Reembolso Rápido (Espelhamento) ===
@@ -4671,6 +5087,7 @@ function refreshAll() {
     const freeCard = document.querySelector('.dash-item-free');
     const freeProjectionArrow = document.getElementById('summary-free-projection-arrow');
     const freeAfterFixed = document.getElementById('summary-free-after-fixed');
+    const creditCardsDue = document.getElementById('summary-credit-cards-due');
     if (summaryFreeProjectionToggle) {
       summaryFreeProjectionToggle.classList.remove('is-available');
       summaryFreeProjectionToggle.setAttribute('aria-disabled', 'true');
@@ -4680,6 +5097,10 @@ function refreshAll() {
     if (freeAfterFixed) {
       freeAfterFixed.textContent = '';
       freeAfterFixed.classList.remove('visible');
+    }
+    if (creditCardsDue) {
+      creditCardsDue.textContent = '';
+      creditCardsDue.classList.remove('visible');
     }
     if (fixedDetails) {
       fixedDetails.innerHTML = '';
@@ -4730,11 +5151,14 @@ function syncData(month) {
   if (!month) return;
 
   FinanceAPI.clearListeners();
+  creditCardPayments = {};
+  previousCreditCardPayments = {};
 
   FinanceAPI.listenPaymentMethods((methods) => {
     paymentMethods = methods || [];
     renderPaymentMethodsList();
     updatePaymentSelects();
+    refreshAll();
   });
 
   FinanceAPI.listenCompanies((comps) => {
@@ -4769,6 +5193,16 @@ function syncData(month) {
     refreshAll();
   });
 
+  FinanceAPI.listenCreditCardPayments(month, (payments) => {
+    creditCardPayments = payments || {};
+    refreshAll();
+  });
+
+  FinanceAPI.listenCreditCardPayments(shiftReferenceMonth(month, -1), (payments) => {
+    previousCreditCardPayments = payments || {};
+    refreshAll();
+  });
+
   FinanceAPI.listenPlanned(month, (pItems) => {
     for (let i = plannedItems.length - 1; i >= 0; i--) {
       if (plannedItems[i].month === month) plannedItems.splice(i, 1);
@@ -4781,6 +5215,7 @@ function syncData(month) {
   const [year, m] = month.split('-');
   const prevDate = new Date(year, parseInt(m) - 2, 1);
   const prevMonthStr = prevDate.getFullYear() + '-' + String(prevDate.getMonth() + 1).padStart(2, '0');
+  const prevPrevMonthStr = shiftReferenceMonth(month, -2);
 
   // 1. Escuta as notas do Mês Atual
   FinanceAPI.listenReceipts(month, (rItems) => {
@@ -4795,6 +5230,16 @@ function syncData(month) {
   FinanceAPI.listenReceipts(prevMonthStr, (rItems) => {
     for (let i = receipts.length - 1; i >= 0; i--) {
       if (receipts[i].date.startsWith(prevMonthStr)) receipts.splice(i, 1);
+    }
+    receipts.push(...rItems);
+    refreshAll();
+  });
+
+  // Cartões cujo vencimento ocorre antes do fechamento podem carregar alguns
+  // lançamentos de dois meses atrás na fatura que vence no mês selecionado.
+  FinanceAPI.listenReceipts(prevPrevMonthStr, (rItems) => {
+    for (let i = receipts.length - 1; i >= 0; i--) {
+      if (typeof receipts[i].date === 'string' && receipts[i].date.startsWith(prevPrevMonthStr)) receipts.splice(i, 1);
     }
     receipts.push(...rItems);
     refreshAll();

@@ -74,6 +74,39 @@ window.FinanceAPI = {
     await db.collection('familias').doc(this.familyId).collection('configuracoes').doc('pagamentos').set({ methods });
   },
 
+  // ===== PAGAMENTOS INFORMATIVOS DAS FATURAS =====
+  // Estes registros nunca geram uma nota e nunca alteram o saldo Livre. Servem
+  // somente para acompanhar se a fatura calculada pelo sistema foi paga.
+  listenCreditCardPayments(month, callback) {
+    const unsub = db
+      .collection('familias')
+      .doc(this.familyId)
+      .collection('meses')
+      .doc(month)
+      .onSnapshot((doc) => callback(doc.exists ? doc.data().creditCardPayments || {} : {}));
+    this.unsubscribers.push(unsub);
+  },
+
+  async saveCreditCardPayment(month, cardId, payment) {
+    await this.ensureMonth(month);
+    await db
+      .collection('familias')
+      .doc(this.familyId)
+      .collection('meses')
+      .doc(month)
+      .update({ [`creditCardPayments.${cardId}`]: payment });
+  },
+
+  async deleteCreditCardPayment(month, cardId) {
+    await this.ensureMonth(month);
+    await db
+      .collection('familias')
+      .doc(this.familyId)
+      .collection('meses')
+      .doc(month)
+      .update({ [`creditCardPayments.${cardId}`]: firebase.firestore.FieldValue.delete() });
+  },
+
   // ===== RENDAS =====
   listenIncome(month, callback) {
     const unsub = db

@@ -107,6 +107,26 @@ window.FinanceAPI = {
       .update({ [`creditCardPayments.${cardId}`]: firebase.firestore.FieldValue.delete() });
   },
 
+  // ===== FATURAS FECHADAS DOS CARTÕES =====
+  // Pagamentos e ajustes são informativos e vivem dentro da própria fatura.
+  // Nenhuma operação desta coleção cria Nota ou altera o Livre.
+  listenCreditCardStatements(callback) {
+    const unsub = db
+      .collection('familias')
+      .doc(this.familyId)
+      .collection('faturas_cartoes')
+      .onSnapshot((snap) => callback(snap.docs.map((document) => ({ id: document.id, ...document.data() }))));
+    this.unsubscribers.push(unsub);
+  },
+
+  async saveCreditCardStatement(statement) {
+    const data = { ...statement };
+    const id = data.id;
+    delete data.id;
+    await db.collection('familias').doc(this.familyId).collection('faturas_cartoes').doc(id).set(data);
+    return id;
+  },
+
   // ===== RENDAS =====
   listenIncome(month, callback) {
     const unsub = db
@@ -265,11 +285,12 @@ window.FinanceAPI = {
 
   async getFullBackupData() {
     const familyRef = db.collection('familias').doc(this.familyId);
-    const [familyDoc, configurationsSnapshot, annualEventsSnapshot, installmentPlansSnapshot, userPreferencesSnapshot, logsSnapshot, monthsSnapshot] = await Promise.all([
+    const [familyDoc, configurationsSnapshot, annualEventsSnapshot, installmentPlansSnapshot, cardStatementsSnapshot, userPreferencesSnapshot, logsSnapshot, monthsSnapshot] = await Promise.all([
       familyRef.get(),
       familyRef.collection('configuracoes').get(),
       familyRef.collection('eventos_anuais').get(),
       familyRef.collection('parcelamentos').get(),
+      familyRef.collection('faturas_cartoes').get(),
       familyRef.collection('user_prefs').get(),
       familyRef.collection('logs').get(),
       familyRef.collection('meses').get(),
@@ -282,6 +303,7 @@ window.FinanceAPI = {
 
     const annualEvents = annualEventsSnapshot.docs.map((document) => ({ id: document.id, data: document.data() }));
     const installmentPlans = installmentPlansSnapshot.docs.map((document) => ({ id: document.id, data: document.data() }));
+    const cardStatements = cardStatementsSnapshot.docs.map((document) => ({ id: document.id, data: document.data() }));
     const userPreferences = userPreferencesSnapshot.docs.map((document) => ({ id: document.id, data: document.data() }));
     const logs = logsSnapshot.docs.map((document) => ({ id: document.id, data: document.data() }));
     const months = {};
@@ -306,6 +328,7 @@ window.FinanceAPI = {
       configurations,
       annualEvents,
       installmentPlans,
+      cardStatements,
       userPreferences,
       logs,
       months,
@@ -333,10 +356,11 @@ window.FinanceAPI = {
     };
 
     if (mode === 'replace') {
-      const [configurationsSnapshot, annualEventsSnapshot, installmentPlansSnapshot, userPreferencesSnapshot, logsSnapshot, monthsSnapshot] = await Promise.all([
+      const [configurationsSnapshot, annualEventsSnapshot, installmentPlansSnapshot, cardStatementsSnapshot, userPreferencesSnapshot, logsSnapshot, monthsSnapshot] = await Promise.all([
         familyRef.collection('configuracoes').get(),
         familyRef.collection('eventos_anuais').get(),
         familyRef.collection('parcelamentos').get(),
+        familyRef.collection('faturas_cartoes').get(),
         familyRef.collection('user_prefs').get(),
         familyRef.collection('logs').get(),
         familyRef.collection('meses').get(),
@@ -345,6 +369,7 @@ window.FinanceAPI = {
       for (const document of configurationsSnapshot.docs) await queueOperation('delete', document.ref);
       for (const document of annualEventsSnapshot.docs) await queueOperation('delete', document.ref);
       for (const document of installmentPlansSnapshot.docs) await queueOperation('delete', document.ref);
+      for (const document of cardStatementsSnapshot.docs) await queueOperation('delete', document.ref);
       for (const document of userPreferencesSnapshot.docs) await queueOperation('delete', document.ref);
       for (const document of logsSnapshot.docs) await queueOperation('delete', document.ref);
 
@@ -372,6 +397,10 @@ window.FinanceAPI = {
 
     for (const plan of backupData.installmentPlans || []) {
       await queueOperation('set', familyRef.collection('parcelamentos').doc(plan.id), plan.data);
+    }
+
+    for (const statement of backupData.cardStatements || []) {
+      await queueOperation('set', familyRef.collection('faturas_cartoes').doc(statement.id), statement.data);
     }
 
     for (const preference of backupData.userPreferences || []) {

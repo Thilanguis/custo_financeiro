@@ -432,6 +432,11 @@
                 <input type="text" id="actual-observation" />
               </div>
             </div>
+            <div class="field actual-posted-date-field" id="actual-posted-date-field" hidden>
+              <label>Data de processamento no cartão (Opcional)</label>
+              <input type="date" id="actual-posted-date" />
+              <small>Use somente quando o banco processar a compra em uma data diferente.</small>
+            </div>
             <div class="actual-options-row checkbox-field">
               <div class="option-control">
                 <label class="option-label-income">
@@ -790,6 +795,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="firebase-api.js"></script>
+    <script src="card-statements.js"></script>
     <script src="app.js"></script>
     <!-- <script src="seed-dev.js"></script> -->
   </body>

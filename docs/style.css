@@ -4610,3 +4610,341 @@ body.annual-drag-active .annual-empty-month-drop-zone {
     white-space: normal;
   }
 }
+/* Cartões — faturas simples */
+.actual-posted-date-field {
+  margin: 2px 0 12px;
+  max-width: 360px;
+}
+
+#actual-posted-date-field[hidden] {
+  display: none;
+}
+
+.actual-posted-date-field small {
+  color: var(--muted, #a6a6c0);
+  margin-top: 4px;
+}
+
+.simple-card-panel {
+  overflow: hidden;
+  gap: 7px;
+  padding: 11px;
+}
+
+.simple-card-panel > .credit-card-limit-block {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(8, 8, 20, .18);
+}
+
+.simple-card-panel > .credit-card-limit-reference {
+  margin: 0;
+  padding: 8px 10px 7px;
+  border-color: rgba(124, 107, 226, .18);
+  border-radius: 8px;
+  background: rgba(124, 107, 226, .025);
+}
+
+.simple-card-summary {
+  display: grid;
+  grid-template-columns: auto auto minmax(145px, .85fr) minmax(0, 2.15fr);
+  gap: 9px;
+  align-items: center;
+  width: 100%;
+  padding: 2px 1px 5px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.simple-card-name {
+  display: grid;
+  min-width: 135px;
+}
+
+.simple-card-name small {
+  color: #aaaac4;
+  font-weight: 400;
+}
+
+.simple-card-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 0;
+  flex: 1;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.075);
+  border-radius: 9px;
+  background: rgba(8,8,20,.2);
+}
+
+.simple-card-metrics > span {
+  display: grid;
+  gap: 2px;
+  padding: 7px 11px;
+  border-left: 1px solid rgba(255,255,255,.075);
+}
+
+.simple-card-metrics > span:first-child {
+  border-left: 0;
+}
+
+.simple-card-metrics > span.is-payable b {
+  color: #7cda78;
+}
+
+.simple-card-metrics small { color: #aaaac4; font-size: .68rem; }
+.simple-card-metrics b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.simple-card-details {
+  display: grid;
+  gap: 12px;
+  padding: 8px 3px 3px;
+  border-top: 1px solid rgba(255,255,255,.07);
+}
+
+.simple-card-cycle {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(255,255,255,.075);
+  border-radius: 11px;
+  background: rgba(7,7,17,.18);
+}
+
+.simple-card-cycle.is-forming {
+  border-color: rgba(124,107,226,.25);
+}
+
+.simple-card-cycle.is-payable {
+  border-color: rgba(247,200,74,.2);
+}
+
+.simple-card-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 12px;
+  border-left: 3px solid #f7c84a;
+  border-radius: 8px;
+  background: rgba(247,200,74,.07);
+}
+
+.simple-card-section-heading.is-open {
+  border-left-color: #7c6be2;
+  background: rgba(124,107,226,.07);
+}
+
+.simple-card-section-heading > div { display: grid; gap: 2px; }
+.simple-card-section-heading small { color: #aaaac4; }
+
+.simple-card-section-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.simple-card-admin {
+  border: 1px solid rgba(124,107,226,.25);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.simple-card-admin > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  color: #c2b4ff;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.simple-card-admin > summary small {
+  color: #9696b2;
+  font-size: .6rem;
+  font-weight: 500;
+}
+
+.simple-card-admin[open] > summary { border-bottom: 1px solid rgba(255,255,255,.08); }
+.simple-card-admin .simple-card-controls { border: 0; border-radius: 0; }
+
+.simple-card-entry-list { display: grid; gap: 6px; }
+.simple-card-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px 12px;
+  padding: 10px 11px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 9px;
+  background: rgba(10,10,24,.28);
+}
+
+.simple-card-entry.is-credit {
+  border-color: rgba(98,196,98,.28);
+  background: rgba(98,196,98,.06);
+}
+
+.simple-card-entry.is-credit > b { color: #76db76; }
+.simple-card-entry-copy { display: grid; gap: 2px; min-width: 0; }
+.simple-card-entry-copy > strong { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+.simple-card-entry-copy small { color: #aaaac4; }
+.simple-card-entry-copy small span { margin-left: 7px; color: #c2b4ff; }
+
+.simple-card-entry.is-pending-entry {
+  border-style: dashed;
+  border-color: rgba(233,167,91,.27);
+  background: linear-gradient(90deg, rgba(233,167,91,.055), rgba(10,10,24,.22));
+}
+
+.simple-card-timing-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.simple-card-timing-summary > span {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  border: 1px solid rgba(105,199,121,.2);
+  border-radius: 8px;
+  background: rgba(105,199,121,.045);
+  color: #d9d9e7;
+  font-size: .67rem;
+}
+
+.simple-card-timing-summary > span.is-pending {
+  border-color: rgba(233,167,91,.25);
+  background: rgba(233,167,91,.045);
+}
+
+.simple-card-timing-summary i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #69c779;
+  box-shadow: 0 0 6px rgba(105,199,121,.28);
+}
+
+.simple-card-timing-summary .is-pending i {
+  border: 1px dashed #e9a75b;
+  background: transparent;
+  box-shadow: none;
+}
+
+.simple-card-timing-summary span > span {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-weight: 700;
+}
+
+.simple-card-timing-summary small {
+  color: #9292aa;
+  font-size: .57rem;
+  font-weight: 500;
+}
+
+.simple-card-timing-summary b {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.simple-card-controls {
+  padding: 11px;
+  border: 1px solid rgba(124,107,226,.25);
+  border-radius: 10px;
+  background: rgba(124,107,226,.045);
+}
+
+.simple-card-controls h4 { margin: 7px 0; color: #f7c84a; }
+.simple-card-credit-notice {
+  margin: 6px 0;
+  color: #76db76;
+}
+.simple-card-control-row {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto auto auto;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 0;
+  border-bottom: 1px solid rgba(255,255,255,.07);
+}
+
+.simple-card-payment-form,
+.simple-card-adjustment-form,
+.simple-card-reconcile-form {
+  display: grid;
+  grid-template-columns: 150px 130px minmax(150px,1fr) auto;
+  gap: 7px;
+  margin: 9px 0 14px;
+}
+
+.simple-card-reconcile-form label {
+  display: grid;
+  gap: 4px;
+  color: #aaaac4;
+  font-size: .75rem;
+}
+
+.simple-card-reconciliation-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.simple-card-reconciliation-summary span {
+  padding: 8px 9px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 8px;
+  background: rgba(8,8,20,.25);
+}
+
+.simple-card-closing-note {
+  margin: 0;
+  padding: 9px 11px;
+  color: #aaaac4;
+  border: 1px dashed rgba(247,200,74,.3);
+  border-radius: 8px;
+}
+
+.credit-card-limit-reference > .credit-card-control-slider {
+  width: 100%;
+  accent-color: #8d78ed;
+}
+
+@media (max-width: 760px) {
+  .simple-card-summary {
+    grid-template-columns: auto auto minmax(0, 1fr);
+  }
+  .simple-card-name { min-width: 0; }
+  .simple-card-metrics {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(3, minmax(0,1fr));
+    width: 100%;
+    margin-top: 4px;
+  }
+  .simple-card-metrics > span { min-width: 0; padding-inline: 8px; }
+  .simple-card-metrics b { overflow: hidden; font-size: .76rem; text-overflow: ellipsis; }
+  .simple-card-payment-form,
+  .simple-card-adjustment-form,
+  .simple-card-reconcile-form,
+  .simple-card-reconciliation-summary { grid-template-columns: 1fr; }
+  .simple-card-control-row { grid-template-columns: minmax(0,1fr) auto; }
+  .simple-card-control-row .action-btn { grid-row: 2; }
+  .simple-card-entry { grid-template-columns: minmax(0,1fr) auto; }
+  .simple-card-section-toolbar { grid-template-columns: 1fr; }
+  .simple-card-section-toolbar .credit-card-filter-actions { justify-content: stretch; }
+  .simple-card-section-toolbar .credit-card-search { flex: 1; min-width: 0; }
+  .simple-card-timing-summary { grid-template-columns: 1fr; }
+  .simple-card-admin > summary { align-items: flex-start; flex-direction: column; }
+}

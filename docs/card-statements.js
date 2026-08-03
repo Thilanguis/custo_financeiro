@@ -112,7 +112,74 @@
     return { calculated, bankAmount, difference, adjustments, amount, paid, remaining, credit };
   }
 
+  function getEffectiveStatementTotals(statement, openingBalance = 0) {
+    const totals = getStatementTotals(statement || {});
+    const normalizedOpeningBalance = roundMoney(openingBalance);
+
+    // O valor conciliado informado pelo banco já representa o saldo oficial da
+    // fatura, incluindo qualquer saldo ou crédito anterior. Nesse caso ele
+    // reinicia a cadeia e evita descontar o crédito duas vezes.
+    const openingApplied = totals.bankAmount === null ? normalizedOpeningBalance : 0;
+    const endingBalance = roundMoney(openingApplied + totals.amount - totals.paid);
+
+    return {
+      ...totals,
+      openingBalance: normalizedOpeningBalance,
+      openingApplied,
+      carriedDebt: roundMoney(Math.max(0, openingApplied)),
+      carriedCredit: roundMoney(Math.max(0, -openingApplied)),
+      ownRemaining: totals.remaining,
+      ownCredit: totals.credit,
+      remaining: roundMoney(Math.max(0, endingBalance)),
+      credit: roundMoney(Math.max(0, -endingBalance)),
+      endingBalance,
+      bankAmountIncludesCarryover: totals.bankAmount !== null,
+    };
+  }
+
+  function getCardOpeningBalance(card, referenceMonth, statements = []) {
+    if (!card?.id || !/^\d{4}-\d{2}$/.test(String(referenceMonth || ''))) return 0;
+
+    // Mantém apenas a versão mais recente de cada mês de vencimento para evitar
+    // que um registro duplicado seja contabilizado duas vezes.
+    const byDueMonth = new Map();
+    (statements || []).forEach((statement) => {
+      const dueMonth = statement?.cardId === card.id ? getStatementDueMonth(statement) : '';
+      const hasSupportedAmount =
+        (statement?.calculatedAmount !== undefined && statement?.calculatedAmount !== null && statement?.calculatedAmount !== '') ||
+        (statement?.bankAmount !== undefined && statement?.bankAmount !== null && statement?.bankAmount !== '');
+
+      // Ignora registros do modelo antigo, que possuíam campos como
+      // statementBalance/purchasesTotal e podem coexistir com as faturas novas.
+      // Tratar o pagamento desses registros como crédito sem conhecer o valor da
+      // fatura criaria um saldo negativo artificial.
+      if (!dueMonth || dueMonth >= referenceMonth || !hasSupportedAmount) return;
+
+      const current = byDueMonth.get(dueMonth);
+      const currentUpdated = String(current?.updatedAt || current?.createdAt || '');
+      const candidateUpdated = String(statement?.updatedAt || statement?.createdAt || '');
+      if (!current || candidateUpdated >= currentUpdated) byDueMonth.set(dueMonth, statement);
+    });
+
+    let balance = 0;
+    [...byDueMonth.entries()]
+      .sort(([monthA], [monthB]) => monthA.localeCompare(monthB))
+      .forEach(([, statement]) => {
+        balance = getEffectiveStatementTotals(statement, balance).endingBalance;
+      });
+
+    return roundMoney(balance);
+  }
+
   function getStatus(statement) {
+    if (statement?.effectiveRemaining !== undefined || statement?.effectiveCredit !== undefined) {
+      const effectiveRemaining = roundMoney(statement?.effectiveRemaining);
+      const effectiveCredit = roundMoney(statement?.effectiveCredit);
+      if (effectiveCredit > 0) return 'credit';
+      if (effectiveRemaining <= 0 && getStatementTotals(statement).amount > 0) return 'paid';
+      if (getStatementTotals(statement).paid > 0 || roundMoney(statement?.effectiveCarriedCredit) > 0) return 'partial';
+    }
+
     const totals = getStatementTotals(statement);
     if (totals.amount <= 0 && totals.credit > 0) return 'credit';
     if (totals.remaining <= 0 && totals.amount > 0) return 'paid';
@@ -157,8 +224,19 @@
     const payableStatement = isClosed
       ? refreshStatementCalculation(card, referenceMonth, payableEntries, exactStatement, new Date().toISOString())
       : null;
-    const closedTotals = getStatementTotals(payableStatement || {});
-    const overview = getCardOverview(payableStatement, openEntries, realLimit);
+    const openingBalance = getCardOpeningBalance(card, referenceMonth, statements);
+    const overview = getCardOverview(payableStatement, openEntries, realLimit, openingBalance);
+    const closedTotals = overview.closed;
+
+    // Campos apenas de apresentação. Eles não são persistidos automaticamente,
+    // mas permitem que o status visual considere crédito ou dívida transportada.
+    if (payableStatement) {
+      payableStatement.effectiveRemaining = closedTotals.remaining;
+      payableStatement.effectiveCredit = closedTotals.credit;
+      payableStatement.effectiveCarriedCredit = closedTotals.carriedCredit;
+      payableStatement.effectiveOpeningBalance = openingBalance;
+      payableStatement.status = getStatus(payableStatement);
+    }
 
     return {
       cycle,
@@ -170,6 +248,7 @@
       openEntries,
       payableStatement,
       storedStatement: exactStatement || null,
+      openingBalance,
       closedTotals,
       overview,
     };
@@ -184,20 +263,58 @@
 
   const removeById = (items, id) => (items || []).filter((item) => item.id !== id);
 
-  function getCardOverview(closedStatement, openEntries, realLimit) {
-    const closed = getStatementTotals(closedStatement || {});
+  function getCardOverview(closedStatement, openEntries, realLimit, openingBalance = 0) {
+    const closed = getEffectiveStatementTotals(closedStatement || {}, openingBalance);
     const openAmount = sumEntries(openEntries);
     const currentBalance = roundMoney(closed.remaining + openAmount - closed.credit);
-    return { closed, openAmount, currentBalance, availableLimit: roundMoney((Number(realLimit) || 0) - currentBalance) };
+    return {
+      closed,
+      openAmount,
+      currentBalance,
+      availableLimit: roundMoney((Number(realLimit) || 0) - currentBalance),
+    };
   }
 
   function normalizeLegacyPayment(cardId, statement, record) {
     if (!record || !(Number(record.amount) >= 0) || !record.date) return null;
-    return { id: `legacy_${statement.id}`, cardId, statementId: statement.id, date: record.date, amount: roundMoney(record.amount), observation: 'Pagamento migrado do formato anterior' };
+    return {
+      id: `legacy_${statement.id}`,
+      cardId,
+      statementId: statement.id,
+      date: record.date,
+      amount: roundMoney(record.amount),
+      observation: 'Pagamento migrado do formato anterior',
+    };
   }
 
   const cloneForBackup = (statements) => JSON.parse(JSON.stringify(Array.isArray(statements) ? statements : []));
   const calculateFreeImpact = (notes) => sumEntries(notes);
 
-  return { roundMoney, shiftMonth, getDueMonthForDate, getEntryDueMonth, getCycle, getOperationalClosingDate, getStatementDueMonth, getEffectiveClosingDate, statementId, sumEntries, sumPayments, sumAdjustments, getStatementTotals, getStatus, createStatement, refreshStatementCalculation, getCardMonthState, addOrReplaceById, removeById, getCardOverview, normalizeLegacyPayment, cloneForBackup, calculateFreeImpact };
+  return {
+    roundMoney,
+    shiftMonth,
+    getDueMonthForDate,
+    getEntryDueMonth,
+    getCycle,
+    getOperationalClosingDate,
+    getStatementDueMonth,
+    getEffectiveClosingDate,
+    statementId,
+    sumEntries,
+    sumPayments,
+    sumAdjustments,
+    getStatementTotals,
+    getEffectiveStatementTotals,
+    getCardOpeningBalance,
+    getStatus,
+    createStatement,
+    refreshStatementCalculation,
+    getCardMonthState,
+    addOrReplaceById,
+    removeById,
+    getCardOverview,
+    normalizeLegacyPayment,
+    cloneForBackup,
+    calculateFreeImpact,
+  };
 });

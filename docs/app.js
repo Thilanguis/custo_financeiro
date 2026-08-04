@@ -376,9 +376,7 @@ function updateIncomeBiweeklyPreview(input, checkbox, preview) {
   const sourceAmount = parseAmount(input.value);
   const canPreview = checkbox.checked && Number.isFinite(sourceAmount);
   preview.classList.toggle('visible', canPreview);
-  preview.innerHTML = canPreview
-    ? `Renda mensal considerada: <strong>${formatCurrency(Math.abs(convertBiweeklyToMonthly(sourceAmount)))}</strong> <span>(26 pagamentos ÷ 12 meses)</span>`
-    : '';
+  preview.innerHTML = canPreview ? `Renda mensal considerada: <strong>${formatCurrency(Math.abs(convertBiweeklyToMonthly(sourceAmount)))}</strong> <span>(26 pagamentos ÷ 12 meses)</span>` : '';
 }
 
 function updateIncomeBiweeklyPreviews() {
@@ -520,10 +518,10 @@ formPayment.addEventListener('submit', async (e) => {
 
   if (editingPaymentId) {
     const idx = updatedMethods.findIndex((m) => m.id === editingPaymentId);
-      if (idx !== -1) {
-        updatedMethods[idx] = {
-          ...updatedMethods[idx],
-          id: editingPaymentId,
+    if (idx !== -1) {
+      updatedMethods[idx] = {
+        ...updatedMethods[idx],
+        id: editingPaymentId,
         name,
         type,
         closing: type === 'credito' ? parseInt(closing) || null : null,
@@ -733,9 +731,7 @@ function hasIncomeData(income) {
 function getIncomeRecordForMonth(month, allowPrevious = true) {
   const exact = incomes.find((income) => income.month === month && hasIncomeData(income));
   if (exact || !allowPrevious) return exact || null;
-  return incomes
-    .filter((income) => income.month < month && hasIncomeData(income))
-    .sort((a, b) => b.month.localeCompare(a.month))[0] || null;
+  return incomes.filter((income) => income.month < month && hasIncomeData(income)).sort((a, b) => b.month.localeCompare(a.month))[0] || null;
 }
 
 function loadIncomeToInputs(month) {
@@ -746,8 +742,8 @@ function loadIncomeToInputs(month) {
 
   incomeLuanaBiweeklyCheckbox.checked = luanaIsBiweekly;
   incomeGabrielBiweeklyCheckbox.checked = gabrielIsBiweekly;
-  incomeLuanaInput.value = income ? (luanaIsBiweekly ? income.luanaBiweeklyAmount ?? Math.round(((income.luana || 0) / BIWEEKLY_MONTHLY_FACTOR) * 100) / 100 : income.luana || 0) : 0;
-  incomeGabrielInput.value = income ? (gabrielIsBiweekly ? income.gabrielBiweeklyAmount ?? Math.round(((income.gabriel || 0) / BIWEEKLY_MONTHLY_FACTOR) * 100) / 100 : income.gabriel || 0) : 0;
+  incomeLuanaInput.value = income ? (luanaIsBiweekly ? (income.luanaBiweeklyAmount ?? Math.round(((income.luana || 0) / BIWEEKLY_MONTHLY_FACTOR) * 100) / 100) : income.luana || 0) : 0;
+  incomeGabrielInput.value = income ? (gabrielIsBiweekly ? (income.gabrielBiweeklyAmount ?? Math.round(((income.gabriel || 0) / BIWEEKLY_MONTHLY_FACTOR) * 100) / 100) : income.gabriel || 0) : 0;
   updateIncomeBiweeklyPreviews();
 }
 
@@ -1049,9 +1045,7 @@ async function updateBackupPanelStatus(knownDirectoryHandle = undefined) {
   const lastBackupAt = localStorage.getItem(BACKUP_LAST_AT_KEY);
   const lastBackupFile = localStorage.getItem(BACKUP_LAST_FILE_KEY);
   if (backupLastStatus) {
-    backupLastStatus.textContent = lastBackupAt
-      ? `Último backup: ${formatBackupTimestamp(lastBackupAt)}${lastBackupFile ? ` • ${lastBackupFile}` : ''}`
-      : 'Nenhum backup registrado neste navegador.';
+    backupLastStatus.textContent = lastBackupAt ? `Último backup: ${formatBackupTimestamp(lastBackupAt)}${lastBackupFile ? ` • ${lastBackupFile}` : ''}` : 'Nenhum backup registrado neste navegador.';
   }
 }
 
@@ -1151,10 +1145,7 @@ async function restoreBackupFile(file) {
   const mode = await showRestoreModeDialog(payload);
   if (!mode) return;
 
-  if (
-    mode === 'replace' &&
-    !(await showConfirm('ATENÇÃO: todos os dados atuais do Firebase serão substituídos pelos dados deste arquivo. Um backup de segurança será salvo antes. Deseja continuar?', true))
-  ) {
+  if (mode === 'replace' && !(await showConfirm('ATENÇÃO: todos os dados atuais do Firebase serão substituídos pelos dados deste arquivo. Um backup de segurança será salvo antes. Deseja continuar?', true))) {
     return;
   }
 
@@ -1293,17 +1284,13 @@ btnLoadMonth.addEventListener('click', async () => {
           if (installmentEntry.status === 'cancelled' || installmentEntry.targetDate?.substring(0, 7) !== targetMonth) continue;
 
           if (installmentPlan.mode === 'rent_to_own' && installmentEntry.type === 'buyout') {
-            const paidRentalCredit = (installmentPlan.installments || [])
-              .filter((entry) => entry.type === 'rental' && entry.status === 'paid')
-              .reduce((total, entry) => total + Math.abs(Number(entry.paidAmount ?? entry.amount) || 0), 0);
+            const paidRentalCredit = (installmentPlan.installments || []).filter((entry) => entry.type === 'rental' && entry.status === 'paid').reduce((total, entry) => total + Math.abs(Number(entry.paidAmount ?? entry.amount) || 0), 0);
             const actualBuyoutAmount = Math.max(0, Math.round((Math.abs(Number(installmentPlan.assetPrice || installmentPlan.principalAmount) || 0) - paidRentalCredit) * 100) / 100);
             if (actualBuyoutAmount <= 0) {
               await FinanceAPI.saveInstallmentPlan({
                 ...installmentPlan,
                 status: 'completed',
-                installments: installmentPlan.installments.map((entry) =>
-                  entry.number === nextNumber ? { ...entry, amount: 0, status: 'paid', paidAmount: 0, paidAt: `${targetMonth}-01` } : entry,
-                ),
+                installments: installmentPlan.installments.map((entry) => (entry.number === nextNumber ? { ...entry, amount: 0, status: 'paid', paidAmount: 0, paidAt: `${targetMonth}-01` } : entry)),
                 completedAt: `${targetMonth}-01`,
                 updatedAt: new Date().toISOString(),
               });
@@ -1313,10 +1300,7 @@ btnLoadMonth.addEventListener('click', async () => {
             installmentPlan = {
               ...installmentPlan,
               projectedBuyoutAmount: actualBuyoutAmount,
-              totalAmount: (installmentPlan.installments || []).reduce(
-                (total, entry) => total + (entry.number === nextNumber ? installmentEntry.amount : Number(entry.amount) || 0),
-                0,
-              ),
+              totalAmount: (installmentPlan.installments || []).reduce((total, entry) => total + (entry.number === nextNumber ? installmentEntry.amount : Number(entry.amount) || 0), 0),
               installments: installmentPlan.installments.map((entry) => (entry.number === nextNumber ? installmentEntry : entry)),
             };
           }
@@ -1325,9 +1309,10 @@ btnLoadMonth.addEventListener('click', async () => {
           const stageLabel = getInstallmentStageLabel(installmentEntry, installmentPlan);
           sourceItem = {
             ...item,
-            description: installmentPlan.mode === 'rent_to_own'
-              ? `${item.installmentOriginalName || installmentPlan.name || item.description} • ${stageLabel}`
-              : `${item.installmentOriginalName || installmentPlan.name || item.description} (${nextNumber}/${installmentCount})`,
+            description:
+              installmentPlan.mode === 'rent_to_own'
+                ? `${item.installmentOriginalName || installmentPlan.name || item.description} • ${stageLabel}`
+                : `${item.installmentOriginalName || installmentPlan.name || item.description} (${nextNumber}/${installmentCount})`,
             amount: installmentEntry.amount,
             installmentNumber: nextNumber,
             installmentCount,
@@ -1452,9 +1437,7 @@ btnLoadMonth.addEventListener('click', async () => {
       shouldOfferBackup = true;
     } else {
       showToast(
-        incomeWasCloned
-          ? `Renda copiada de ${prevMonthStr}. As contas não foram copiadas novamente porque este mês já possui itens.`
-          : 'Este mês já possui itens. A cópia automática só funciona em meses vazios.',
+        incomeWasCloned ? `Renda copiada de ${prevMonthStr}. As contas não foram copiadas novamente porque este mês já possui itens.` : 'Este mês já possui itens. A cópia automática só funciona em meses vazios.',
         incomeWasCloned ? 'success' : 'error',
       );
     }
@@ -1665,9 +1648,7 @@ async function moveCompanyToCategory(company, sourceCategory, targetCategory) {
   const companyKey = normalizeCompanyNameKey(company);
   const targetAlreadyContainsCompany = (companyDirectory[targetCategory] || []).some((item) => normalizeCompanyNameKey(item) === companyKey);
   const mergeNotice = targetAlreadyContainsCompany ? '\n\nA empresa já existe no destino; os dois registros serão unificados.' : '';
-  const confirmed = await showConfirm(
-    `Mover "${company}" de "${sourceCategory}" para "${targetCategory}"?${mergeNotice}\n\nIsso altera apenas a lista de empresas. Lançamentos já cadastrados não serão modificados.`,
-  );
+  const confirmed = await showConfirm(`Mover "${company}" de "${sourceCategory}" para "${targetCategory}"?${mergeNotice}\n\nIsso altera apenas a lista de empresas. Lançamentos já cadastrados não serão modificados.`);
   if (!confirmed) return;
 
   const sourceBackup = [...(companyDirectory[sourceCategory] || [])];
@@ -2039,9 +2020,7 @@ function updateBiweeklyConversionPreview() {
   const sourceAmount = parseAmount(plannedAmountInput.value);
   const canPreview = plannedBiweeklyCheckbox.checked && Number.isFinite(sourceAmount);
   plannedBiweeklyPreview.classList.toggle('visible', canPreview);
-  plannedBiweeklyPreview.innerHTML = canPreview
-    ? `No orçamento mensal: <strong>${formatCurrency(Math.abs(convertBiweeklyToMonthly(sourceAmount)))}</strong> <span>(26 pagamentos ÷ 12 meses)</span>`
-    : '';
+  plannedBiweeklyPreview.innerHTML = canPreview ? `No orçamento mensal: <strong>${formatCurrency(Math.abs(convertBiweeklyToMonthly(sourceAmount)))}</strong> <span>(26 pagamentos ÷ 12 meses)</span>` : '';
 }
 
 plannedAmountInput.addEventListener('input', updateBiweeklyConversionPreview);
@@ -2293,7 +2272,7 @@ function startEditPlanned(id) {
   plannedCategoryInput.value = item.category;
   plannedDescriptionInput.value = item.description;
   plannedBiweeklyCheckbox.checked = Boolean(item.isBiweeklyConverted);
-  plannedAmountInput.value = item.isBiweeklyConverted ? item.biweeklyAmount ?? Math.round((item.amount / BIWEEKLY_MONTHLY_FACTOR) * 100) / 100 : item.amount;
+  plannedAmountInput.value = item.isBiweeklyConverted ? (item.biweeklyAmount ?? Math.round((item.amount / BIWEEKLY_MONTHLY_FACTOR) * 100) / 100) : item.amount;
   updateBiweeklyConversionPreview();
   plannedOwnerSelect.value = item.owner;
   document.getElementById('planned-payment').value = item.paymentMethodId || 'dinheiro';
@@ -2452,9 +2431,7 @@ function matchesFinancialSearch(item, term, descriptionField) {
   if (searchableText.includes(normalizedTerm)) return true;
 
   const digits = normalizedTerm.replace(/\D/g, '');
-  const amountDigits = [item.amount, item.biweeklyAmount]
-    .filter((amount) => Number.isFinite(Number(amount)))
-    .map((amount) => Math.abs(Number(amount)).toFixed(2).replace(/\D/g, ''));
+  const amountDigits = [item.amount, item.biweeklyAmount].filter((amount) => Number.isFinite(Number(amount))).map((amount) => Math.abs(Number(amount)).toFixed(2).replace(/\D/g, ''));
   return digits.length > 0 && amountDigits.some((amount) => amount.includes(digits));
 }
 
@@ -2649,7 +2626,9 @@ function renderPlannedItemsList(month) {
             : '';
           const biweeklyBadge = renderBiweeklyConversionBadge(p);
           const installmentBadge = renderInstallmentItemBadge(p);
-          const reimbursementLinks = getPlannedItemReimbursements(p, month).map((reimbursement) => renderReimbursementLink(reimbursement, { compact: true })).join('');
+          const reimbursementLinks = getPlannedItemReimbursements(p, month)
+            .map((reimbursement) => renderReimbursementLink(reimbursement, { compact: true }))
+            .join('');
 
           // Checa se este item específico já foi pago/recebido no mês
           const isLaunched = receipts.some((r) => {
@@ -2915,11 +2894,7 @@ function showLockedReceiptMessage() {
 function renderReceiptBiweeklyBadge(receipt) {
   if (receipt?.isBiweeklyConverted) return renderBiweeklyConversionBadge(receipt);
 
-  const linkedPlanned = plannedItems.find(
-    (planned) =>
-      (receipt?.linkedPlannedId && planned.id === receipt.linkedPlannedId) ||
-      (receipt?.staticSyncId && planned.staticSyncId === receipt.staticSyncId),
-  );
+  const linkedPlanned = plannedItems.find((planned) => (receipt?.linkedPlannedId && planned.id === receipt.linkedPlannedId) || (receipt?.staticSyncId && planned.staticSyncId === receipt.staticSyncId));
   return renderBiweeklyConversionBadge(linkedPlanned);
 }
 
@@ -3069,9 +3044,7 @@ function updateReceiptsView() {
               attachedReimbursementIds.add(reimbursement.id);
             });
         });
-      groupItems
-        .filter((receipt) => receipt.isReimbursement && !attachedReimbursementIds.has(receipt.id))
-        .forEach((reimbursement) => orderedGroupItems.push(reimbursement));
+      groupItems.filter((receipt) => receipt.isReimbursement && !attachedReimbursementIds.has(receipt.id)).forEach((reimbursement) => orderedGroupItems.push(reimbursement));
       groupItems.splice(0, groupItems.length, ...orderedGroupItems);
 
       const isOpen = isSearching || openReceiptCats.has(cat);
@@ -3203,14 +3176,7 @@ function getPendingFixedExpenses(month) {
       // aos seus próprios itens previstos. Elas não podem quitar outro fixo não
       // estático da mesma categoria (ex.: CARRO não quita ESTACIONAMENTO).
       const actualAmount = receipts
-        .filter(
-          (receipt) =>
-            receipt.date.startsWith(month) &&
-            receipt.amount > 0 &&
-            !receipt.isReimbursement &&
-            !receipt.isStatic &&
-            receipt.category === group.category,
-        )
+        .filter((receipt) => receipt.date.startsWith(month) && receipt.amount > 0 && !receipt.isReimbursement && !receipt.isStatic && receipt.category === group.category)
         .reduce((total, receipt) => total + receipt.amount, 0);
       const remainingAmount = Math.max(group.amount - actualAmount, 0);
       const sortedDates = group.dates.sort();
@@ -3803,7 +3769,27 @@ function updateDashboardView() {
 
     const key = makeKey(p.category, p.description, p.owner);
     if (!mapCat[p.category].items.has(key)) {
-      mapCat[p.category].items.set(key, { name: p.description, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: p.date || '', isAnnual: false, annualEventsData: [], hasReimbursement: false, hasActualIncome: false, isBiweeklyConverted: false, biweeklyAmount: 0, installmentPlanId: null, installmentNumber: null, installmentCount: null, installmentMode: null, installmentStage: null, rentalNumber: null, rentalCount: null });
+      mapCat[p.category].items.set(key, {
+        name: p.description,
+        planned: 0,
+        actual: 0,
+        obsList: [],
+        owners: new Set(),
+        maxDate: p.date || '',
+        isAnnual: false,
+        annualEventsData: [],
+        hasReimbursement: false,
+        hasActualIncome: false,
+        isBiweeklyConverted: false,
+        biweeklyAmount: 0,
+        installmentPlanId: null,
+        installmentNumber: null,
+        installmentCount: null,
+        installmentMode: null,
+        installmentStage: null,
+        rentalNumber: null,
+        rentalCount: null,
+      });
     }
     const item = mapCat[p.category].items.get(key);
     item.planned += p.amount;
@@ -3840,7 +3826,25 @@ function updateDashboardView() {
 
     const key = makeKey(r.category, r.merchant, r.owner);
     if (!mapCat[r.category].items.has(key)) {
-      mapCat[r.category].items.set(key, { name: r.merchant, planned: 0, actual: 0, obsList: [], owners: new Set(), maxDate: r.date || '', isAnnual: false, annualObs: new Set(), hasReimbursement: false, hasActualIncome: false, installmentPlanId: null, installmentNumber: null, installmentCount: null, installmentMode: null, installmentStage: null, rentalNumber: null, rentalCount: null });
+      mapCat[r.category].items.set(key, {
+        name: r.merchant,
+        planned: 0,
+        actual: 0,
+        obsList: [],
+        owners: new Set(),
+        maxDate: r.date || '',
+        isAnnual: false,
+        annualObs: new Set(),
+        hasReimbursement: false,
+        hasActualIncome: false,
+        installmentPlanId: null,
+        installmentNumber: null,
+        installmentCount: null,
+        installmentMode: null,
+        installmentStage: null,
+        rentalNumber: null,
+        rentalCount: null,
+      });
     }
     const item = mapCat[r.category].items.get(key);
     item.actual += r.amount;
@@ -4514,33 +4518,48 @@ function updateHistoricalChart() {
 const openCreditCardDetails = new Set();
 const creditCardFilters = new Map();
 const CREDIT_CARD_LIMIT_LOCKS_KEY = 'credit-card-limit-locks';
-let creditCardLimitLocks = loadCreditCardLimitLocks();
+let legacyCreditCardLimitLocks = loadLegacyCreditCardLimitLocks();
+let creditCardLimitLockMigrationRunning = false;
 
-function loadCreditCardLimitLocks() {
+function loadLegacyCreditCardLimitLocks() {
   try {
     const raw = localStorage.getItem(CREDIT_CARD_LIMIT_LOCKS_KEY);
     return raw ? JSON.parse(raw) || {} : {};
   } catch (error) {
-    console.warn('Não foi possível carregar os cadeados dos limites dos cartões.', error);
+    console.warn('Não foi possível carregar os cadeados antigos dos cartões.', error);
     return {};
   }
 }
 
-function persistCreditCardLimitLocks() {
+function isCreditCardLimitLocked(card) {
+  if (typeof card?.controlLimitLocked === 'boolean') return card.controlLimitLocked;
+  return Boolean(legacyCreditCardLimitLocks?.[card?.id]);
+}
+
+async function migrateLegacyCreditCardLimitLocks(methods) {
+  if (creditCardLimitLockMigrationRunning || !Object.keys(legacyCreditCardLimitLocks).length) return;
+  const hasMigration = methods.some(
+    (method) => method.type === 'credito' && typeof method.controlLimitLocked !== 'boolean' && Object.prototype.hasOwnProperty.call(legacyCreditCardLimitLocks, method.id),
+  );
+  if (!hasMigration) return;
+
+  const migratedMethods = methods.map((method) =>
+    method.type === 'credito' && typeof method.controlLimitLocked !== 'boolean' && Object.prototype.hasOwnProperty.call(legacyCreditCardLimitLocks, method.id)
+      ? { ...method, controlLimitLocked: Boolean(legacyCreditCardLimitLocks[method.id]) }
+      : method,
+  );
+
+  creditCardLimitLockMigrationRunning = true;
+  paymentMethods = migratedMethods;
   try {
-    localStorage.setItem(CREDIT_CARD_LIMIT_LOCKS_KEY, JSON.stringify(creditCardLimitLocks));
+    await FinanceAPI.savePaymentMethods(migratedMethods);
+    localStorage.removeItem(CREDIT_CARD_LIMIT_LOCKS_KEY);
+    legacyCreditCardLimitLocks = {};
   } catch (error) {
-    console.warn('Não foi possível salvar os cadeados dos limites dos cartões.', error);
+    console.error('Não foi possível sincronizar os cadeados antigos dos cartões.', error);
+  } finally {
+    creditCardLimitLockMigrationRunning = false;
   }
-}
-
-function isCreditCardLimitLocked(cardId) {
-  return Boolean(creditCardLimitLocks?.[cardId]);
-}
-
-function setCreditCardLimitLocked(cardId, locked) {
-  creditCardLimitLocks = { ...creditCardLimitLocks, [cardId]: Boolean(locked) };
-  persistCreditCardLimitLocks();
 }
 
 function getCreditCardFilter(cardId) {
@@ -4554,9 +4573,7 @@ function filterAndSortCreditCardEntries(entries, filter) {
   const normalizedSearch = normalizeSearchText(filter.search);
   const includedIds = new Set();
   entries.forEach((entry) => {
-    const searchable = [entry.merchant, entry.category, entry.observation, entry.owner, formatCurrency(entry.amount), entry.isReimbursement ? 'reembolso' : 'compra']
-      .map(normalizeSearchText)
-      .join(' ');
+    const searchable = [entry.merchant, entry.category, entry.observation, entry.owner, formatCurrency(entry.amount), entry.isReimbursement ? 'reembolso' : 'compra'].map(normalizeSearchText).join(' ');
     if (!normalizedSearch || searchable.includes(normalizedSearch)) includedIds.add(entry.id);
   });
 
@@ -4566,9 +4583,7 @@ function filterAndSortCreditCardEntries(entries, filter) {
         const source = findReimbursementSource(entry, entries);
         if (source) includedIds.add(source.id);
       } else if (!entry.isReimbursement && includedIds.has(entry.id)) {
-        entries
-          .filter((candidate) => candidate.isReimbursement && findReimbursementSource(candidate, entries)?.id === entry.id)
-          .forEach((reimbursement) => includedIds.add(reimbursement.id));
+        entries.filter((candidate) => candidate.isReimbursement && findReimbursementSource(candidate, entries)?.id === entry.id).forEach((reimbursement) => includedIds.add(reimbursement.id));
       }
     });
   }
@@ -4600,14 +4615,18 @@ function escapeCardDetail(value) {
 }
 
 function shiftReferenceMonth(referenceMonth, offset) {
-  const [year, month] = String(referenceMonth || '').split('-').map(Number);
+  const [year, month] = String(referenceMonth || '')
+    .split('-')
+    .map(Number);
   if (!year || !month) return referenceMonth;
   const shifted = new Date(year, month - 1 + offset, 1);
   return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, '0')}`;
 }
 
 function formatReferenceMonthLabel(referenceMonth) {
-  const [year, month] = String(referenceMonth || '').split('-').map(Number);
+  const [year, month] = String(referenceMonth || '')
+    .split('-')
+    .map(Number);
   if (!year || !month) return referenceMonth || '';
   return new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(new Date(year, month - 1, 1));
 }
@@ -4617,14 +4636,7 @@ function getCreditCardInvoiceDueMonth(receiptDate, card) {
 }
 
 function getCreditCardMonthState(card, referenceMonth) {
-  return CardStatements.getCardMonthState(
-    card,
-    referenceMonth,
-    receipts,
-    creditCardStatements,
-    getTodayISO(),
-    Number(card.monthlyLimit) || 0,
-  );
+  return CardStatements.getCardMonthState(card, referenceMonth, receipts, creditCardStatements, getTodayISO(), Number(card.monthlyLimit) || 0);
 }
 
 function getCreditCardInvoiceSnapshot(card, dueMonth) {
@@ -4640,7 +4652,9 @@ function getCreditCardInvoiceSnapshot(card, dueMonth) {
 }
 
 function getCreditCardInvoiceDueDate(card, dueMonth) {
-  const [year, month] = String(dueMonth || '').split('-').map(Number);
+  const [year, month] = String(dueMonth || '')
+    .split('-')
+    .map(Number);
   if (!year || !month) return '';
   const lastDay = new Date(year, month, 0).getDate();
   const dueDay = Math.min(Math.max(Number(card?.due) || 1, 1), lastDay);
@@ -4690,9 +4704,7 @@ function getSuggestedCreditCardLimit(card, month) {
   const plannedGross = recurringItems.reduce((sum, item) => sum + Number(item.amount), 0);
   const reimbursementIds = new Set();
   const reimbursementCredit = recurringItems.reduce((sum, item) => {
-    const itemCredits = getPlannedItemReimbursements(item, month).filter(
-      (reimbursement) => reimbursement.paymentMethodId === card.id && !reimbursementIds.has(reimbursement.id),
-    );
+    const itemCredits = getPlannedItemReimbursements(item, month).filter((reimbursement) => reimbursement.paymentMethodId === card.id && !reimbursementIds.has(reimbursement.id));
     itemCredits.forEach((reimbursement) => reimbursementIds.add(reimbursement.id));
     return sum + itemCredits.reduce((creditSum, reimbursement) => creditSum + Math.abs(Number(reimbursement.amount) || 0), 0);
   }, 0);
@@ -4747,12 +4759,7 @@ function updateCreditCardsDashboardLegacy() {
     const cardFilter = getCreditCardFilter(card.id);
     const filteredNextEntries = filterAndSortCreditCardEntries(nextSnapshot.entries, cardFilter);
     const hasActiveCardSearch = Boolean(normalizeSearchText(cardFilter.search));
-    const monthSpend = Math.max(
-      0,
-      Math.round(
-        currentMonthReceipts.filter((receipt) => receipt.paymentMethodId === card.id).reduce((sum, receipt) => sum + (Number(receipt.amount) || 0), 0) * 100,
-      ) / 100,
-    );
+    const monthSpend = Math.max(0, Math.round(currentMonthReceipts.filter((receipt) => receipt.paymentMethodId === card.id).reduce((sum, receipt) => sum + (Number(receipt.amount) || 0), 0) * 100) / 100);
     const suggestedLimitDetails = getSuggestedCreditCardLimit(card, month);
     const suggestedLimit = suggestedLimitDetails.value;
     const hasSuggestionCredit = suggestedLimitDetails.reimbursementCredit > 0.005;
@@ -4788,9 +4795,7 @@ function updateCreditCardsDashboardLegacy() {
               attachedReimbursementIds.add(reimbursement.id);
             });
         });
-      entries
-        .filter((entry) => entry.isReimbursement && !attachedReimbursementIds.has(entry.id))
-        .forEach((reimbursement) => orderedEntries.push(reimbursement));
+      entries.filter((entry) => entry.isReimbursement && !attachedReimbursementIds.has(entry.id)).forEach((reimbursement) => orderedEntries.push(reimbursement));
 
       return orderedEntries
         .map((receipt) => {
@@ -4798,9 +4803,7 @@ function updateCreditCardsDashboardLegacy() {
           const reimbursementSource = receipt.isReimbursement ? findReimbursementSource(receipt, entries) : null;
           const isLinkedReimbursement = Boolean(reimbursementSource);
           const isPendingEntry = showTimingStatus && String(receipt.date || '') > todayISO;
-          const timingBadge = showTimingStatus
-            ? `<span class="credit-card-entry-timing ${isPendingEntry ? 'is-pending' : 'is-posted'}">${isPendingEntry ? 'Ainda vai bater' : 'Já lançado'}</span>`
-            : '';
+          const timingBadge = showTimingStatus ? `<span class="credit-card-entry-timing ${isPendingEntry ? 'is-pending' : 'is-posted'}">${isPendingEntry ? 'Ainda vai bater' : 'Já lançado'}</span>` : '';
           const observation = receipt.observation ? `<div class="credit-card-detail-observation">↳ ${escapeCardDetail(receipt.observation)}</div>` : '';
           return `<div class="credit-card-detail-row ${isCredit ? 'is-credit' : ''} ${isLinkedReimbursement ? 'is-linked-reimbursement' : ''} ${isPendingEntry ? 'is-pending-entry' : 'is-posted-entry'}">
             <div class="credit-card-detail-main">
@@ -4841,23 +4844,16 @@ function updateCreditCardsDashboardLegacy() {
           </div>`
         : '';
 
-    const currentPaymentCopy = currentSnapshot.total <= 0.005
-      ? 'Nenhum valor previsto para pagamento neste mês.'
-      : paymentInfo.assumedPaid
-        ? `Pagamento integral considerado em ${paymentDateLabel}.`
-        : paymentInfo.record
-          ? `Pagamento informado em ${(paymentInfo.record.date || '').split('-').reverse().join('/')}: ${formatCurrency(paymentInfo.paidAmount)}.`
-          : `Sem ação necessária: o pagamento integral será considerado em ${paymentDateLabel}.`;
-    const paymentStateValue = currentSnapshot.total <= 0.005
-      ? 'Sem saldo'
-      : paymentInfo.remaining > 0.005
-        ? `Saldo ${formatCurrency(paymentInfo.remaining)}`
-        : 'Conciliada';
-    const paymentStateIcon = currentSnapshot.total <= 0.005
-      ? '&mdash;'
-      : paymentInfo.remaining > 0.005
-        ? '&#9677;'
-        : '&#10003;';
+    const currentPaymentCopy =
+      currentSnapshot.total <= 0.005
+        ? 'Nenhum valor previsto para pagamento neste mês.'
+        : paymentInfo.assumedPaid
+          ? `Pagamento integral considerado em ${paymentDateLabel}.`
+          : paymentInfo.record
+            ? `Pagamento informado em ${(paymentInfo.record.date || '').split('-').reverse().join('/')}: ${formatCurrency(paymentInfo.paidAmount)}.`
+            : `Sem ação necessária: o pagamento integral será considerado em ${paymentDateLabel}.`;
+    const paymentStateValue = currentSnapshot.total <= 0.005 ? 'Sem saldo' : paymentInfo.remaining > 0.005 ? `Saldo ${formatCurrency(paymentInfo.remaining)}` : 'Conciliada';
+    const paymentStateIcon = currentSnapshot.total <= 0.005 ? '&mdash;' : paymentInfo.remaining > 0.005 ? '&#9677;' : '&#10003;';
 
     html += `
       <div class="credit-card-card ${isExpanded ? 'is-expanded' : ''}">
@@ -5157,11 +5153,12 @@ async function persistClosedCardStatements(referenceMonth) {
     const existing = findCardStatement(card.id, referenceMonth);
     const statement = state.payableStatement;
     if (!statement) continue;
-    const alreadyCurrent = existing
-      && Math.abs(Number(existing.calculatedAmount) - Number(statement.calculatedAmount)) < 0.005
-      && existing.cycleStartDate === statement.cycleStartDate
-      && existing.closingDate === statement.closingDate
-      && existing.dueDate === statement.dueDate;
+    const alreadyCurrent =
+      existing &&
+      Math.abs(Number(existing.calculatedAmount) - Number(statement.calculatedAmount)) < 0.005 &&
+      existing.cycleStartDate === statement.cycleStartDate &&
+      existing.closingDate === statement.closingDate &&
+      existing.dueDate === statement.dueDate;
     if (alreadyCurrent) continue;
     creditCardStatementWriteLocks.add(id);
     try {
@@ -5190,7 +5187,7 @@ async function migrateLegacyCardPayments(referenceMonth, paymentRecords = credit
 
 function getCardStatementStatusLabel(statement) {
   const status = statement ? CardStatements.getStatus(statement) : 'open';
-  return ({ paid: 'Paga', partial: 'Paga parcialmente', credit: 'Crédito', closed: 'Fechada', open: 'Em aberto' })[status] || 'Em aberto';
+  return { paid: 'Paga', partial: 'Paga parcialmente', credit: 'Crédito', closed: 'Fechada', open: 'Em aberto' }[status] || 'Em aberto';
 }
 
 function orderSimpleCardEntries(entries, sourcePool = entries) {
@@ -5209,9 +5206,7 @@ function orderSimpleCardEntries(entries, sourcePool = entries) {
         });
     });
 
-  (entries || [])
-    .filter((entry) => entry.isReimbursement && !attachedReimbursementIds.has(entry.id))
-    .forEach((reimbursement) => orderedEntries.push(reimbursement));
+  (entries || []).filter((entry) => entry.isReimbursement && !attachedReimbursementIds.has(entry.id)).forEach((reimbursement) => orderedEntries.push(reimbursement));
 
   return orderedEntries;
 }
@@ -5223,16 +5218,17 @@ function renderSimpleCardEntry(receipt, { showTimingStatus = false, sourcePool =
   const isLinkedReimbursement = Boolean(reimbursementSource);
   const processed = receipt.postedDate && receipt.postedDate !== receipt.date ? `<span>Processada em ${receipt.postedDate.split('-').reverse().join('/')}</span>` : '';
   const isPendingEntry = showTimingStatus && String(receipt.date || '') > getTodayISO();
-  const timingBadge = showTimingStatus
-    ? `<span class="credit-card-entry-timing ${isPendingEntry ? 'is-pending' : 'is-posted'}">${isPendingEntry ? 'A lançar' : 'Já lançado'}</span>`
-    : '';
+  const timingBadge = showTimingStatus ? `<span class="credit-card-entry-timing ${isPendingEntry ? 'is-pending' : 'is-posted'}">${isPendingEntry ? 'A lançar' : 'Já lançado'}</span>` : '';
   const displayedAmount = isCredit ? `+ ${formatCurrency(Math.abs(Number(receipt.amount) || 0))}` : formatCurrency(receipt.amount);
   const entryTitle = isReimbursement
     ? `<span class="reimbursement-item-arrow" aria-hidden="true">↳</span><span class="reimbursement-item-label">Reembolso</span>${escapeCardDetail(receipt.merchant)}`
     : `${escapeCardDetail(receipt.merchant)} <span class="credit-card-entry-badge">${isCredit ? 'Crédito' : 'Compra'}</span>`;
 
   return `<div class="simple-card-entry ${isCredit ? 'is-credit' : ''} ${isLinkedReimbursement ? 'is-linked-reimbursement' : ''} ${isPendingEntry ? 'is-pending-entry' : 'is-posted-entry'}">
-    <div class="simple-card-entry-copy"><strong>${entryTitle}${timingBadge}</strong><small>${String(receipt.date || '').split('-').reverse().join('/')} · ${escapeCardDetail(receipt.category)} ${processed}</small>${receipt.observation ? `<small>↳ ${escapeCardDetail(receipt.observation)}</small>` : ''}</div>
+    <div class="simple-card-entry-copy"><strong>${entryTitle}${timingBadge}</strong><small>${String(receipt.date || '')
+      .split('-')
+      .reverse()
+      .join('/')} · ${escapeCardDetail(receipt.category)} ${processed}</small>${receipt.observation ? `<small>↳ ${escapeCardDetail(receipt.observation)}</small>` : ''}</div>
     <b>${displayedAmount}</b>
   </div>`;
 }
@@ -5248,97 +5244,257 @@ function updateCreditCardsDashboard() {
   persistClosedCardStatements(referenceMonth);
   persistClosedCardStatements(shiftReferenceMonth(referenceMonth, -1));
 
-  container.innerHTML = cards.map((card) => {
-    const state = getCreditCardMonthState(card, referenceMonth);
-    const payableStatement = state.payableStatement;
-    const storedPayableStatement = state.storedStatement;
-    const payableDueMonth = state.payableDueMonth;
-    const closedEntries = state.payableEntries;
-    const openDueMonth = state.openDueMonth;
-    const openEntries = state.openEntries;
-    const cardFilter = getCreditCardFilter(card.id);
-    const filteredOpenEntries = filterAndSortCreditCardEntries(openEntries, cardFilter);
-    const filteredClosedEntries = filterAndSortCreditCardEntries(closedEntries, cardFilter);
-    const launchedOpenEntries = filteredOpenEntries.filter((entry) => String(entry.date || '') <= getTodayISO());
-    const pendingOpenEntries = filteredOpenEntries.filter((entry) => String(entry.date || '') > getTodayISO());
-    const launchedOpenTotal = CardStatements.roundMoney(launchedOpenEntries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0));
-    const pendingOpenTotal = CardStatements.roundMoney(pendingOpenEntries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0));
-    const closed = payableStatement || CardStatements.createStatement(card, payableDueMonth, [], null, new Date().toISOString());
-    const overview = state.overview;
-    const isExpanded = openCreditCardDetails.has(card.id);
-    const safetyBase = getSuggestedCreditCardLimit(card, referenceMonth).value;
-    const safetyLimit = Math.max(0, Number(card.controlLimit) || safetyBase || Number(card.monthlyLimit) || 0);
-    const realLimit = Math.max(0, Number(card.monthlyLimit) || 0);
-    const sliderMax = Math.max(realLimit, safetyLimit, safetyBase, 1);
-    const safetyPosition = Math.min(100, (safetyLimit / sliderMax) * 100);
-    const safetyBasePosition = Math.min(100, (safetyBase / sliderMax) * 100);
-    const limitLocked = isCreditCardLimitLocked(card.id);
-    const suggestedLimitLabel = 'Base recorrente';
-    const payments = payableStatement?.payments || [];
-    const adjustments = payableStatement?.adjustments || [];
-    const reconciliation = CardStatements.getStatementTotals(payableStatement || closed);
-    const paymentRows = payments.map((payment) => `<div class="simple-card-control-row"><span>${payment.date.split('-').reverse().join('/')} · ${escapeCardDetail(payment.observation || 'Pagamento')}</span><b>${formatCurrency(payment.amount)}</b><button class="action-btn card-payment-edit" data-statement-id="${payableStatement.id}" data-item-id="${payment.id}">Editar</button><button class="action-btn danger card-payment-delete" data-statement-id="${payableStatement.id}" data-item-id="${payment.id}">Excluir</button></div>`).join('');
-    const adjustmentRows = adjustments.map((adjustment) => `<div class="simple-card-control-row"><span>${adjustment.date.split('-').reverse().join('/')} · ${escapeCardDetail(adjustment.description)}</span><b>${formatCurrency(adjustment.amount)}</b><button class="action-btn card-adjustment-edit" data-statement-id="${payableStatement.id}" data-item-id="${adjustment.id}">Editar</button><button class="action-btn danger card-adjustment-delete" data-statement-id="${payableStatement.id}" data-item-id="${adjustment.id}">Excluir</button></div>`).join('');
-    return `<article class="credit-card-card simple-card-panel ${isExpanded ? 'is-expanded' : ''}">
-      <button type="button" class="credit-card-summary simple-card-summary" data-credit-card-id="${card.id}" aria-expanded="${isExpanded}"><span class="toggle-icon">${isExpanded ? '▼' : '▶'}</span><span class="credit-card-brand-icon">💳</span><span class="simple-card-name"><strong>${escapeCardDetail(card.name)}</strong><small>Fecha dia ${card.closing || '?'} · Vence dia ${card.due || '?'}</small></span><span class="simple-card-metrics"><span><small>Em formação</small><b>${formatCurrency(overview.openAmount)}</b></span><span class="is-payable"><small>Fatura a pagar</small><b>${formatCurrency(overview.closed.remaining)}</b></span><span><small>Disponível</small><b>${formatCurrency(overview.availableLimit)}</b></span></span></button>
-      <div class="credit-card-limit-reference ${limitLocked ? 'is-locked' : ''}"><div class="credit-card-limit-reference-head"><strong>Limite mensal de segurança: <b class="credit-card-control-value">${formatCurrency(safetyLimit)}</b></strong><div class="credit-card-limit-reference-actions">${safetyBase ? `<button type="button" class="credit-card-use-suggested" data-card-id="${card.id}" data-suggested-limit="${safetyBase}" ${limitLocked ? 'disabled' : ''}>${suggestedLimitLabel}: ${formatCurrency(safetyBase)}</button>` : ''}<button type="button" class="credit-card-limit-lock ${limitLocked ? 'is-locked' : ''}" data-card-id="${card.id}" aria-pressed="${limitLocked ? 'true' : 'false'}" title="${limitLocked ? 'Desbloquear limite mensal de segurança' : 'Bloquear limite mensal de segurança'}" aria-label="${limitLocked ? 'Desbloquear limite mensal de segurança' : 'Bloquear limite mensal de segurança'}">${limitLocked ? '🔒' : '🔓'}</button></div></div><div class="credit-card-limit-reference-track" style="--control-limit-position:${safetyPosition}%;--suggested-limit-position:${safetyBasePosition}%"><span class="credit-card-control-limit-fill"></span><input class="credit-card-control-slider" type="range" min="0" max="${sliderMax}" step="0.01" value="${safetyLimit}" data-card-id="${card.id}" ${limitLocked ? 'disabled' : ''}>${safetyBase ? '<span class="credit-card-recurring-marker"></span>' : ''}</div><div class="credit-card-limit-reference-meta"><span>CAD 0</span><span>${formatCurrency(sliderMax)}</span></div></div>
-      ${isExpanded ? `<div class="simple-card-details"><section class="simple-card-cycle is-forming"><div class="simple-card-section-toolbar"><div class="simple-card-section-heading is-open"><div><strong>Fatura em formação</strong><small>Vence em ${CardStatements.getCycle(card, openDueMonth).dueDate.split('-').reverse().join('/')} · ${filteredOpenEntries.length} lançamento(s)</small></div><b>${formatCurrency(overview.openAmount)}</b></div><div class="credit-card-filter-actions"><input class="list-search credit-card-search" type="search" value="${escapeCardDetail(cardFilter.search)}" placeholder="Buscar..." data-card-id="${card.id}" aria-label="Buscar nos lançamentos de ${escapeCardDetail(card.name)}"><select class="filter-select credit-card-sort-type" data-card-id="${card.id}" aria-label="Ordenar lançamentos"><option value="date" ${cardFilter.sortType === 'date' ? 'selected' : ''}>Data</option><option value="amount" ${cardFilter.sortType === 'amount' ? 'selected' : ''}>Valor</option><option value="merchant" ${cardFilter.sortType === 'merchant' ? 'selected' : ''}>Nome</option></select><button type="button" class="action-btn btn-icon-only credit-card-sort-order" data-card-id="${card.id}" title="Inverter ordem">${cardFilter.sortOrder === 'asc' ? '⬆️' : '⬇️'}</button></div></div><div class="simple-card-timing-summary"><span class="is-posted"><i></i><span>Já lançado <small>${launchedOpenEntries.length} item(ns)</small></span><b>${formatCurrency(launchedOpenTotal)}</b></span><span class="is-pending"><i></i><span>A lançar <small>${pendingOpenEntries.length} item(ns)</small></span><b>${formatCurrency(pendingOpenTotal)}</b></span></div><div class="simple-card-entry-list">${orderSimpleCardEntries(filteredOpenEntries, openEntries).map((entry) => renderSimpleCardEntry(entry, { showTimingStatus: true, sourcePool: openEntries })).join('') || '<p class="hint">Nenhum lançamento encontrado na fatura em formação.</p>'}</div></section>
-      <section class="simple-card-cycle is-payable"><div class="simple-card-section-heading"><div><strong>Fatura fechada a pagar</strong><small>${closed.dueDate.split('-').reverse().join('/')} · ${getCardStatementStatusLabel(payableStatement)} · Pago ${formatCurrency(overview.closed.paid)} · Restante ${formatCurrency(overview.closed.remaining)}</small></div><b>${formatCurrency(overview.closed.remaining)}</b></div>${storedPayableStatement && payableStatement ? `<details class="simple-card-admin"><summary><span>Gerenciar pagamentos da fatura</span><small>${payments.length ? `${payments.length} pagamento(s) registrado(s)` : 'Informar ou corrigir pagamento'}</small></summary><div class="simple-card-controls"><h4>Pagamentos da fatura</h4>${overview.closed.credit > 0 ? `<p class="simple-card-credit-notice">Crédito no cartão: <strong>${formatCurrency(overview.closed.credit)}</strong></p>` : ''}${paymentRows || '<p class="hint">Nenhum pagamento registrado.</p>'}<form class="simple-card-payment-form" data-statement-id="${payableStatement.id}"><input type="date" name="date" value="${getTodayISO()}" required><input type="number" step="0.01" min="0.01" name="amount" placeholder="Valor" required><input name="observation" placeholder="Observação"><button class="action-btn" type="submit">Adicionar pagamento</button></form><h4>Conciliação manual</h4><div class="simple-card-reconciliation-summary"><span>Calculado pelas Notas: <b>${formatCurrency(reconciliation.calculated)}</b></span><span>Valor real no banco: <b>${reconciliation.bankAmount === null ? 'Não informado' : formatCurrency(reconciliation.bankAmount)}</b></span><span>Diferença: <b>${reconciliation.difference === null ? '—' : formatCurrency(reconciliation.difference)}</b></span></div><form class="simple-card-reconcile-form" data-statement-id="${payableStatement.id}"><label>Valor real no banco<input type="number" step="0.01" min="0" name="bankAmount" value="${reconciliation.bankAmount ?? ''}" required></label><label>Fechamento real<input type="date" name="actualClosingDate" value="${payableStatement.actualClosingDate || payableStatement.closingDate}" required></label><label>Vencimento real (opcional)<input type="date" name="actualDueDate" value="${payableStatement.actualDueDate || ''}"></label><button class="action-btn" type="submit">Salvar conciliação</button></form><p class="hint">A conciliação ajusta somente a fatura; não modifica as Notas nem o Livre.</p><h4>Ajustes simples</h4>${adjustmentRows}<form class="simple-card-adjustment-form" data-statement-id="${payableStatement.id}"><input type="date" name="date" value="${getTodayISO()}" required><input name="description" placeholder="Descrição" required><input type="number" step="0.01" name="amount" placeholder="Valor + ou -" required><button class="action-btn" type="submit">Adicionar ajuste</button></form></div></details>` : '<p class="simple-card-closing-note">Nenhuma fatura fechada para pagar neste período.</p>'}<div class="simple-card-entry-list">${orderSimpleCardEntries(filteredClosedEntries, closedEntries).map((entry) => renderSimpleCardEntry(entry, { sourcePool: closedEntries })).join('') || '<p class="hint">Nenhum lançamento encontrado nesta fatura.</p>'}</div></section></div>` : ''}</article>`;
-  }).join('');
+  container.innerHTML = cards
+    .map((card) => {
+      const state = getCreditCardMonthState(card, referenceMonth);
+      const payableStatement = state.payableStatement;
+      const storedPayableStatement = state.storedStatement;
+      const payableDueMonth = state.payableDueMonth;
+      const closedEntries = state.payableEntries;
+      const openDueMonth = state.openDueMonth;
+      const openEntries = state.openEntries;
+      const cardFilter = getCreditCardFilter(card.id);
+      const filteredOpenEntries = filterAndSortCreditCardEntries(openEntries, cardFilter);
+      const filteredClosedEntries = filterAndSortCreditCardEntries(closedEntries, cardFilter);
+      const launchedOpenEntries = filteredOpenEntries.filter((entry) => String(entry.date || '') <= getTodayISO());
+      const pendingOpenEntries = filteredOpenEntries.filter((entry) => String(entry.date || '') > getTodayISO());
+      const launchedOpenTotal = CardStatements.roundMoney(launchedOpenEntries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0));
+      const pendingOpenTotal = CardStatements.roundMoney(pendingOpenEntries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0));
+      const closed = payableStatement || CardStatements.createStatement(card, payableDueMonth, [], null, new Date().toISOString());
+      const overview = state.overview;
+      const isExpanded = openCreditCardDetails.has(card.id);
+      const safetyBase = getSuggestedCreditCardLimit(card, referenceMonth).value;
+      const safetyLimit = Math.max(0, Number(card.controlLimit) || safetyBase || Number(card.monthlyLimit) || 0);
 
-  container.querySelectorAll('.simple-card-summary').forEach((button) => button.addEventListener('click', () => { const id = button.dataset.creditCardId; if (openCreditCardDetails.has(id)) openCreditCardDetails.delete(id); else openCreditCardDetails.add(id); updateCreditCardsDashboard(); }));
-  container.querySelectorAll('.credit-card-search').forEach((input) => input.addEventListener('input', () => { const cardId = input.dataset.cardId; const cursor = input.selectionStart ?? input.value.length; getCreditCardFilter(cardId).search = input.value; updateCreditCardsDashboard(); requestAnimationFrame(() => { const refreshed = container.querySelector(`.credit-card-search[data-card-id="${cardId}"]`); refreshed?.focus(); refreshed?.setSelectionRange(cursor, cursor); }); }));
-  container.querySelectorAll('.credit-card-sort-type').forEach((select) => select.addEventListener('change', () => { getCreditCardFilter(select.dataset.cardId).sortType = select.value; updateCreditCardsDashboard(); }));
-  container.querySelectorAll('.credit-card-sort-order').forEach((button) => button.addEventListener('click', () => { const filter = getCreditCardFilter(button.dataset.cardId); filter.sortOrder = filter.sortOrder === 'asc' ? 'desc' : 'asc'; updateCreditCardsDashboard(); }));
-  container.querySelectorAll('.credit-card-control-slider').forEach((slider) => { const reference = slider.closest('.credit-card-limit-reference'); const label = reference?.querySelector('.credit-card-control-value'); const track = reference?.querySelector('.credit-card-limit-reference-track'); slider.addEventListener('input', () => { if (label) label.textContent = formatCurrency(slider.value); if (track) track.style.setProperty('--control-limit-position', `${Math.min(100, (Number(slider.value) / Math.max(Number(slider.max), 1)) * 100)}%`); }); slider.addEventListener('change', async () => { await FinanceAPI.savePaymentMethods(paymentMethods.map((method) => method.id === slider.dataset.cardId ? { ...method, controlLimit: CardStatements.roundMoney(slider.value) } : method)); showToast('Limite mensal de segurança atualizado.', 'success'); }); });
-  container.querySelectorAll('.credit-card-use-suggested').forEach((button) => button.addEventListener('click', () => { if (button.disabled) return; const slider = container.querySelector(`.credit-card-control-slider[data-card-id="${button.dataset.cardId}"]`); if (!slider) return; slider.value = button.dataset.suggestedLimit; slider.dispatchEvent(new Event('input')); slider.dispatchEvent(new Event('change')); }));
-  container.querySelectorAll('.credit-card-limit-lock').forEach((button) => button.addEventListener('click', () => { const nextLocked = button.getAttribute('aria-pressed') !== 'true'; setCreditCardLimitLocked(button.dataset.cardId, nextLocked); showToast(nextLocked ? 'Limite mensal de segurança bloqueado.' : 'Limite mensal de segurança desbloqueado.', 'success'); updateCreditCardsDashboard(); }));
-  container.querySelectorAll('.simple-card-payment-form').forEach((form) => form.addEventListener('submit', async (event) => { event.preventDefault(); const statement = creditCardStatements.find((item) => item.id === form.dataset.statementId); const amount = Number(form.elements.amount.value); if (!statement || !form.elements.date.value || !(amount > 0)) return showToast('Informe data e valor válidos.', 'error'); const payment = { id: `payment_${Date.now()}`, cardId: statement.cardId, statementId: statement.id, date: form.elements.date.value, amount: CardStatements.roundMoney(amount), observation: form.elements.observation.value.trim() }; await saveStatementMutation(statement, { payments: CardStatements.addOrReplaceById(statement.payments, payment) }); showToast('Pagamento registrado somente na fatura.', 'success'); }));
-  container.querySelectorAll('.card-payment-edit').forEach((button) => button.addEventListener('click', async () => {
-    const statement = creditCardStatements.find((item) => item.id === button.dataset.statementId);
-    const payment = statement?.payments?.find((item) => item.id === button.dataset.itemId);
-    if (!payment) return;
-    const date = await showPrompt('Nova data do pagamento:', payment.date);
-    if (date === null) return;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return showToast('Informe a data no formato AAAA-MM-DD.', 'error');
-    const rawAmount = await showPrompt('Novo valor do pagamento:', String(payment.amount).replace('.', ','));
-    if (rawAmount === null) return;
-    const amount = parseAmount(rawAmount);
-    if (!(amount > 0)) return showToast('Informe um valor válido.', 'error');
-    const observation = await showPrompt('Nova observação:', payment.observation || '');
-    if (observation === null) return;
-    await saveStatementMutation(statement, { payments: CardStatements.addOrReplaceById(statement.payments, { ...payment, date, amount: CardStatements.roundMoney(amount), observation: observation.trim() }) });
-    showToast('Pagamento atualizado.', 'success');
-  }));
-  container.querySelectorAll('.card-payment-delete').forEach((button) => button.addEventListener('click', async () => { const statement = creditCardStatements.find((item) => item.id === button.dataset.statementId); if (!statement || !(await showConfirm('Excluir este pagamento?', true))) return; await saveStatementMutation(statement, { payments: CardStatements.removeById(statement.payments, button.dataset.itemId) }); }));
-  container.querySelectorAll('.simple-card-reconcile-form').forEach((form) => form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const statement = creditCardStatements.find((item) => item.id === form.dataset.statementId);
-    const bankAmount = Number(form.elements.bankAmount.value);
-    const actualClosingDate = form.elements.actualClosingDate.value;
-    const actualDueDate = form.elements.actualDueDate.value;
-    if (!statement || !Number.isFinite(bankAmount) || bankAmount < 0 || !actualClosingDate) return showToast('Informe o valor real e a data de fechamento.', 'error');
-    await saveStatementMutation(statement, { bankAmount: CardStatements.roundMoney(bankAmount), actualClosingDate, actualDueDate: actualDueDate || null });
-    showToast('Conciliação salva somente na fatura.', 'success');
-  }));
-  container.querySelectorAll('.simple-card-adjustment-form').forEach((form) => form.addEventListener('submit', async (event) => { event.preventDefault(); const statement = creditCardStatements.find((item) => item.id === form.dataset.statementId); const amount = Number(form.elements.amount.value); if (!statement || !form.elements.date.value || !form.elements.description.value.trim() || !Number.isFinite(amount) || amount === 0) return showToast('Informe data, descrição e valor diferente de zero.', 'error'); const adjustment = { id: `adjustment_${Date.now()}`, date: form.elements.date.value, description: form.elements.description.value.trim(), amount: CardStatements.roundMoney(amount) }; await saveStatementMutation(statement, { adjustments: CardStatements.addOrReplaceById(statement.adjustments, adjustment) }); showToast('Ajuste aplicado somente à fatura.', 'success'); }));
-  container.querySelectorAll('.card-adjustment-edit').forEach((button) => button.addEventListener('click', async () => {
-    const statement = creditCardStatements.find((item) => item.id === button.dataset.statementId);
-    const adjustment = statement?.adjustments?.find((item) => item.id === button.dataset.itemId);
-    if (!adjustment) return;
-    const date = await showPrompt('Nova data do ajuste:', adjustment.date);
-    if (date === null) return;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return showToast('Informe a data no formato AAAA-MM-DD.', 'error');
-    const description = await showPrompt('Nova descrição do ajuste:', adjustment.description);
-    if (description === null || !description.trim()) return;
-    const rawAmount = await showPrompt('Novo valor do ajuste (+ ou -):', String(adjustment.amount).replace('.', ','));
-    if (rawAmount === null) return;
-    const amount = parseAmount(rawAmount);
-    if (!Number.isFinite(amount) || amount === 0) return showToast('Informe um valor diferente de zero.', 'error');
-    await saveStatementMutation(statement, { adjustments: CardStatements.addOrReplaceById(statement.adjustments, { ...adjustment, date, description: description.trim(), amount: CardStatements.roundMoney(amount) }) });
-    showToast('Ajuste atualizado.', 'success');
-  }));
-  container.querySelectorAll('.card-adjustment-delete').forEach((button) => button.addEventListener('click', async () => { const statement = creditCardStatements.find((item) => item.id === button.dataset.statementId); if (!statement || !(await showConfirm('Excluir este ajuste?', true))) return; await saveStatementMutation(statement, { adjustments: CardStatements.removeById(statement.adjustments, button.dataset.itemId) }); }));
+      const monthSpend = Math.max(
+        0,
+        CardStatements.roundMoney(receipts.filter((receipt) => typeof receipt.date === 'string' && receipt.date.startsWith(referenceMonth) && receipt.paymentMethodId === card.id).reduce((sum, receipt) => sum + (Number(receipt.amount) || 0), 0)),
+      );
+
+      const safetyPercent = safetyLimit > 0 ? (monthSpend / safetyLimit) * 100 : 0;
+      const safetyState = getCreditCardLimitState(safetyPercent);
+
+      const realLimit = Math.max(0, Number(card.monthlyLimit) || 0);
+      const sliderMax = Math.max(realLimit, safetyLimit, safetyBase, 1);
+      const safetyPosition = Math.min(100, (safetyLimit / sliderMax) * 100);
+      const safetyBasePosition = Math.min(100, (safetyBase / sliderMax) * 100);
+      const limitLocked = isCreditCardLimitLocked(card);
+      const suggestedLimitLabel = 'Base recorrente';
+      const payments = payableStatement?.payments || [];
+      const adjustments = payableStatement?.adjustments || [];
+      const reconciliation = CardStatements.getStatementTotals(payableStatement || closed);
+      const paymentRows = payments
+        .map(
+          (payment) =>
+            `<div class="simple-card-control-row"><span>${payment.date.split('-').reverse().join('/')} · ${escapeCardDetail(payment.observation || 'Pagamento')}</span><b>${formatCurrency(payment.amount)}</b><button class="action-btn card-payment-edit" data-statement-id="${payableStatement.id}" data-item-id="${payment.id}">Editar</button><button class="action-btn danger card-payment-delete" data-statement-id="${payableStatement.id}" data-item-id="${payment.id}">Excluir</button></div>`,
+        )
+        .join('');
+      const adjustmentRows = adjustments
+        .map(
+          (adjustment) =>
+            `<div class="simple-card-control-row"><span>${adjustment.date.split('-').reverse().join('/')} · ${escapeCardDetail(adjustment.description)}</span><b>${formatCurrency(adjustment.amount)}</b><button class="action-btn card-adjustment-edit" data-statement-id="${payableStatement.id}" data-item-id="${adjustment.id}">Editar</button><button class="action-btn danger card-adjustment-delete" data-statement-id="${payableStatement.id}" data-item-id="${adjustment.id}">Excluir</button></div>`,
+        )
+        .join('');
+      return `<article class="credit-card-card simple-card-panel ${isExpanded ? 'is-expanded' : ''}">
+      <button type="button" class="credit-card-summary simple-card-summary" data-credit-card-id="${card.id}" aria-expanded="${isExpanded}"><span class="toggle-icon">${isExpanded ? '▼' : '▶'}</span><span class="credit-card-brand-icon">💳</span><span class="simple-card-name"><strong>${escapeCardDetail(card.name)}</strong><small>Fecha dia ${card.closing || '?'} · Vence dia ${card.due || '?'}</small></span><span class="simple-card-metrics"><span><small>Em formação</small><b>${formatCurrency(overview.openAmount)}</b></span><span class="is-payable"><small>Fatura a pagar</small><b>${formatCurrency(overview.closed.remaining)}</b></span><span><small>Disponível</small><b>${formatCurrency(overview.availableLimit)}</b></span></span></button>
+      <div class="credit-card-limit-block ${safetyState.className}">
+  <div class="credit-card-limit-copy">
+    <span>
+      Uso no mês:
+      <strong>${formatCurrency(monthSpend)}</strong>
+    </span>
+
+    <span>
+      ${safetyLimit > 0 ? `${safetyState.label} · ${Math.round(safetyPercent * 10) / 10}% do limite` : 'Defina um limite para acompanhar'}
+    </span>
+  </div>
+
+  <div class="credit-card-limit-track">
+    <span style="width:${Math.min(safetyPercent, 100)}%"></span>
+  </div>
+
+  <div class="credit-card-limit-meta">
+    <span>Limite de segurança: ${formatCurrency(safetyLimit)}</span>
+    <span>Limite real: ${formatCurrency(realLimit)}</span>
+  </div>
+</div>
+      <div class="credit-card-limit-reference ${limitLocked ? 'is-locked' : ''}"><div class="credit-card-limit-reference-head"><strong>Limite mensal de segurança: <b class="credit-card-control-value">${formatCurrency(safetyLimit)}</b></strong><div class="credit-card-limit-reference-actions">${safetyBase ? `<button type="button" class="credit-card-use-suggested" data-card-id="${card.id}" data-suggested-limit="${safetyBase}" ${limitLocked ? 'disabled' : ''}>${suggestedLimitLabel}: ${formatCurrency(safetyBase)}</button>` : ''}<button type="button" class="credit-card-limit-lock ${limitLocked ? 'is-locked' : ''}" data-card-id="${card.id}" aria-pressed="${limitLocked ? 'true' : 'false'}" title="${limitLocked ? 'Desbloquear limite mensal de segurança' : 'Bloquear limite mensal de segurança'}" aria-label="${limitLocked ? 'Desbloquear limite mensal de segurança' : 'Bloquear limite mensal de segurança'}">${limitLocked ? '🔒' : '🔓'}</button></div></div><div class="credit-card-limit-reference-track" style="--control-limit-position:${safetyPosition}%;--suggested-limit-position:${safetyBasePosition}%"><span class="credit-card-control-limit-fill"></span><input class="credit-card-control-slider" type="range" min="0" max="${sliderMax}" step="0.01" value="${safetyLimit}" data-card-id="${card.id}" ${limitLocked ? 'disabled' : ''}>${safetyBase ? '<span class="credit-card-recurring-marker"></span>' : ''}</div><div class="credit-card-limit-reference-meta"><span>CAD 0</span><span>${formatCurrency(sliderMax)}</span></div></div>
+      ${
+        isExpanded
+          ? `<div class="simple-card-details"><section class="simple-card-cycle is-forming"><div class="simple-card-section-toolbar"><div class="simple-card-section-heading is-open"><div><strong>Fatura em formação</strong><small>Vence em ${CardStatements.getCycle(card, openDueMonth).dueDate.split('-').reverse().join('/')} · ${filteredOpenEntries.length} lançamento(s)</small></div><b>${formatCurrency(overview.openAmount)}</b></div><div class="credit-card-filter-actions"><input class="list-search credit-card-search" type="search" value="${escapeCardDetail(cardFilter.search)}" placeholder="Buscar..." data-card-id="${card.id}" aria-label="Buscar nos lançamentos de ${escapeCardDetail(card.name)}"><select class="filter-select credit-card-sort-type" data-card-id="${card.id}" aria-label="Ordenar lançamentos"><option value="date" ${cardFilter.sortType === 'date' ? 'selected' : ''}>Data</option><option value="amount" ${cardFilter.sortType === 'amount' ? 'selected' : ''}>Valor</option><option value="merchant" ${cardFilter.sortType === 'merchant' ? 'selected' : ''}>Nome</option></select><button type="button" class="action-btn btn-icon-only credit-card-sort-order" data-card-id="${card.id}" title="Inverter ordem">${cardFilter.sortOrder === 'asc' ? '⬆️' : '⬇️'}</button></div></div><div class="simple-card-timing-summary"><span class="is-posted"><i></i><span>Já lançado <small>${launchedOpenEntries.length} item(ns)</small></span><b>${formatCurrency(launchedOpenTotal)}</b></span><span class="is-pending"><i></i><span>A lançar <small>${pendingOpenEntries.length} item(ns)</small></span><b>${formatCurrency(pendingOpenTotal)}</b></span></div><div class="simple-card-entry-list">${
+              orderSimpleCardEntries(filteredOpenEntries, openEntries)
+                .map((entry) => renderSimpleCardEntry(entry, { showTimingStatus: true, sourcePool: openEntries }))
+                .join('') || '<p class="hint">Nenhum lançamento encontrado na fatura em formação.</p>'
+            }</div></section>
+      <section class="simple-card-cycle is-payable"><div class="simple-card-section-heading"><div><strong>Fatura fechada a pagar</strong><small>${closed.dueDate.split('-').reverse().join('/')} · ${getCardStatementStatusLabel(payableStatement)} · Pago ${formatCurrency(overview.closed.paid)} · Restante ${formatCurrency(overview.closed.remaining)}</small></div><b>${formatCurrency(overview.closed.remaining)}</b></div>${storedPayableStatement && payableStatement ? `<details class="simple-card-admin"><summary><span>Gerenciar pagamentos da fatura</span><small>${payments.length ? `${payments.length} pagamento(s) registrado(s)` : 'Informar ou corrigir pagamento'}</small></summary><div class="simple-card-controls"><h4>Pagamentos da fatura</h4>${overview.closed.credit > 0 ? `<p class="simple-card-credit-notice">Crédito no cartão: <strong>${formatCurrency(overview.closed.credit)}</strong></p>` : ''}${paymentRows || '<p class="hint">Nenhum pagamento registrado.</p>'}<form class="simple-card-payment-form" data-statement-id="${payableStatement.id}"><input type="date" name="date" value="${getTodayISO()}" required><input type="number" step="0.01" min="0.01" name="amount" placeholder="Valor" required><input name="observation" placeholder="Observação"><button class="action-btn" type="submit">Adicionar pagamento</button></form><h4>Conciliação manual</h4><div class="simple-card-reconciliation-summary"><span>Calculado pelas Notas: <b>${formatCurrency(reconciliation.calculated)}</b></span><span>Valor real no banco: <b>${reconciliation.bankAmount === null ? 'Não informado' : formatCurrency(reconciliation.bankAmount)}</b></span><span>Diferença: <b>${reconciliation.difference === null ? '—' : formatCurrency(reconciliation.difference)}</b></span></div><form class="simple-card-reconcile-form" data-statement-id="${payableStatement.id}"><label>Valor real no banco<input type="number" step="0.01" min="0" name="bankAmount" value="${reconciliation.bankAmount ?? ''}" required></label><label>Fechamento real<input type="date" name="actualClosingDate" value="${payableStatement.actualClosingDate || payableStatement.closingDate}" required></label><label>Vencimento real (opcional)<input type="date" name="actualDueDate" value="${payableStatement.actualDueDate || ''}"></label><button class="action-btn" type="submit">Salvar conciliação</button></form><p class="hint">A conciliação ajusta somente a fatura; não modifica as Notas nem o Livre.</p><h4>Ajustes simples</h4>${adjustmentRows}<form class="simple-card-adjustment-form" data-statement-id="${payableStatement.id}"><input type="date" name="date" value="${getTodayISO()}" required><input name="description" placeholder="Descrição" required><input type="number" step="0.01" name="amount" placeholder="Valor + ou -" required><button class="action-btn" type="submit">Adicionar ajuste</button></form></div></details>` : '<p class="simple-card-closing-note">Nenhuma fatura fechada para pagar neste período.</p>'}<div class="simple-card-entry-list">${
+        orderSimpleCardEntries(filteredClosedEntries, closedEntries)
+          .map((entry) => renderSimpleCardEntry(entry, { sourcePool: closedEntries }))
+          .join('') || '<p class="hint">Nenhum lançamento encontrado nesta fatura.</p>'
+      }</div></section></div>`
+          : ''
+      }</article>`;
+    })
+    .join('');
+
+  container.querySelectorAll('.simple-card-summary').forEach((button) =>
+    button.addEventListener('click', () => {
+      const id = button.dataset.creditCardId;
+      if (openCreditCardDetails.has(id)) openCreditCardDetails.delete(id);
+      else openCreditCardDetails.add(id);
+      updateCreditCardsDashboard();
+    }),
+  );
+  container.querySelectorAll('.credit-card-search').forEach((input) =>
+    input.addEventListener('input', () => {
+      const cardId = input.dataset.cardId;
+      const cursor = input.selectionStart ?? input.value.length;
+      getCreditCardFilter(cardId).search = input.value;
+      updateCreditCardsDashboard();
+      requestAnimationFrame(() => {
+        const refreshed = container.querySelector(`.credit-card-search[data-card-id="${cardId}"]`);
+        refreshed?.focus();
+        refreshed?.setSelectionRange(cursor, cursor);
+      });
+    }),
+  );
+  container.querySelectorAll('.credit-card-sort-type').forEach((select) =>
+    select.addEventListener('change', () => {
+      getCreditCardFilter(select.dataset.cardId).sortType = select.value;
+      updateCreditCardsDashboard();
+    }),
+  );
+  container.querySelectorAll('.credit-card-sort-order').forEach((button) =>
+    button.addEventListener('click', () => {
+      const filter = getCreditCardFilter(button.dataset.cardId);
+      filter.sortOrder = filter.sortOrder === 'asc' ? 'desc' : 'asc';
+      updateCreditCardsDashboard();
+    }),
+  );
+  container.querySelectorAll('.credit-card-control-slider').forEach((slider) => {
+    const reference = slider.closest('.credit-card-limit-reference');
+    const label = reference?.querySelector('.credit-card-control-value');
+    const track = reference?.querySelector('.credit-card-limit-reference-track');
+    slider.addEventListener('input', () => {
+      if (label) label.textContent = formatCurrency(slider.value);
+      if (track) track.style.setProperty('--control-limit-position', `${Math.min(100, (Number(slider.value) / Math.max(Number(slider.max), 1)) * 100)}%`);
+    });
+    slider.addEventListener('change', async () => {
+      await FinanceAPI.savePaymentMethods(paymentMethods.map((method) => (method.id === slider.dataset.cardId ? { ...method, controlLimit: CardStatements.roundMoney(slider.value) } : method)));
+      showToast('Limite mensal de segurança atualizado.', 'success');
+    });
+  });
+  container.querySelectorAll('.credit-card-use-suggested').forEach((button) =>
+    button.addEventListener('click', () => {
+      if (button.disabled) return;
+      const slider = container.querySelector(`.credit-card-control-slider[data-card-id="${button.dataset.cardId}"]`);
+      if (!slider) return;
+      slider.value = button.dataset.suggestedLimit;
+      slider.dispatchEvent(new Event('input'));
+      slider.dispatchEvent(new Event('change'));
+    }),
+  );
+  container.querySelectorAll('.credit-card-limit-lock').forEach((button) =>
+    button.addEventListener('click', async () => {
+      const cardId = button.dataset.cardId;
+      const nextLocked = button.getAttribute('aria-pressed') !== 'true';
+      const previousMethods = paymentMethods;
+      paymentMethods = paymentMethods.map((method) => (method.id === cardId ? { ...method, controlLimitLocked: nextLocked } : method));
+      updateCreditCardsDashboard();
+      try {
+        await FinanceAPI.savePaymentMethods(paymentMethods);
+        showToast(nextLocked ? 'Limite mensal de segurança bloqueado em todos os aparelhos.' : 'Limite mensal de segurança desbloqueado em todos os aparelhos.', 'success');
+      } catch (error) {
+        console.error(error);
+        paymentMethods = previousMethods;
+        updateCreditCardsDashboard();
+        showToast('Não foi possível sincronizar o cadeado.', 'error');
+      }
+    }),
+  );
+  container.querySelectorAll('.simple-card-payment-form').forEach((form) =>
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const statement = creditCardStatements.find((item) => item.id === form.dataset.statementId);
+      const amount = Number(form.elements.amount.value);
+      if (!statement || !form.elements.date.value || !(amount > 0)) return showToast('Informe data e valor válidos.', 'error');
+      const payment = { id: `payment_${Date.now()}`, cardId: statement.cardId, statementId: statement.id, date: form.elements.date.value, amount: CardStatements.roundMoney(amount), observation: form.elements.observation.value.trim() };
+      await saveStatementMutation(statement, { payments: CardStatements.addOrReplaceById(statement.payments, payment) });
+      showToast('Pagamento registrado somente na fatura.', 'success');
+    }),
+  );
+  container.querySelectorAll('.card-payment-edit').forEach((button) =>
+    button.addEventListener('click', async () => {
+      const statement = creditCardStatements.find((item) => item.id === button.dataset.statementId);
+      const payment = statement?.payments?.find((item) => item.id === button.dataset.itemId);
+      if (!payment) return;
+      const date = await showPrompt('Nova data do pagamento:', payment.date);
+      if (date === null) return;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return showToast('Informe a data no formato AAAA-MM-DD.', 'error');
+      const rawAmount = await showPrompt('Novo valor do pagamento:', String(payment.amount).replace('.', ','));
+      if (rawAmount === null) return;
+      const amount = parseAmount(rawAmount);
+      if (!(amount > 0)) return showToast('Informe um valor válido.', 'error');
+      const observation = await showPrompt('Nova observação:', payment.observation || '');
+      if (observation === null) return;
+      await saveStatementMutation(statement, { payments: CardStatements.addOrReplaceById(statement.payments, { ...payment, date, amount: CardStatements.roundMoney(amount), observation: observation.trim() }) });
+      showToast('Pagamento atualizado.', 'success');
+    }),
+  );
+  container.querySelectorAll('.card-payment-delete').forEach((button) =>
+    button.addEventListener('click', async () => {
+      const statement = creditCardStatements.find((item) => item.id === button.dataset.statementId);
+      if (!statement || !(await showConfirm('Excluir este pagamento?', true))) return;
+      await saveStatementMutation(statement, { payments: CardStatements.removeById(statement.payments, button.dataset.itemId) });
+    }),
+  );
+  container.querySelectorAll('.simple-card-reconcile-form').forEach((form) =>
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const statement = creditCardStatements.find((item) => item.id === form.dataset.statementId);
+      const bankAmount = Number(form.elements.bankAmount.value);
+      const actualClosingDate = form.elements.actualClosingDate.value;
+      const actualDueDate = form.elements.actualDueDate.value;
+      if (!statement || !Number.isFinite(bankAmount) || bankAmount < 0 || !actualClosingDate) return showToast('Informe o valor real e a data de fechamento.', 'error');
+      await saveStatementMutation(statement, { bankAmount: CardStatements.roundMoney(bankAmount), actualClosingDate, actualDueDate: actualDueDate || null });
+      showToast('Conciliação salva somente na fatura.', 'success');
+    }),
+  );
+  container.querySelectorAll('.simple-card-adjustment-form').forEach((form) =>
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const statement = creditCardStatements.find((item) => item.id === form.dataset.statementId);
+      const amount = Number(form.elements.amount.value);
+      if (!statement || !form.elements.date.value || !form.elements.description.value.trim() || !Number.isFinite(amount) || amount === 0) return showToast('Informe data, descrição e valor diferente de zero.', 'error');
+      const adjustment = { id: `adjustment_${Date.now()}`, date: form.elements.date.value, description: form.elements.description.value.trim(), amount: CardStatements.roundMoney(amount) };
+      await saveStatementMutation(statement, { adjustments: CardStatements.addOrReplaceById(statement.adjustments, adjustment) });
+      showToast('Ajuste aplicado somente à fatura.', 'success');
+    }),
+  );
+  container.querySelectorAll('.card-adjustment-edit').forEach((button) =>
+    button.addEventListener('click', async () => {
+      const statement = creditCardStatements.find((item) => item.id === button.dataset.statementId);
+      const adjustment = statement?.adjustments?.find((item) => item.id === button.dataset.itemId);
+      if (!adjustment) return;
+      const date = await showPrompt('Nova data do ajuste:', adjustment.date);
+      if (date === null) return;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return showToast('Informe a data no formato AAAA-MM-DD.', 'error');
+      const description = await showPrompt('Nova descrição do ajuste:', adjustment.description);
+      if (description === null || !description.trim()) return;
+      const rawAmount = await showPrompt('Novo valor do ajuste (+ ou -):', String(adjustment.amount).replace('.', ','));
+      if (rawAmount === null) return;
+      const amount = parseAmount(rawAmount);
+      if (!Number.isFinite(amount) || amount === 0) return showToast('Informe um valor diferente de zero.', 'error');
+      await saveStatementMutation(statement, { adjustments: CardStatements.addOrReplaceById(statement.adjustments, { ...adjustment, date, description: description.trim(), amount: CardStatements.roundMoney(amount) }) });
+      showToast('Ajuste atualizado.', 'success');
+    }),
+  );
+  container.querySelectorAll('.card-adjustment-delete').forEach((button) =>
+    button.addEventListener('click', async () => {
+      const statement = creditCardStatements.find((item) => item.id === button.dataset.statementId);
+      if (!statement || !(await showConfirm('Excluir este ajuste?', true))) return;
+      await saveStatementMutation(statement, { adjustments: CardStatements.removeById(statement.adjustments, button.dataset.itemId) });
+    }),
+  );
 }
 
 function startReimbursement(id) {
@@ -5479,6 +5635,7 @@ function syncData(month) {
 
   FinanceAPI.listenPaymentMethods((methods) => {
     paymentMethods = methods || [];
+    migrateLegacyCreditCardLimitLocks(paymentMethods);
     renderPaymentMethodsList();
     updatePaymentSelects();
     refreshAll();
@@ -6050,11 +6207,12 @@ function updateAnnualInstallmentBuilder() {
     const composition = Object.entries(grouped)
       .map(([value, quantity]) => `${quantity} × ${formatCurrency(Number(value))}`)
       .join(' + ');
-    annualInstallmentPreview.innerHTML = paymentFrequency === 'biweekly'
-      ? `<strong>${calculation.paymentCount} pagamentos bisemanais de aproximadamente ${formatCurrency(calculation.periodicPayment)}</strong><br>No orçamento mensal: <strong>${formatCurrency(calculation.monthlyEquivalent)}</strong> (26 pagamentos ÷ 12 meses)<br>${usesInterest ? `Valor financiado: ${formatCurrency(amount)} • Juros estimados: ${formatCurrency(calculation.totalInterest)} • Total estimado: ${formatCurrency(calculation.totalPaid)}` : `Valor total da compra: ${formatCurrency(amount)}`}${lastDate ? `<br>Controle mensal de ${formatShortDate(firstDate)} até ${formatShortDate(lastDate)}.` : ''}`
-      : usesInterest
-        ? `<strong>${count} parcelas mensais de aproximadamente ${formatCurrency(calculation.periodicPayment)}</strong><br>Valor financiado: ${formatCurrency(amount)} • Juros estimados: ${formatCurrency(calculation.totalInterest)} • Total estimado: ${formatCurrency(calculation.totalPaid)}${lastDate ? `<br>De ${formatShortDate(firstDate)} até ${formatShortDate(lastDate)}.` : ''}`
-        : `<strong>${count} parcelas:</strong> ${composition} = ${formatCurrency(amount)}${lastDate ? `<br>De ${formatShortDate(firstDate)} até ${formatShortDate(lastDate)}.` : ''}`;
+    annualInstallmentPreview.innerHTML =
+      paymentFrequency === 'biweekly'
+        ? `<strong>${calculation.paymentCount} pagamentos bisemanais de aproximadamente ${formatCurrency(calculation.periodicPayment)}</strong><br>No orçamento mensal: <strong>${formatCurrency(calculation.monthlyEquivalent)}</strong> (26 pagamentos ÷ 12 meses)<br>${usesInterest ? `Valor financiado: ${formatCurrency(amount)} • Juros estimados: ${formatCurrency(calculation.totalInterest)} • Total estimado: ${formatCurrency(calculation.totalPaid)}` : `Valor total da compra: ${formatCurrency(amount)}`}${lastDate ? `<br>Controle mensal de ${formatShortDate(firstDate)} até ${formatShortDate(lastDate)}.` : ''}`
+        : usesInterest
+          ? `<strong>${count} parcelas mensais de aproximadamente ${formatCurrency(calculation.periodicPayment)}</strong><br>Valor financiado: ${formatCurrency(amount)} • Juros estimados: ${formatCurrency(calculation.totalInterest)} • Total estimado: ${formatCurrency(calculation.totalPaid)}${lastDate ? `<br>De ${formatShortDate(firstDate)} até ${formatShortDate(lastDate)}.` : ''}`
+          : `<strong>${count} parcelas:</strong> ${composition} = ${formatCurrency(amount)}${lastDate ? `<br>De ${formatShortDate(firstDate)} até ${formatShortDate(lastDate)}.` : ''}`;
   } else {
     const repeatedAmount = paymentFrequency === 'biweekly' ? convertBiweeklyToMonthly(amount) : amount;
     annualInstallmentPreview.innerHTML = `<strong>${count} lançamentos</strong> de ${formatCurrency(repeatedAmount)} • Total do período: ${formatCurrency(repeatedAmount * count)}${paymentFrequency === 'biweekly' ? `<br>${formatCurrency(amount)} a cada duas semanas → ${formatCurrency(repeatedAmount)} por mês no orçamento.` : ''}${lastDate ? `<br>De ${formatShortDate(firstDate)} até ${formatShortDate(lastDate)}.` : ''}`;
@@ -6068,9 +6226,7 @@ annualInstallmentModeInputs.forEach((input) => input.addEventListener('change', 
 annualInterestCheck?.addEventListener('change', updateAnnualInstallmentBuilder);
 annualInterestTypeInputs.forEach((input) => input.addEventListener('change', updateAnnualInstallmentBuilder));
 annualPaymentFrequencyInputs.forEach((input) => input.addEventListener('change', updateAnnualInstallmentBuilder));
-[annualAmountInput, annualDateInput, annualInstallmentsCount, annualInstallmentsInterval, annualInterestRate, annualMortgageAmortization, annualRentalAmount].forEach((input) =>
-  input?.addEventListener('input', updateAnnualInstallmentBuilder),
-);
+[annualAmountInput, annualDateInput, annualInstallmentsCount, annualInstallmentsInterval, annualInterestRate, annualMortgageAmortization, annualRentalAmount].forEach((input) => input?.addEventListener('input', updateAnnualInstallmentBuilder));
 annualRentBuyAtEnd?.addEventListener('change', updateAnnualInstallmentBuilder);
 
 let selectedAnnualType = '';
@@ -6150,9 +6306,7 @@ async function deleteInstallmentLinkedRecords(plan, keep = {}) {
 async function updateInstallmentPlanEntry(planId, installmentNumber, changes) {
   const plan = getInstallmentPlan(planId);
   if (!plan) return;
-  const updatedInstallments = (plan.installments || []).map((installment) =>
-    installment.number === Number(installmentNumber) ? { ...installment, ...changes } : installment,
-  );
+  const updatedInstallments = (plan.installments || []).map((installment) => (installment.number === Number(installmentNumber) ? { ...installment, ...changes } : installment));
   const updatedPlan = {
     ...plan,
     installments: updatedInstallments,
@@ -6171,9 +6325,7 @@ function getInstallmentStatusPresentation(status) {
 
 function renderInstallmentPlans() {
   if (!installmentPlansCard || !installmentPlansList) return;
-  const activePlans = installmentPlans
-    .filter((plan) => (plan.installments || []).some((installment) => !['paid', 'cancelled'].includes(installment.status)))
-    .sort((a, b) => String(a.startDate || '').localeCompare(String(b.startDate || '')));
+  const activePlans = installmentPlans.filter((plan) => (plan.installments || []).some((installment) => !['paid', 'cancelled'].includes(installment.status))).sort((a, b) => String(a.startDate || '').localeCompare(String(b.startDate || '')));
 
   installmentPlansCard.hidden = activePlans.length === 0;
   installmentPlansList.innerHTML = '';
@@ -6184,26 +6336,21 @@ function renderInstallmentPlans() {
     const paid = installments.filter((installment) => installment.status === 'paid');
     const paidAmount = paid.reduce((total, installment) => total + Math.abs(Number(installment.paidAmount ?? installment.amount) || 0), 0);
     const totalAmount = Math.abs(Number(plan.totalAmount) || installments.reduce((total, installment) => total + Math.abs(Number(installment.amount) || 0), 0));
-    const progress = plan.mode === 'rent_to_own' && totalAmount > 0
-      ? Math.min(100, (paidAmount / totalAmount) * 100)
-      : installments.length
-        ? Math.min(100, (paid.length / installments.length) * 100)
-        : 0;
+    const progress = plan.mode === 'rent_to_own' && totalAmount > 0 ? Math.min(100, (paidAmount / totalAmount) * 100) : installments.length ? Math.min(100, (paid.length / installments.length) * 100) : 0;
     const canFullyEdit = canFullyEditInstallmentPlan(plan);
     const modeLabel = plan.mode === 'repeat' ? 'Repetição' : plan.mode === 'rent_to_own' ? 'Aluguel → compra' : 'Parcelamento';
     const interestLabel = plan.hasInterest
       ? `${plan.interestType === 'mortgage' ? 'Hipoteca' : 'Financiamento'} • ${Number(plan.annualInterestRate).toLocaleString('pt-BR')}% a.a.${plan.paymentFrequency === 'biweekly' ? ' • Bisemanal → mensal' : ''}`
       : '';
-    const rentalLabel = plan.mode === 'rent_to_own'
-      ? ` • ${plan.rentalMonths} ${Number(plan.rentalMonths) === 1 ? 'mês' : 'meses'} de aluguel${plan.buyAtEnd ? ' • compra automática pelo saldo' : ''}${plan.paymentFrequency === 'biweekly' ? ' • Bisemanal → mensal' : ''}`
-      : '';
+    const rentalLabel =
+      plan.mode === 'rent_to_own'
+        ? ` • ${plan.rentalMonths} ${Number(plan.rentalMonths) === 1 ? 'mês' : 'meses'} de aluguel${plan.buyAtEnd ? ' • compra automática pelo saldo' : ''}${plan.paymentFrequency === 'biweekly' ? ' • Bisemanal → mensal' : ''}`
+        : '';
     const paidRentals = paid.filter((installment) => installment.type === 'rental');
     const futureRentals = installments.filter((installment) => installment.type === 'rental' && !['paid', 'cancelled'].includes(installment.status));
     const rentalCreditPaid = paidRentals.reduce((total, installment) => total + Math.abs(Number(installment.paidAmount ?? installment.amount) || 0), 0);
     const remainingBuyout = Math.max(0, Math.round((Math.abs(Number(plan.assetPrice || plan.principalAmount) || 0) - rentalCreditPaid) * 100) / 100);
-    const countLabel = plan.mode === 'rent_to_own'
-      ? `${paidRentals.length} de ${plan.rentalMonths} aluguéis pagos${plan.buyAtEnd ? ` • saldo ${formatCurrency(remainingBuyout)}` : ''}`
-      : `${paid.length} de ${installments.length} pagas`;
+    const countLabel = plan.mode === 'rent_to_own' ? `${paidRentals.length} de ${plan.rentalMonths} aluguéis pagos${plan.buyAtEnd ? ` • saldo ${formatCurrency(remainingBuyout)}` : ''}` : `${paid.length} de ${installments.length} pagas`;
     const details = document.createElement('details');
     details.className = 'installment-plan';
     details.innerHTML = `
@@ -6301,7 +6448,9 @@ window.adjustFutureInstallments = async function (planId, event) {
   if (!plan || future.length === 0) return showToast('Não há parcelas futuras para ajustar.', 'info');
 
   const currentSourceValue = plan.mode === 'rent_to_own' && plan.paymentFrequency === 'biweekly' ? plan.rentalAmount : future[0].amount;
-  const currentValue = Math.abs(Number(currentSourceValue) || 0).toFixed(2).replace('.', ',');
+  const currentValue = Math.abs(Number(currentSourceValue) || 0)
+    .toFixed(2)
+    .replace('.', ',');
   const answer = await showPrompt(
     plan.mode === 'rent_to_own'
       ? `Novo valor para os ${future.length} aluguéis futuros de "${plan.name}"?\n\nO saldo final para compra será recalculado. Os aluguéis já pagos não serão alterados.`
@@ -6320,10 +6469,7 @@ window.adjustFutureInstallments = async function (planId, event) {
     const paidRentalCredit = (plan.installments || [])
       .filter((installment) => installment.type === 'rental' && installment.status === 'paid')
       .reduce((total, installment) => total + Math.abs(Number(installment.paidAmount ?? installment.amount) || 0), 0);
-    const projectedCredit = Math.min(
-      Math.abs(Number(plan.assetPrice || plan.principalAmount) || 0),
-      Math.round((paidRentalCredit + monthlyRental * future.length) * 100) / 100,
-    );
+    const projectedCredit = Math.min(Math.abs(Number(plan.assetPrice || plan.principalAmount) || 0), Math.round((paidRentalCredit + monthlyRental * future.length) * 100) / 100);
     const buyoutAmount = Math.max(0, Math.round((Math.abs(Number(plan.assetPrice || plan.principalAmount) || 0) - projectedCredit) * 100) / 100);
     const updatedInstallments = plan.installments.map((installment) => {
       if (futureRentalNumbers.has(installment.number)) return { ...installment, amount: signedRental };
@@ -6411,9 +6557,7 @@ window.cancelFutureInstallments = async function (planId, event) {
   await FinanceAPI.saveInstallmentPlan({
     ...plan,
     status: 'cancelled',
-    installments: plan.installments.map((installment) =>
-      futureNumbers.has(installment.number) ? { ...installment, status: 'cancelled', annualEventId: null } : installment,
-    ),
+    installments: plan.installments.map((installment) => (futureNumbers.has(installment.number) ? { ...installment, status: 'cancelled', annualEventId: null } : installment)),
     cancelledAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   });
@@ -6469,9 +6613,7 @@ if (formAnnual) {
           return showToast('Informe o valor mensal do aluguel.', 'error');
         }
 
-        const paymentCalculation = mode === 'purchase' && (hasInterest || paymentFrequency === 'biweekly')
-          ? calculateInstallmentScheduleWithInterest(rawAmount, annualRate, count, interestType, paymentFrequency)
-          : null;
+        const paymentCalculation = mode === 'purchase' && (hasInterest || paymentFrequency === 'biweekly') ? calculateInstallmentScheduleWithInterest(rawAmount, annualRate, count, interestType, paymentFrequency) : null;
         const rentCalculation = isRentToOwn
           ? buildRentToOwnSchedule({
               assetPrice: rawAmount,
@@ -6484,16 +6626,16 @@ if (formAnnual) {
             })
           : null;
         const repeatedMonthlyAmount = mode === 'repeat' && paymentFrequency === 'biweekly' ? convertBiweeklyToMonthly(rawAmount) : Math.abs(rawAmount);
-        const absoluteAmounts = mode === 'purchase'
-          ? paymentCalculation?.amounts || distributeCurrencyAmount(rawAmount, count)
-          : Array.from({ length: count }, () => repeatedMonthlyAmount);
+        const absoluteAmounts = mode === 'purchase' ? paymentCalculation?.amounts || distributeCurrencyAmount(rawAmount, count) : Array.from({ length: count }, () => repeatedMonthlyAmount);
         const signedAmounts = absoluteAmounts.map((value) => (isIncome ? -value : value));
-        const schedule = rentCalculation?.schedule || signedAmounts.map((installmentAmount, index) => ({
-          number: index + 1,
-          amount: installmentAmount,
-          targetDate: addMonthsToAnnualDate(dateVal, index * interval),
-          status: 'pending',
-        }));
+        const schedule =
+          rentCalculation?.schedule ||
+          signedAmounts.map((installmentAmount, index) => ({
+            number: index + 1,
+            amount: installmentAmount,
+            targetDate: addMonthsToAnnualDate(dateVal, index * interval),
+            status: 'pending',
+          }));
         const scheduleCount = schedule.length;
         const existingPlan = editingInstallmentPlanId ? getInstallmentPlan(editingInstallmentPlanId) : null;
         if (editingInstallmentPlanId && !existingPlan) return showToast('Não foi possível localizar o parcelamento em edição.', 'error');
@@ -6994,65 +7136,62 @@ function renderAnnualList() {
   const currentMonthIdx = currentViewMonthStr ? parseInt(currentViewMonthStr.split('-')[1]) - 1 : -1;
 
   // 3. Renderiza os blocos divididos por mês
-  Array.from({ length: 12 }, (_, index) => String(index))
-    .forEach((monthIdx) => {
-      const isCurrentMonth = parseInt(monthIdx) === currentMonthIdx;
-      const monthItems = groupedByMonth[monthIdx] || [];
-      const isEmptyMonth = monthItems.length === 0;
+  Array.from({ length: 12 }, (_, index) => String(index)).forEach((monthIdx) => {
+    const isCurrentMonth = parseInt(monthIdx) === currentMonthIdx;
+    const monthItems = groupedByMonth[monthIdx] || [];
+    const isEmptyMonth = monthItems.length === 0;
 
-      // Cria o cabeçalho do mês
-      const header = document.createElement('div');
-      header.className = `group-header-div annual-month-drop-zone${isEmptyMonth ? ' annual-empty-month-drop-zone' : ''}`;
-      header.dataset.annualDropMonth = String(parseInt(monthIdx, 10) + 1).padStart(2, '0');
-      header.style.cursor = 'default';
-      header.style.borderLeft = isCurrentMonth ? '4px solid #62c462' : '4px solid #f7c84a';
-      if (isCurrentMonth) header.style.background = 'linear-gradient(90deg, rgba(98, 196, 98, 0.15) 0%, #1a1a2e 100%)';
+    // Cria o cabeçalho do mês
+    const header = document.createElement('div');
+    header.className = `group-header-div annual-month-drop-zone${isEmptyMonth ? ' annual-empty-month-drop-zone' : ''}`;
+    header.dataset.annualDropMonth = String(parseInt(monthIdx, 10) + 1).padStart(2, '0');
+    header.style.cursor = 'default';
+    header.style.borderLeft = isCurrentMonth ? '4px solid #62c462' : '4px solid #f7c84a';
+    if (isCurrentMonth) header.style.background = 'linear-gradient(90deg, rgba(98, 196, 98, 0.15) 0%, #1a1a2e 100%)';
 
-      const badgeHtml = isCurrentMonth
-        ? ' <span style="background: rgba(98, 196, 98, 0.15); color: #62c462; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(98, 196, 98, 0.3); margin-left: 8px; vertical-align: middle;">Mês Atual</span>'
+    const badgeHtml = isCurrentMonth
+      ? ' <span style="background: rgba(98, 196, 98, 0.15); color: #62c462; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(98, 196, 98, 0.3); margin-left: 8px; vertical-align: middle;">Mês Atual</span>'
+      : '';
+
+    header.innerHTML = `<span style="color: #f5f5f5; font-size: 1rem; font-weight: 700;">📅 ${annualMonthNames[monthIdx]}${badgeHtml}</span>`;
+    annualItemsList.appendChild(header);
+
+    // Meses vazios aparecem somente durante o arraste, no lugar cronológico correto.
+    if (isEmptyMonth) return;
+
+    // Cria um container para dar um leve recuo (identação) nos itens daquele mês
+    const itemsContainer = document.createElement('div');
+    itemsContainer.className = 'annual-month-items-drop-zone';
+    itemsContainer.dataset.annualDropMonth = header.dataset.annualDropMonth;
+    itemsContainer.style.borderLeft = '2px solid #27273a';
+    itemsContainer.style.marginLeft = '8px';
+    itemsContainer.style.paddingLeft = '8px';
+    itemsContainer.style.display = 'flex';
+    itemsContainer.style.flexDirection = 'column';
+    itemsContainer.style.gap = '6px';
+    itemsContainer.style.marginBottom = '12px';
+
+    // Adiciona os itens dentro do mês
+    monthItems.forEach((item) => {
+      const el = document.createElement('div');
+      el.className = 'receipt-item annual-event-item';
+
+      const diaText = item.dayTarget ? `Dia ${item.dayTarget}` : 'Dia 01';
+      const payStr = ` • ${getPaymentName(item.paymentMethodId)}`;
+      const obsHtml = item.observation ? `<div style="font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">↳ ${item.observation}</div>` : '';
+      const oneOffBadge = item.isOneOff
+        ? ' <span style="background: rgba(255, 123, 123, 0.15); color: #ff7b7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(255, 123, 123, 0.3); margin-left: 6px; vertical-align: middle;">Único</span>'
         : '';
+      const installmentBadge = item.installmentPlanId ? ` <span class="annual-plan-badge">${item.installmentMode === 'repeat' ? 'Repetição' : 'Parcela'}</span>` : '';
+      const biweeklyBadge = renderBiweeklyConversionBadge(item);
+      const targetYearBadge = item.targetYear ? ` <span class="annual-plan-badge">${item.targetYear}</span>` : '';
 
-      header.innerHTML = `<span style="color: #f5f5f5; font-size: 1rem; font-weight: 700;">📅 ${annualMonthNames[monthIdx]}${badgeHtml}</span>`;
-      annualItemsList.appendChild(header);
+      const isIncome = item.amount < 0 || item.isIncome;
+      const amountColor = isIncome ? '#62c462' : '#ff7b7b';
+      const displayAmount = isIncome ? `+ ${formatCurrency(Math.abs(item.amount))}` : `- ${formatCurrency(Math.abs(item.amount))}`;
+      const incomeBadge = isIncome ? ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold; margin-left: 4px;">(Entrada)</span>' : '';
 
-      // Meses vazios aparecem somente durante o arraste, no lugar cronológico correto.
-      if (isEmptyMonth) return;
-
-      // Cria um container para dar um leve recuo (identação) nos itens daquele mês
-      const itemsContainer = document.createElement('div');
-      itemsContainer.className = 'annual-month-items-drop-zone';
-      itemsContainer.dataset.annualDropMonth = header.dataset.annualDropMonth;
-      itemsContainer.style.borderLeft = '2px solid #27273a';
-      itemsContainer.style.marginLeft = '8px';
-      itemsContainer.style.paddingLeft = '8px';
-      itemsContainer.style.display = 'flex';
-      itemsContainer.style.flexDirection = 'column';
-      itemsContainer.style.gap = '6px';
-      itemsContainer.style.marginBottom = '12px';
-
-      // Adiciona os itens dentro do mês
-      monthItems.forEach((item) => {
-        const el = document.createElement('div');
-        el.className = 'receipt-item annual-event-item';
-
-        const diaText = item.dayTarget ? `Dia ${item.dayTarget}` : 'Dia 01';
-        const payStr = ` • ${getPaymentName(item.paymentMethodId)}`;
-        const obsHtml = item.observation ? `<div style="font-size: 0.75rem; color: #a6a6c0; margin-top: 2px;">↳ ${item.observation}</div>` : '';
-        const oneOffBadge = item.isOneOff
-          ? ' <span style="background: rgba(255, 123, 123, 0.15); color: #ff7b7b; padding: 2px 6px; border-radius: 6px; font-size: 0.65rem; border: 1px solid rgba(255, 123, 123, 0.3); margin-left: 6px; vertical-align: middle;">Único</span>'
-          : '';
-        const installmentBadge = item.installmentPlanId
-          ? ` <span class="annual-plan-badge">${item.installmentMode === 'repeat' ? 'Repetição' : 'Parcela'}</span>`
-          : '';
-        const biweeklyBadge = renderBiweeklyConversionBadge(item);
-        const targetYearBadge = item.targetYear ? ` <span class="annual-plan-badge">${item.targetYear}</span>` : '';
-
-        const isIncome = item.amount < 0 || item.isIncome;
-        const amountColor = isIncome ? '#62c462' : '#ff7b7b';
-        const displayAmount = isIncome ? `+ ${formatCurrency(Math.abs(item.amount))}` : `- ${formatCurrency(Math.abs(item.amount))}`;
-        const incomeBadge = isIncome ? ' <span style="color:#62c462; font-size:0.7rem; font-weight:bold; margin-left: 4px;">(Entrada)</span>' : '';
-
-        el.innerHTML = `
+      el.innerHTML = `
         <button type="button" class="annual-drag-handle" aria-label="Mover ${item.name}" title="Pressione e arraste para outro mês">⠿</button>
         <div class="receipt-main">
           <div class="receipt-line">${item.name}${oneOffBadge}${installmentBadge}${biweeklyBadge}${targetYearBadge}${incomeBadge} <span style="color:#fddf7b; font-size: 0.75rem; margin-left: 4px;">[${diaText}]</span></div>
@@ -7067,13 +7206,13 @@ function renderAnnualList() {
           </div>
         </div>
       `;
-        const dragHandle = el.querySelector('.annual-drag-handle');
-        if (dragHandle) enableAnnualItemDrag(dragHandle, item, el);
-        itemsContainer.appendChild(el);
-      });
-
-      annualItemsList.appendChild(itemsContainer);
+      const dragHandle = el.querySelector('.annual-drag-handle');
+      if (dragHandle) enableAnnualItemDrag(dragHandle, item, el);
+      itemsContainer.appendChild(el);
     });
+
+    annualItemsList.appendChild(itemsContainer);
+  });
 }
 
 // === Sistema de Alerta na Aba de Orçamento ===

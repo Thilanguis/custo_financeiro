@@ -2440,6 +2440,68 @@ button:focus-visible,
   font-size: 0.7rem;
 }
 
+.credit-card-limit-reference-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.credit-card-limit-lock,
+.credit-card-limit-reference-actions .credit-card-use-suggested {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 3px 9px;
+  border: 1px solid rgba(247, 200, 74, 0.25);
+  border-radius: 999px;
+  background: rgba(247, 200, 74, 0.07);
+  color: #fddf7b;
+  font-family: inherit;
+  font-size: 0.58rem;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease, opacity 0.15s ease;
+}
+
+.credit-card-limit-lock {
+  min-width: 30px;
+  padding: 3px 8px;
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
+.credit-card-limit-lock:hover,
+.credit-card-limit-lock:focus-visible,
+.credit-card-limit-reference-actions .credit-card-use-suggested:hover,
+.credit-card-limit-reference-actions .credit-card-use-suggested:focus-visible {
+  border-color: rgba(247, 200, 74, 0.62);
+  background: rgba(247, 200, 74, 0.15);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.credit-card-limit-reference.is-locked .credit-card-limit-reference-track {
+  opacity: 0.58;
+}
+
+.credit-card-limit-reference.is-locked .credit-card-control-slider {
+  cursor: not-allowed;
+}
+
+.credit-card-limit-reference.is-locked .credit-card-limit-lock {
+  border-color: rgba(247, 200, 74, 0.7);
+  background: rgba(247, 200, 74, 0.18);
+}
+
+.credit-card-limit-reference-actions .credit-card-use-suggested:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .credit-card-limit-reference-head small {
   color: #9292ac;
   font-size: 0.56rem;
@@ -4792,6 +4854,27 @@ body.annual-drag-active .annual-empty-month-drop-zone {
 }
 
 .simple-card-entry.is-credit > b { color: #76db76; }
+
+.simple-card-entry.is-linked-reimbursement {
+  position: relative;
+  width: calc(100% - 18px);
+  margin-left: 18px;
+  border-left: 2px solid rgba(121, 182, 255, 0.48);
+  border-top-left-radius: 0;
+  background: linear-gradient(90deg, rgba(74, 144, 226, 0.1), rgba(98, 196, 98, 0.045) 48%);
+}
+
+.simple-card-entry.is-linked-reimbursement::before {
+  content: '';
+  position: absolute;
+  top: -8px;
+  left: -14px;
+  width: 12px;
+  height: 24px;
+  border-bottom: 2px solid rgba(121, 182, 255, 0.48);
+  border-left: 2px solid rgba(121, 182, 255, 0.48);
+  border-bottom-left-radius: 9px;
+}
 .simple-card-entry-copy { display: grid; gap: 2px; min-width: 0; }
 .simple-card-entry-copy > strong { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
 .simple-card-entry-copy small { color: #aaaac4; }

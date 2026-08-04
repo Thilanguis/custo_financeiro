@@ -138,3 +138,38 @@ test('24. interface mostra o restante como Fatura a pagar', () => {
   assert.doesNotMatch(appSource, /Fatura a pagar<\/small><b>\$\{formatCurrency\(overview\.closed\.amount\)\}/);
 });
 
+test('25. compras em formação reduzem o disponível mesmo com crédito reservado', () => {
+  const overview = cards.getCardOverview(null, [{ amount: 680.76 }], 13000, -1967.44);
+  assert.equal(overview.currentBalance, 680.76);
+  assert.equal(overview.creditBalance, 1967.44);
+  assert.equal(overview.usedBalance, 680.76);
+  assert.equal(overview.availableLimit, 12319.24);
+});
+
+test('26. interface mostra reembolso do cartão como entrada positiva', () => {
+  const appSource = fs.readFileSync(path.join(__dirname, '../docs/app.js'), 'utf8');
+  assert.match(appSource, /const displayedAmount = isCredit \? `\+ \$\{formatCurrency\(Math\.abs\(Number\(receipt\.amount\) \|\| 0\)\)\}`/);
+  assert.match(appSource, /<b>\$\{displayedAmount\}<\/b>/);
+});
+
+test('27. reembolso vinculado no cartão usa o mesmo estilo encadeado do Histórico', () => {
+  const appSource = fs.readFileSync(path.join(__dirname, '../docs/app.js'), 'utf8');
+  const styleSource = fs.readFileSync(path.join(__dirname, '../docs/style.css'), 'utf8');
+  assert.match(appSource, /orderSimpleCardEntries/);
+  assert.match(appSource, /is-linked-reimbursement/);
+  assert.match(appSource, /reimbursement-item-arrow/);
+  assert.match(appSource, /reimbursement-item-label/);
+  assert.match(styleSource, /\.simple-card-entry\.is-linked-reimbursement/);
+  assert.match(styleSource, /border-left: 2px solid rgba\(121, 182, 255, 0\.48\)/);
+});
+
+
+
+test('28. interface mantém somente resumo e controle do limite mensal', () => {
+  const appSource = fs.readFileSync(path.join(__dirname, '../docs/app.js'), 'utf8');
+  assert.doesNotMatch(appSource, /Saldo atual do cartão:/);
+  assert.doesNotMatch(appSource, /Crédito reservado para a próxima fatura/);
+  assert.doesNotMatch(appSource, /cardBalanceCopy|reservedCreditCopy/);
+  assert.doesNotMatch(appSource, /Controle pessoal; não altera o Livre\./);
+  assert.match(appSource, /Limite mensal de segurança: <b class="credit-card-control-value">/);
+});

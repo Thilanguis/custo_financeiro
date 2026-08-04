@@ -4513,6 +4513,35 @@ function updateHistoricalChart() {
 // ===== Dashboard de Cartões de Crédito =====
 const openCreditCardDetails = new Set();
 const creditCardFilters = new Map();
+const CREDIT_CARD_LIMIT_LOCKS_KEY = 'credit-card-limit-locks';
+let creditCardLimitLocks = loadCreditCardLimitLocks();
+
+function loadCreditCardLimitLocks() {
+  try {
+    const raw = localStorage.getItem(CREDIT_CARD_LIMIT_LOCKS_KEY);
+    return raw ? JSON.parse(raw) || {} : {};
+  } catch (error) {
+    console.warn('Não foi possível carregar os cadeados dos limites dos cartões.', error);
+    return {};
+  }
+}
+
+function persistCreditCardLimitLocks() {
+  try {
+    localStorage.setItem(CREDIT_CARD_LIMIT_LOCKS_KEY, JSON.stringify(creditCardLimitLocks));
+  } catch (error) {
+    console.warn('Não foi possível salvar os cadeados dos limites dos cartões.', error);
+  }
+}
+
+function isCreditCardLimitLocked(cardId) {
+  return Boolean(creditCardLimitLocks?.[cardId]);
+}
+
+function setCreditCardLimitLocked(cardId, locked) {
+  creditCardLimitLocks = { ...creditCardLimitLocks, [cardId]: Boolean(locked) };
+  persistCreditCardLimitLocks();
+}
 
 function getCreditCardFilter(cardId) {
   if (!creditCardFilters.has(cardId)) {
@@ -5164,16 +5193,47 @@ function getCardStatementStatusLabel(statement) {
   return ({ paid: 'Paga', partial: 'Paga parcialmente', credit: 'Crédito', closed: 'Fechada', open: 'Em aberto' })[status] || 'Em aberto';
 }
 
-function renderSimpleCardEntry(receipt, { showTimingStatus = false } = {}) {
-  const isCredit = Number(receipt.amount) < 0 || receipt.isReimbursement;
+function orderSimpleCardEntries(entries, sourcePool = entries) {
+  const orderedEntries = [];
+  const attachedReimbursementIds = new Set();
+
+  (entries || [])
+    .filter((entry) => !entry.isReimbursement)
+    .forEach((entry) => {
+      orderedEntries.push(entry);
+      (entries || [])
+        .filter((candidate) => candidate.isReimbursement && findReimbursementSource(candidate, sourcePool)?.id === entry.id)
+        .forEach((reimbursement) => {
+          orderedEntries.push(reimbursement);
+          attachedReimbursementIds.add(reimbursement.id);
+        });
+    });
+
+  (entries || [])
+    .filter((entry) => entry.isReimbursement && !attachedReimbursementIds.has(entry.id))
+    .forEach((reimbursement) => orderedEntries.push(reimbursement));
+
+  return orderedEntries;
+}
+
+function renderSimpleCardEntry(receipt, { showTimingStatus = false, sourcePool = [] } = {}) {
+  const isReimbursement = Boolean(receipt.isReimbursement);
+  const isCredit = Number(receipt.amount) < 0 || isReimbursement;
+  const reimbursementSource = isReimbursement ? findReimbursementSource(receipt, sourcePool) : null;
+  const isLinkedReimbursement = Boolean(reimbursementSource);
   const processed = receipt.postedDate && receipt.postedDate !== receipt.date ? `<span>Processada em ${receipt.postedDate.split('-').reverse().join('/')}</span>` : '';
   const isPendingEntry = showTimingStatus && String(receipt.date || '') > getTodayISO();
   const timingBadge = showTimingStatus
     ? `<span class="credit-card-entry-timing ${isPendingEntry ? 'is-pending' : 'is-posted'}">${isPendingEntry ? 'A lançar' : 'Já lançado'}</span>`
     : '';
-  return `<div class="simple-card-entry ${isCredit ? 'is-credit' : ''} ${isPendingEntry ? 'is-pending-entry' : 'is-posted-entry'}">
-    <div class="simple-card-entry-copy"><strong>${escapeCardDetail(receipt.merchant)} <span class="credit-card-entry-badge">${isCredit ? 'Crédito / Reembolso' : 'Compra'}</span>${timingBadge}</strong><small>${String(receipt.date || '').split('-').reverse().join('/')} · ${escapeCardDetail(receipt.category)} ${processed}</small>${receipt.observation ? `<small>↳ ${escapeCardDetail(receipt.observation)}</small>` : ''}</div>
-    <b>${formatCurrency(receipt.amount)}</b>
+  const displayedAmount = isCredit ? `+ ${formatCurrency(Math.abs(Number(receipt.amount) || 0))}` : formatCurrency(receipt.amount);
+  const entryTitle = isReimbursement
+    ? `<span class="reimbursement-item-arrow" aria-hidden="true">↳</span><span class="reimbursement-item-label">Reembolso</span>${escapeCardDetail(receipt.merchant)}`
+    : `${escapeCardDetail(receipt.merchant)} <span class="credit-card-entry-badge">${isCredit ? 'Crédito' : 'Compra'}</span>`;
+
+  return `<div class="simple-card-entry ${isCredit ? 'is-credit' : ''} ${isLinkedReimbursement ? 'is-linked-reimbursement' : ''} ${isPendingEntry ? 'is-pending-entry' : 'is-posted-entry'}">
+    <div class="simple-card-entry-copy"><strong>${entryTitle}${timingBadge}</strong><small>${String(receipt.date || '').split('-').reverse().join('/')} · ${escapeCardDetail(receipt.category)} ${processed}</small>${receipt.observation ? `<small>↳ ${escapeCardDetail(receipt.observation)}</small>` : ''}</div>
+    <b>${displayedAmount}</b>
   </div>`;
 }
 
@@ -5208,11 +5268,12 @@ function updateCreditCardsDashboard() {
     const isExpanded = openCreditCardDetails.has(card.id);
     const safetyBase = getSuggestedCreditCardLimit(card, referenceMonth).value;
     const safetyLimit = Math.max(0, Number(card.controlLimit) || safetyBase || Number(card.monthlyLimit) || 0);
-    const usagePercent = safetyLimit > 0 ? (Math.max(0, overview.openAmount) / safetyLimit) * 100 : 0;
     const realLimit = Math.max(0, Number(card.monthlyLimit) || 0);
     const sliderMax = Math.max(realLimit, safetyLimit, safetyBase, 1);
     const safetyPosition = Math.min(100, (safetyLimit / sliderMax) * 100);
     const safetyBasePosition = Math.min(100, (safetyBase / sliderMax) * 100);
+    const limitLocked = isCreditCardLimitLocked(card.id);
+    const suggestedLimitLabel = 'Base recorrente';
     const payments = payableStatement?.payments || [];
     const adjustments = payableStatement?.adjustments || [];
     const reconciliation = CardStatements.getStatementTotals(payableStatement || closed);
@@ -5220,10 +5281,9 @@ function updateCreditCardsDashboard() {
     const adjustmentRows = adjustments.map((adjustment) => `<div class="simple-card-control-row"><span>${adjustment.date.split('-').reverse().join('/')} · ${escapeCardDetail(adjustment.description)}</span><b>${formatCurrency(adjustment.amount)}</b><button class="action-btn card-adjustment-edit" data-statement-id="${payableStatement.id}" data-item-id="${adjustment.id}">Editar</button><button class="action-btn danger card-adjustment-delete" data-statement-id="${payableStatement.id}" data-item-id="${adjustment.id}">Excluir</button></div>`).join('');
     return `<article class="credit-card-card simple-card-panel ${isExpanded ? 'is-expanded' : ''}">
       <button type="button" class="credit-card-summary simple-card-summary" data-credit-card-id="${card.id}" aria-expanded="${isExpanded}"><span class="toggle-icon">${isExpanded ? '▼' : '▶'}</span><span class="credit-card-brand-icon">💳</span><span class="simple-card-name"><strong>${escapeCardDetail(card.name)}</strong><small>Fecha dia ${card.closing || '?'} · Vence dia ${card.due || '?'}</small></span><span class="simple-card-metrics"><span><small>Em formação</small><b>${formatCurrency(overview.openAmount)}</b></span><span class="is-payable"><small>Fatura a pagar</small><b>${formatCurrency(overview.closed.remaining)}</b></span><span><small>Disponível</small><b>${formatCurrency(overview.availableLimit)}</b></span></span></button>
-      <div class="credit-card-limit-block ${getCreditCardLimitState(usagePercent).className}"><div class="credit-card-limit-copy"><span>Saldo atual do cartão: <strong>${formatCurrency(overview.currentBalance)}</strong></span><span>${Math.round(usagePercent * 10) / 10}% do limite mensal de segurança</span></div><div class="credit-card-limit-track"><span style="width:${Math.min(usagePercent, 100)}%"></span></div><div class="credit-card-limit-meta"><span>Limite real: ${formatCurrency(realLimit)}</span><span>Limite mensal de segurança: ${formatCurrency(safetyLimit)}</span></div></div>
-      <div class="credit-card-limit-reference"><div class="credit-card-limit-reference-head"><strong>Limite mensal de segurança: <b class="credit-card-control-value">${formatCurrency(safetyLimit)}</b></strong><small>Controle pessoal; não altera o Livre.</small></div><div class="credit-card-limit-reference-track" style="--control-limit-position:${safetyPosition}%;--suggested-limit-position:${safetyBasePosition}%"><span class="credit-card-control-limit-fill"></span><input class="credit-card-control-slider" type="range" min="0" max="${sliderMax}" step="0.01" value="${safetyLimit}" data-card-id="${card.id}">${safetyBase ? '<span class="credit-card-recurring-marker"></span>' : ''}</div><div class="credit-card-limit-reference-meta"><span>CAD 0</span>${safetyBase ? `<button type="button" class="credit-card-use-suggested" data-card-id="${card.id}" data-suggested-limit="${safetyBase}">Base recorrente: ${formatCurrency(safetyBase)}</button>` : '<span>Sem base recorrente</span>'}<span>${formatCurrency(sliderMax)}</span></div></div>
-      ${isExpanded ? `<div class="simple-card-details"><section class="simple-card-cycle is-forming"><div class="simple-card-section-toolbar"><div class="simple-card-section-heading is-open"><div><strong>Fatura em formação</strong><small>Vence em ${CardStatements.getCycle(card, openDueMonth).dueDate.split('-').reverse().join('/')} · ${filteredOpenEntries.length} lançamento(s)</small></div><b>${formatCurrency(overview.openAmount)}</b></div><div class="credit-card-filter-actions"><input class="list-search credit-card-search" type="search" value="${escapeCardDetail(cardFilter.search)}" placeholder="Buscar..." data-card-id="${card.id}" aria-label="Buscar nos lançamentos de ${escapeCardDetail(card.name)}"><select class="filter-select credit-card-sort-type" data-card-id="${card.id}" aria-label="Ordenar lançamentos"><option value="date" ${cardFilter.sortType === 'date' ? 'selected' : ''}>Data</option><option value="amount" ${cardFilter.sortType === 'amount' ? 'selected' : ''}>Valor</option><option value="merchant" ${cardFilter.sortType === 'merchant' ? 'selected' : ''}>Nome</option></select><button type="button" class="action-btn btn-icon-only credit-card-sort-order" data-card-id="${card.id}" title="Inverter ordem">${cardFilter.sortOrder === 'asc' ? '⬆️' : '⬇️'}</button></div></div><div class="simple-card-timing-summary"><span class="is-posted"><i></i><span>Já lançado <small>${launchedOpenEntries.length} item(ns)</small></span><b>${formatCurrency(launchedOpenTotal)}</b></span><span class="is-pending"><i></i><span>A lançar <small>${pendingOpenEntries.length} item(ns)</small></span><b>${formatCurrency(pendingOpenTotal)}</b></span></div><div class="simple-card-entry-list">${filteredOpenEntries.map((entry) => renderSimpleCardEntry(entry, { showTimingStatus: true })).join('') || '<p class="hint">Nenhum lançamento encontrado na fatura em formação.</p>'}</div></section>
-      <section class="simple-card-cycle is-payable"><div class="simple-card-section-heading"><div><strong>Fatura fechada a pagar</strong><small>${closed.dueDate.split('-').reverse().join('/')} · ${getCardStatementStatusLabel(payableStatement)} · Pago ${formatCurrency(overview.closed.paid)} · Restante ${formatCurrency(overview.closed.remaining)}</small></div><b>${formatCurrency(overview.closed.remaining)}</b></div>${storedPayableStatement && payableStatement ? `<details class="simple-card-admin"><summary><span>Gerenciar pagamentos da fatura</span><small>${payments.length ? `${payments.length} pagamento(s) registrado(s)` : 'Informar ou corrigir pagamento'}</small></summary><div class="simple-card-controls"><h4>Pagamentos da fatura</h4>${overview.closed.credit > 0 ? `<p class="simple-card-credit-notice">Crédito no cartão: <strong>${formatCurrency(overview.closed.credit)}</strong></p>` : ''}${paymentRows || '<p class="hint">Nenhum pagamento registrado.</p>'}<form class="simple-card-payment-form" data-statement-id="${payableStatement.id}"><input type="date" name="date" value="${getTodayISO()}" required><input type="number" step="0.01" min="0.01" name="amount" placeholder="Valor" required><input name="observation" placeholder="Observação"><button class="action-btn" type="submit">Adicionar pagamento</button></form><h4>Conciliação manual</h4><div class="simple-card-reconciliation-summary"><span>Calculado pelas Notas: <b>${formatCurrency(reconciliation.calculated)}</b></span><span>Valor real no banco: <b>${reconciliation.bankAmount === null ? 'Não informado' : formatCurrency(reconciliation.bankAmount)}</b></span><span>Diferença: <b>${reconciliation.difference === null ? '—' : formatCurrency(reconciliation.difference)}</b></span></div><form class="simple-card-reconcile-form" data-statement-id="${payableStatement.id}"><label>Valor real no banco<input type="number" step="0.01" min="0" name="bankAmount" value="${reconciliation.bankAmount ?? ''}" required></label><label>Fechamento real<input type="date" name="actualClosingDate" value="${payableStatement.actualClosingDate || payableStatement.closingDate}" required></label><label>Vencimento real (opcional)<input type="date" name="actualDueDate" value="${payableStatement.actualDueDate || ''}"></label><button class="action-btn" type="submit">Salvar conciliação</button></form><p class="hint">A conciliação ajusta somente a fatura; não modifica as Notas nem o Livre.</p><h4>Ajustes simples</h4>${adjustmentRows}<form class="simple-card-adjustment-form" data-statement-id="${payableStatement.id}"><input type="date" name="date" value="${getTodayISO()}" required><input name="description" placeholder="Descrição" required><input type="number" step="0.01" name="amount" placeholder="Valor + ou -" required><button class="action-btn" type="submit">Adicionar ajuste</button></form></div></details>` : '<p class="simple-card-closing-note">Nenhuma fatura fechada para pagar neste período.</p>'}<div class="simple-card-entry-list">${filteredClosedEntries.map((entry) => renderSimpleCardEntry(entry)).join('') || '<p class="hint">Nenhum lançamento encontrado nesta fatura.</p>'}</div></section></div>` : ''}</article>`;
+      <div class="credit-card-limit-reference ${limitLocked ? 'is-locked' : ''}"><div class="credit-card-limit-reference-head"><strong>Limite mensal de segurança: <b class="credit-card-control-value">${formatCurrency(safetyLimit)}</b></strong><div class="credit-card-limit-reference-actions">${safetyBase ? `<button type="button" class="credit-card-use-suggested" data-card-id="${card.id}" data-suggested-limit="${safetyBase}" ${limitLocked ? 'disabled' : ''}>${suggestedLimitLabel}: ${formatCurrency(safetyBase)}</button>` : ''}<button type="button" class="credit-card-limit-lock ${limitLocked ? 'is-locked' : ''}" data-card-id="${card.id}" aria-pressed="${limitLocked ? 'true' : 'false'}" title="${limitLocked ? 'Desbloquear limite mensal de segurança' : 'Bloquear limite mensal de segurança'}" aria-label="${limitLocked ? 'Desbloquear limite mensal de segurança' : 'Bloquear limite mensal de segurança'}">${limitLocked ? '🔒' : '🔓'}</button></div></div><div class="credit-card-limit-reference-track" style="--control-limit-position:${safetyPosition}%;--suggested-limit-position:${safetyBasePosition}%"><span class="credit-card-control-limit-fill"></span><input class="credit-card-control-slider" type="range" min="0" max="${sliderMax}" step="0.01" value="${safetyLimit}" data-card-id="${card.id}" ${limitLocked ? 'disabled' : ''}>${safetyBase ? '<span class="credit-card-recurring-marker"></span>' : ''}</div><div class="credit-card-limit-reference-meta"><span>CAD 0</span><span>${formatCurrency(sliderMax)}</span></div></div>
+      ${isExpanded ? `<div class="simple-card-details"><section class="simple-card-cycle is-forming"><div class="simple-card-section-toolbar"><div class="simple-card-section-heading is-open"><div><strong>Fatura em formação</strong><small>Vence em ${CardStatements.getCycle(card, openDueMonth).dueDate.split('-').reverse().join('/')} · ${filteredOpenEntries.length} lançamento(s)</small></div><b>${formatCurrency(overview.openAmount)}</b></div><div class="credit-card-filter-actions"><input class="list-search credit-card-search" type="search" value="${escapeCardDetail(cardFilter.search)}" placeholder="Buscar..." data-card-id="${card.id}" aria-label="Buscar nos lançamentos de ${escapeCardDetail(card.name)}"><select class="filter-select credit-card-sort-type" data-card-id="${card.id}" aria-label="Ordenar lançamentos"><option value="date" ${cardFilter.sortType === 'date' ? 'selected' : ''}>Data</option><option value="amount" ${cardFilter.sortType === 'amount' ? 'selected' : ''}>Valor</option><option value="merchant" ${cardFilter.sortType === 'merchant' ? 'selected' : ''}>Nome</option></select><button type="button" class="action-btn btn-icon-only credit-card-sort-order" data-card-id="${card.id}" title="Inverter ordem">${cardFilter.sortOrder === 'asc' ? '⬆️' : '⬇️'}</button></div></div><div class="simple-card-timing-summary"><span class="is-posted"><i></i><span>Já lançado <small>${launchedOpenEntries.length} item(ns)</small></span><b>${formatCurrency(launchedOpenTotal)}</b></span><span class="is-pending"><i></i><span>A lançar <small>${pendingOpenEntries.length} item(ns)</small></span><b>${formatCurrency(pendingOpenTotal)}</b></span></div><div class="simple-card-entry-list">${orderSimpleCardEntries(filteredOpenEntries, openEntries).map((entry) => renderSimpleCardEntry(entry, { showTimingStatus: true, sourcePool: openEntries })).join('') || '<p class="hint">Nenhum lançamento encontrado na fatura em formação.</p>'}</div></section>
+      <section class="simple-card-cycle is-payable"><div class="simple-card-section-heading"><div><strong>Fatura fechada a pagar</strong><small>${closed.dueDate.split('-').reverse().join('/')} · ${getCardStatementStatusLabel(payableStatement)} · Pago ${formatCurrency(overview.closed.paid)} · Restante ${formatCurrency(overview.closed.remaining)}</small></div><b>${formatCurrency(overview.closed.remaining)}</b></div>${storedPayableStatement && payableStatement ? `<details class="simple-card-admin"><summary><span>Gerenciar pagamentos da fatura</span><small>${payments.length ? `${payments.length} pagamento(s) registrado(s)` : 'Informar ou corrigir pagamento'}</small></summary><div class="simple-card-controls"><h4>Pagamentos da fatura</h4>${overview.closed.credit > 0 ? `<p class="simple-card-credit-notice">Crédito no cartão: <strong>${formatCurrency(overview.closed.credit)}</strong></p>` : ''}${paymentRows || '<p class="hint">Nenhum pagamento registrado.</p>'}<form class="simple-card-payment-form" data-statement-id="${payableStatement.id}"><input type="date" name="date" value="${getTodayISO()}" required><input type="number" step="0.01" min="0.01" name="amount" placeholder="Valor" required><input name="observation" placeholder="Observação"><button class="action-btn" type="submit">Adicionar pagamento</button></form><h4>Conciliação manual</h4><div class="simple-card-reconciliation-summary"><span>Calculado pelas Notas: <b>${formatCurrency(reconciliation.calculated)}</b></span><span>Valor real no banco: <b>${reconciliation.bankAmount === null ? 'Não informado' : formatCurrency(reconciliation.bankAmount)}</b></span><span>Diferença: <b>${reconciliation.difference === null ? '—' : formatCurrency(reconciliation.difference)}</b></span></div><form class="simple-card-reconcile-form" data-statement-id="${payableStatement.id}"><label>Valor real no banco<input type="number" step="0.01" min="0" name="bankAmount" value="${reconciliation.bankAmount ?? ''}" required></label><label>Fechamento real<input type="date" name="actualClosingDate" value="${payableStatement.actualClosingDate || payableStatement.closingDate}" required></label><label>Vencimento real (opcional)<input type="date" name="actualDueDate" value="${payableStatement.actualDueDate || ''}"></label><button class="action-btn" type="submit">Salvar conciliação</button></form><p class="hint">A conciliação ajusta somente a fatura; não modifica as Notas nem o Livre.</p><h4>Ajustes simples</h4>${adjustmentRows}<form class="simple-card-adjustment-form" data-statement-id="${payableStatement.id}"><input type="date" name="date" value="${getTodayISO()}" required><input name="description" placeholder="Descrição" required><input type="number" step="0.01" name="amount" placeholder="Valor + ou -" required><button class="action-btn" type="submit">Adicionar ajuste</button></form></div></details>` : '<p class="simple-card-closing-note">Nenhuma fatura fechada para pagar neste período.</p>'}<div class="simple-card-entry-list">${orderSimpleCardEntries(filteredClosedEntries, closedEntries).map((entry) => renderSimpleCardEntry(entry, { sourcePool: closedEntries })).join('') || '<p class="hint">Nenhum lançamento encontrado nesta fatura.</p>'}</div></section></div>` : ''}</article>`;
   }).join('');
 
   container.querySelectorAll('.simple-card-summary').forEach((button) => button.addEventListener('click', () => { const id = button.dataset.creditCardId; if (openCreditCardDetails.has(id)) openCreditCardDetails.delete(id); else openCreditCardDetails.add(id); updateCreditCardsDashboard(); }));
@@ -5231,7 +5291,8 @@ function updateCreditCardsDashboard() {
   container.querySelectorAll('.credit-card-sort-type').forEach((select) => select.addEventListener('change', () => { getCreditCardFilter(select.dataset.cardId).sortType = select.value; updateCreditCardsDashboard(); }));
   container.querySelectorAll('.credit-card-sort-order').forEach((button) => button.addEventListener('click', () => { const filter = getCreditCardFilter(button.dataset.cardId); filter.sortOrder = filter.sortOrder === 'asc' ? 'desc' : 'asc'; updateCreditCardsDashboard(); }));
   container.querySelectorAll('.credit-card-control-slider').forEach((slider) => { const reference = slider.closest('.credit-card-limit-reference'); const label = reference?.querySelector('.credit-card-control-value'); const track = reference?.querySelector('.credit-card-limit-reference-track'); slider.addEventListener('input', () => { if (label) label.textContent = formatCurrency(slider.value); if (track) track.style.setProperty('--control-limit-position', `${Math.min(100, (Number(slider.value) / Math.max(Number(slider.max), 1)) * 100)}%`); }); slider.addEventListener('change', async () => { await FinanceAPI.savePaymentMethods(paymentMethods.map((method) => method.id === slider.dataset.cardId ? { ...method, controlLimit: CardStatements.roundMoney(slider.value) } : method)); showToast('Limite mensal de segurança atualizado.', 'success'); }); });
-  container.querySelectorAll('.credit-card-use-suggested').forEach((button) => button.addEventListener('click', () => { const slider = container.querySelector(`.credit-card-control-slider[data-card-id="${button.dataset.cardId}"]`); if (!slider) return; slider.value = button.dataset.suggestedLimit; slider.dispatchEvent(new Event('input')); slider.dispatchEvent(new Event('change')); }));
+  container.querySelectorAll('.credit-card-use-suggested').forEach((button) => button.addEventListener('click', () => { if (button.disabled) return; const slider = container.querySelector(`.credit-card-control-slider[data-card-id="${button.dataset.cardId}"]`); if (!slider) return; slider.value = button.dataset.suggestedLimit; slider.dispatchEvent(new Event('input')); slider.dispatchEvent(new Event('change')); }));
+  container.querySelectorAll('.credit-card-limit-lock').forEach((button) => button.addEventListener('click', () => { const nextLocked = button.getAttribute('aria-pressed') !== 'true'; setCreditCardLimitLocked(button.dataset.cardId, nextLocked); showToast(nextLocked ? 'Limite mensal de segurança bloqueado.' : 'Limite mensal de segurança desbloqueado.', 'success'); updateCreditCardsDashboard(); }));
   container.querySelectorAll('.simple-card-payment-form').forEach((form) => form.addEventListener('submit', async (event) => { event.preventDefault(); const statement = creditCardStatements.find((item) => item.id === form.dataset.statementId); const amount = Number(form.elements.amount.value); if (!statement || !form.elements.date.value || !(amount > 0)) return showToast('Informe data e valor válidos.', 'error'); const payment = { id: `payment_${Date.now()}`, cardId: statement.cardId, statementId: statement.id, date: form.elements.date.value, amount: CardStatements.roundMoney(amount), observation: form.elements.observation.value.trim() }; await saveStatementMutation(statement, { payments: CardStatements.addOrReplaceById(statement.payments, payment) }); showToast('Pagamento registrado somente na fatura.', 'success'); }));
   container.querySelectorAll('.card-payment-edit').forEach((button) => button.addEventListener('click', async () => {
     const statement = creditCardStatements.find((item) => item.id === button.dataset.statementId);

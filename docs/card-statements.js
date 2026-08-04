@@ -266,12 +266,21 @@
   function getCardOverview(closedStatement, openEntries, realLimit, openingBalance = 0) {
     const closed = getEffectiveStatementTotals(closedStatement || {}, openingBalance);
     const openAmount = sumEntries(openEntries);
-    const currentBalance = roundMoney(closed.remaining + openAmount - closed.credit);
+
+    // O crédito excedente fica reservado para abater a próxima fatura quando ela
+    // fechar. Enquanto isso, todo lançamento em formação continua ocupando o
+    // limite do cartão e precisa reduzir o valor disponível.
+    const currentBalance = roundMoney(Math.max(0, closed.remaining + openAmount));
+    const normalizedRealLimit = Math.max(0, Number(realLimit) || 0);
+    const rawAvailableLimit = roundMoney(normalizedRealLimit - currentBalance);
+    const availableLimit = roundMoney(Math.min(normalizedRealLimit, rawAvailableLimit));
     return {
       closed,
       openAmount,
       currentBalance,
-      availableLimit: roundMoney((Number(realLimit) || 0) - currentBalance),
+      usedBalance: currentBalance,
+      creditBalance: roundMoney(closed.credit),
+      availableLimit,
     };
   }
 

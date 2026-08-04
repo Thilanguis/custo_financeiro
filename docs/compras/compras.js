@@ -14,6 +14,7 @@
     pendingPhoto: '',
     productFormMode: 'create',
     addAfterSave: false,
+    editingOriginalBarcode: '',
     marketMode: false,
     wakeLock: null,
   };
@@ -29,6 +30,11 @@
   const notify = (message, type = 'success') => {
     if (typeof window.showToast === 'function') window.showToast(message, type);
     else console[type === 'error' ? 'error' : 'log'](message);
+  };
+
+  const askConfirmation = async (message) => {
+    if (typeof window.showConfirm === 'function') return window.showConfirm(message, true);
+    return window.confirm(message);
   };
 
   view.innerHTML = `
@@ -112,12 +118,37 @@
               </div>
             </div>
             <div class="shopping-product-main-fields">
-              <label>Código de barras<input id="shopping-product-barcode" inputmode="numeric" autocomplete="off" /></label>
-              <label>Nome do produto<input id="shopping-product-name" required autocomplete="off" placeholder="Ex: Leite 2% 2 L" /></label>
+              <label>Código de barras<input id="shopping-product-barcode" inputmode="numeric" autocomplete="off" maxlength="14" aria-describedby="shopping-barcode-help" /><small id="shopping-barcode-help" class="shopping-barcode-help">8, 12, 13 ou 14 dígitos. O sistema confere o dígito verificador.</small></label>
+              <label>Nome do produto<input id="shopping-product-name" required autocomplete="off"/></label>
             </div>
           </div>
           <div class="field-row shopping-product-fields">
-            <label class="field">Categoria<input id="shopping-product-category" placeholder="Bebidas, limpeza..." /></label>
+            <label class="field">Categoria
+              <input id="shopping-product-category" list="shopping-product-category-options" autocomplete="off" />
+              <datalist id="shopping-product-category-options">
+                <option value="Bebidas"></option>
+                <option value="Molhos e condimentos"></option>
+                <option value="Temperos e especiarias"></option>
+                <option value="Frutas, verduras e legumes"></option>
+                <option value="Carnes e aves"></option>
+                <option value="Peixes e frutos do mar"></option>
+                <option value="Frios e laticínios"></option>
+                <option value="Padaria e confeitaria"></option>
+                <option value="Grãos, massas e cereais"></option>
+                <option value="Enlatados e conservas"></option>
+                <option value="Congelados"></option>
+                <option value="Café, chá e achocolatados"></option>
+                <option value="Lanches e snacks"></option>
+                <option value="Biscoitos e salgadinhos"></option>
+                <option value="Doces e sobremesas"></option>
+                <option value="Produtos naturais e dietéticos"></option>
+                <option value="Higiene pessoal"></option>
+                <option value="Limpeza da casa"></option>
+                <option value="Utilidades domésticas"></option>
+                <option value="Bebê"></option>
+                <option value="Pet shop"></option>
+              </datalist>
+            </label>
             <label class="field">Unidade<select id="shopping-product-unit"><option value="unidade">Unidade</option><option value="pacote">Pacote</option><option value="caixa">Caixa</option><option value="garrafa">Garrafa</option><option value="kg">Kg</option></select></label>
             <label class="field">Quantidade padrão<input type="number" id="shopping-product-default-quantity" min="1" step="1" value="1" /></label>
           </div>
@@ -233,36 +264,156 @@
     return `<span class="shopping-product-fallback ${className}" aria-hidden="true">📦</span>`;
   }
 
+  function getUnitLabel(unit) {
+    const labels = {
+      unidade: 'Unidade',
+      pacote: 'Pacote',
+      caixa: 'Caixa',
+      garrafa: 'Garrafa',
+      kg: 'Kg',
+    };
+
+    return labels[String(unit || '').toLowerCase()] || String(unit || 'Unidade');
+  }
+
+  function getCategoryLabel(product) {
+    return String(product?.category || '').trim() || 'Sem categoria';
+  }
+
+  function groupByCategory(entries, getEntryProduct) {
+    const groups = new Map();
+
+    entries.forEach((entry) => {
+      const product = getEntryProduct(entry) || {};
+      const category = getCategoryLabel(product);
+
+      if (!groups.has(category)) {
+        groups.set(category, []);
+      }
+
+      groups.get(category).push(entry);
+    });
+
+    return [...groups.entries()]
+      .sort(([categoryA], [categoryB]) =>
+        categoryA.localeCompare(categoryB, 'pt-BR', {
+          sensitivity: 'base',
+        }),
+      )
+      .map(([category, categoryEntries]) => ({
+        category,
+
+        entries: categoryEntries.sort((entryA, entryB) => {
+          const productA = getEntryProduct(entryA) || {};
+          const productB = getEntryProduct(entryB) || {};
+
+          return String(productA.name || '').localeCompare(String(productB.name || ''), 'pt-BR', { sensitivity: 'base' });
+        }),
+      }));
+  }
+
+  function renderCategoryGroup(category, entries, renderEntry, className = '') {
+    return `
+    <section class="shopping-category-group ${className}">
+      <div class="shopping-category-title">
+        <strong>${escapeHtml(category)}</strong>
+        <span>${entries.length}</span>
+      </div>
+
+      <div class="shopping-category-items">
+        ${entries.map(renderEntry).join('')}
+      </div>
+    </section>`;
+  }
+
+  function renderShoppingItem(item) {
+    const product = getProduct(item.barcode) || {
+      name: 'Produto não cadastrado',
+      category: '',
+      unit: 'unidade',
+    };
+
+    return `
+    <article class="shopping-item ${item.checked ? 'is-checked' : ''}" data-barcode="${escapeHtml(item.barcode)}">
+      <button
+        type="button"
+        class="shopping-check"
+        data-action="toggle"
+        aria-label="${item.checked ? 'Desmarcar' : 'Marcar como comprado'}"
+      >${item.checked ? '✓' : ''}</button>
+
+      ${productImage(product, 'shopping-item-photo')}
+
+      <div class="shopping-item-copy">
+        <strong>${escapeHtml(product.name)}</strong>
+
+        <small>
+          ${escapeHtml(product.category || 'Sem categoria')}
+          · ${escapeHtml(getUnitLabel(product.unit))}
+          · ${escapeHtml(item.barcode)}
+        </small>
+
+        <input
+          class="shopping-item-note"
+          data-action="note"
+          value="${escapeHtml(item.note || '')}"
+          placeholder="Observação opcional"
+          aria-label="Observação de ${escapeHtml(product.name)}"
+        />
+      </div>
+
+      <div class="shopping-quantity" aria-label="Quantidade">
+        <button type="button" data-action="decrease">−</button>
+        <b>${Number(item.quantity) || 1}</b>
+        <button type="button" data-action="increase">＋</button>
+      </div>
+
+      <button
+        type="button"
+        class="shopping-item-remove"
+        data-action="remove"
+        title="Remover da lista"
+      >✕</button>
+    </article>`;
+  }
+
+  function renderShoppingGroup(title, items, className = '') {
+    if (!items.length) return '';
+
+    const categoryGroups = groupByCategory(items, (item) => getProduct(item.barcode));
+
+    return `
+    <section class="shopping-list-group ${className}">
+      <div class="shopping-list-group-title">
+        <strong>${title}</strong>
+        <span>${items.length}</span>
+      </div>
+
+      <div class="shopping-list-group-items">
+        ${categoryGroups.map(({ category, entries }) => renderCategoryGroup(category, entries, renderShoppingItem, 'shopping-list-category')).join('')}
+      </div>
+    </section>`;
+  }
+
   function renderList() {
     const query = elements.listSearch.value.trim().toLocaleLowerCase('pt-BR');
     const sorted = [...state.items].sort((a, b) => Number(a.checked) - Number(b.checked) || String(a.barcode).localeCompare(String(b.barcode)));
     const visible = sorted.filter((item) => {
       const product = getProduct(item.barcode) || {};
-      const text = `${product.name || ''} ${product.category || ''} ${item.note || ''} ${item.barcode || ''}`.toLocaleLowerCase('pt-BR');
+      const text = `
+      ${product.name || ''}
+      ${product.category || ''}
+      ${getUnitLabel(product.unit)}
+      ${item.note || ''}
+      ${item.barcode || ''}
+    `.toLocaleLowerCase('pt-BR');
       return !query || text.includes(query);
     });
 
-    elements.list.innerHTML = visible
-      .map((item) => {
-        const product = getProduct(item.barcode) || { name: 'Produto não cadastrado', category: '', unit: 'unidade' };
-        return `
-          <article class="shopping-item ${item.checked ? 'is-checked' : ''}" data-barcode="${escapeHtml(item.barcode)}">
-            <button type="button" class="shopping-check" data-action="toggle" aria-label="${item.checked ? 'Desmarcar' : 'Marcar como comprado'}">${item.checked ? '✓' : ''}</button>
-            ${productImage(product, 'shopping-item-photo')}
-            <div class="shopping-item-copy">
-              <strong>${escapeHtml(product.name)}</strong>
-              <small>${escapeHtml(product.category || 'Sem categoria')} · ${escapeHtml(item.barcode)}</small>
-              <input class="shopping-item-note" data-action="note" value="${escapeHtml(item.note || '')}" placeholder="Observação opcional" aria-label="Observação de ${escapeHtml(product.name)}" />
-            </div>
-            <div class="shopping-quantity" aria-label="Quantidade">
-              <button type="button" data-action="decrease">−</button>
-              <b>${Number(item.quantity) || 1}</b>
-              <button type="button" data-action="increase">＋</button>
-            </div>
-            <button type="button" class="shopping-item-remove" data-action="remove" title="Remover da lista">✕</button>
-          </article>`;
-      })
-      .join('');
+    const pendingItems = visible.filter((item) => !item.checked);
+    const purchasedItems = visible.filter((item) => item.checked);
+
+    elements.list.innerHTML = [renderShoppingGroup('Pendentes', pendingItems, 'is-pending'), renderShoppingGroup('Comprados', purchasedItems, 'is-purchased')].join('');
 
     elements.empty.hidden = state.items.length > 0;
     elements.list.hidden = state.items.length === 0;
@@ -279,25 +430,74 @@
     navButton.classList.toggle('has-items', pending > 0);
   }
 
+  function renderCatalogProduct(product) {
+    return `
+    <article
+      class="shopping-catalog-item"
+      data-barcode="${escapeHtml(product.barcode)}"
+    >
+      ${productImage(product, 'shopping-catalog-photo')}
+
+      <div>
+        <strong>${escapeHtml(product.name)}</strong>
+
+        <small>
+          ${escapeHtml(getUnitLabel(product.unit))}
+          · ${escapeHtml(product.barcode)}
+        </small>
+      </div>
+
+      <div class="shopping-catalog-actions">
+        <button
+          type="button"
+          class="action-btn"
+          data-catalog-action="edit"
+        >
+          Editar
+        </button>
+
+        <button
+          type="button"
+          class="btn-primary"
+          data-catalog-action="add"
+        >
+          Adicionar
+        </button>
+
+        <button
+          type="button"
+          class="action-btn danger shopping-catalog-delete"
+          data-catalog-action="delete"
+        >
+          Excluir
+        </button>
+      </div>
+    </article>`;
+  }
+
   function renderCatalog() {
     const query = elements.catalogSearch.value.trim().toLocaleLowerCase('pt-BR');
+
     const products = [...state.products.values()].filter((product) => {
-      const text = `${product.name} ${product.category} ${product.barcode}`.toLocaleLowerCase('pt-BR');
+      const text = `
+      ${product.name}
+      ${product.category}
+      ${getUnitLabel(product.unit)}
+      ${product.barcode}
+    `.toLocaleLowerCase('pt-BR');
+
       return !query || text.includes(query);
     });
+
+    const categoryGroups = groupByCategory(products, (product) => product);
+
     elements.catalogList.innerHTML = products.length
-      ? products
-          .map(
-            (product) => `
-              <article class="shopping-catalog-item" data-barcode="${escapeHtml(product.barcode)}">
-                ${productImage(product, 'shopping-catalog-photo')}
-                <div><strong>${escapeHtml(product.name)}</strong><small>${escapeHtml(product.category || 'Sem categoria')} · ${escapeHtml(product.barcode)}</small></div>
-                <button type="button" class="action-btn" data-catalog-action="edit">Editar</button>
-                <button type="button" class="btn-primary" data-catalog-action="add">Adicionar</button>
-              </article>`,
-          )
-          .join('')
-      : '<div class="shopping-empty compact"><span>📦</span><strong>Nenhum produto encontrado</strong></div>';
+      ? categoryGroups.map(({ category, entries }) => renderCategoryGroup(category, entries, renderCatalogProduct, 'shopping-catalog-category')).join('')
+      : `
+      <div class="shopping-empty compact">
+        <span>📦</span>
+        <strong>Nenhum produto encontrado</strong>
+      </div>`;
   }
 
   async function addProductToList(product, increment = null) {
@@ -313,13 +513,34 @@
     notify(current ? 'Quantidade atualizada na lista.' : 'Produto adicionado à lista.');
   }
 
-  async function handleCode(code) {
-    const barcode = window.ShoppingBarcodeScanner.normalizeCode(code);
-    if (!barcode) return notify('Informe um código válido.', 'error');
+  async function deleteRegisteredProduct(product, overlayToClose = null) {
+    const activeItem = getItem(product.barcode);
+    const activeListWarning = activeItem ? '\n\nEle também será removido da lista atual para não deixar um item sem cadastro.' : '';
+    const confirmed = await askConfirmation(`Excluir permanentemente "${product.name}" do catálogo?${activeListWarning}`);
+    if (!confirmed) return false;
+
+    await window.ShoppingAPI.deleteProduct(product.barcode, {
+      removeFromActiveList: Boolean(activeItem),
+    });
+
+    if (overlayToClose) await closeOverlay(overlayToClose);
+    notify('Produto excluído do catálogo.');
+    return true;
+  }
+
+  async function handleCode(code, { fromScanner = false } = {}) {
+    const validation = window.ShoppingBarcodeScanner.validateCode(code);
+    if (!validation.valid) {
+      elements.scannerStatus.textContent = validation.reason;
+      if (!fromScanner) notify(validation.reason, 'error');
+      return false;
+    }
+    const barcode = validation.code;
     await closeOverlay(elements.scannerOverlay);
     const product = getProduct(barcode) || (await window.ShoppingAPI.getProduct(barcode));
     if (product) openFoundProduct(product);
     else openProductForm({ barcode, addAfterSave: true });
+    return true;
   }
 
   function openFoundProduct(product) {
@@ -328,9 +549,10 @@
         ${productImage(product, 'shopping-found-photo')}
         <div><strong>${escapeHtml(product.name)}</strong><small>${escapeHtml(product.category || 'Sem categoria')}</small><code>${escapeHtml(product.barcode)}</code></div>
       </div>
-      <div class="shopping-modal-actions">
+      <div class="shopping-modal-actions shopping-found-actions">
         <button type="button" class="action-btn" id="shopping-found-edit">Editar cadastro</button>
         <button type="button" class="btn-primary" id="shopping-found-add">Adicionar à lista</button>
+        <button type="button" class="action-btn danger" id="shopping-found-delete">Excluir produto</button>
       </div>`;
     openOverlay(elements.foundOverlay);
     document.getElementById('shopping-found-edit').onclick = async () => {
@@ -340,6 +562,14 @@
     document.getElementById('shopping-found-add').onclick = async () => {
       await addProductToList(product);
       await closeOverlay(elements.foundOverlay);
+    };
+    document.getElementById('shopping-found-delete').onclick = async () => {
+      try {
+        await deleteRegisteredProduct(product, elements.foundOverlay);
+      } catch (error) {
+        console.error(error);
+        notify(error.message || 'Não foi possível excluir o produto.', 'error');
+      }
     };
   }
 
@@ -354,11 +584,12 @@
   function openProductForm({ barcode = '', product = null, addAfterSave = true } = {}) {
     state.productFormMode = product ? 'edit' : 'create';
     state.addAfterSave = addAfterSave;
-    const generatedManualCode = barcode || product?.barcode || '';
+    state.editingOriginalBarcode = String(product?.barcode || '');
+    const generatedManualCode = product?.isManual || String(product?.barcode || '').startsWith('manual-') ? '' : barcode || product?.barcode || '';
     elements.productFormTitle.textContent = product ? 'Editar produto' : 'Cadastrar produto';
-    elements.productFormSubtitle.textContent = barcode ? 'Este código ainda não existe na sua base.' : 'Cadastre um produto para reutilizar nas próximas listas.';
+    elements.productFormSubtitle.textContent = product ? 'Você pode corrigir os dados e o código de barras.' : barcode ? 'Este código ainda não existe na sua base.' : 'Cadastre um produto para reutilizar nas próximas listas.';
     elements.barcode.value = generatedManualCode;
-    elements.barcode.readOnly = Boolean(barcode || product?.barcode);
+    elements.barcode.readOnly = false;
     elements.productName.value = product?.name || '';
     elements.productCategory.value = product?.category || '';
     elements.productUnit.value = product?.unit || 'unidade';
@@ -371,11 +602,32 @@
   }
 
   async function saveProduct({ addToList }) {
-    let barcode = window.ShoppingBarcodeScanner.normalizeCode(elements.barcode.value);
-    const isManual = !barcode;
-    if (!barcode) barcode = `manual-${crypto.randomUUID?.() || Date.now()}`;
+    const rawBarcode = window.ShoppingBarcodeScanner.normalizeCode(elements.barcode.value);
+    const originalBarcode = String(state.editingOriginalBarcode || '');
+    const originalWasManual = originalBarcode.startsWith('manual-');
+    let barcode = rawBarcode;
+    let isManual = !barcode;
+
+    if (barcode) {
+      const validation = window.ShoppingBarcodeScanner.validateCode(barcode);
+      if (!validation.valid) return notify(validation.reason, 'error');
+      barcode = validation.code;
+    } else if (state.productFormMode === 'edit' && originalWasManual) {
+      barcode = originalBarcode;
+      isManual = true;
+    } else {
+      barcode = `manual-${crypto.randomUUID?.() || Date.now()}`;
+      isManual = true;
+    }
+
     const name = elements.productName.value.trim();
     if (!name) return notify('Informe o nome do produto.', 'error');
+
+    if (state.productFormMode === 'edit' && originalBarcode && originalBarcode !== barcode) {
+      const existing = getProduct(barcode) || (await window.ShoppingAPI.getProduct(barcode));
+      if (existing) return notify('Já existe outro produto com este código de barras.', 'error');
+    }
+
     const product = {
       barcode,
       name,
@@ -385,7 +637,18 @@
       photoDataUrl: state.pendingPhoto,
       isManual,
     };
+
     await window.ShoppingAPI.saveProduct(product);
+
+    if (state.productFormMode === 'edit' && originalBarcode && originalBarcode !== barcode) {
+      const currentItem = getItem(originalBarcode);
+      if (currentItem) {
+        await window.ShoppingAPI.saveActiveItem({ ...currentItem, barcode });
+        await window.ShoppingAPI.deleteActiveItem(originalBarcode);
+      }
+      await window.ShoppingAPI.deleteProduct(originalBarcode);
+    }
+
     if (addToList) await addProductToList(product);
     await closeOverlay(elements.productOverlay);
     notify(state.productFormMode === 'edit' ? 'Produto atualizado.' : 'Produto cadastrado.');
@@ -434,7 +697,10 @@
     elements.scannerStatus.textContent = 'Preparando câmera...';
     try {
       await state.scanner.start(elements.scannerVideo, {
-        onDetected: (code) => handleCode(code),
+        onDetected: (code) => handleCode(code, { fromScanner: true }),
+        onRejected: (validation) => {
+          elements.scannerStatus.textContent = `Código ignorado: ${validation.reason}`;
+        },
         onStatus: (message) => (elements.scannerStatus.textContent = message),
       });
     } catch (error) {
@@ -485,9 +751,7 @@
     document.body.classList.add('shopping-view-active');
     initializeData();
   });
-  document.querySelectorAll('.nav-btn:not([data-view="shopping"])').forEach((button) =>
-    button.addEventListener('click', () => document.body.classList.remove('shopping-view-active')),
-  );
+  document.querySelectorAll('.nav-btn:not([data-view="shopping"])').forEach((button) => button.addEventListener('click', () => document.body.classList.remove('shopping-view-active')));
 
   document.getElementById('shopping-scan-button').addEventListener('click', openScanner);
   document.getElementById('shopping-register-button').addEventListener('click', () => openProductForm({ addAfterSave: true }));
@@ -508,8 +772,13 @@
   elements.catalogSearch.addEventListener('input', renderCatalog);
   elements.manualCodeForm.addEventListener('submit', (event) => {
     event.preventDefault();
-    handleCode(elements.manualCode.value);
+    handleCode(elements.manualCode.value, { fromScanner: false });
   });
+  elements.barcode.addEventListener('input', () => {
+    const digitsOnly = elements.barcode.value.replace(/\D/g, '').slice(0, 14);
+    if (elements.barcode.value !== digitsOnly) elements.barcode.value = digitsOnly;
+  });
+
   elements.productForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     try {
@@ -589,10 +858,20 @@
     if (!button || !article) return;
     const product = getProduct(article.dataset.barcode);
     if (!product) return;
-    if (button.dataset.catalogAction === 'add') await addProductToList(product);
-    if (button.dataset.catalogAction === 'edit') {
-      await closeOverlay(elements.catalogOverlay);
-      openProductForm({ product, addAfterSave: false });
+    try {
+      if (button.dataset.catalogAction === 'add') await addProductToList(product);
+      if (button.dataset.catalogAction === 'edit') {
+        await closeOverlay(elements.catalogOverlay);
+        openProductForm({ product, addAfterSave: false });
+      }
+      if (button.dataset.catalogAction === 'delete') {
+        button.disabled = true;
+        await deleteRegisteredProduct(product);
+      }
+    } catch (error) {
+      console.error(error);
+      button.disabled = false;
+      notify(error.message || 'Não foi possível atualizar o produto.', 'error');
     }
   });
 

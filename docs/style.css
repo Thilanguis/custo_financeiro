@@ -3492,8 +3492,21 @@ button:focus-visible,
   opacity: 0.82;
 }
 
+.income-overview-bar .overview-cards {
+  border-radius: 999px;
+  background: repeating-linear-gradient(135deg, #65509f 0 4px, var(--purple) 4px 8px);
+  box-shadow:
+    inset 0 0 0 1px rgba(11, 11, 16, 0.34),
+    0 0 0 1px rgba(11, 11, 16, 0.18);
+  opacity: 0.9;
+}
+
 .overview-pending-value {
   color: var(--orange-soft);
+}
+
+.overview-cards-value {
+  color: var(--purple-soft);
 }
 
 .overview-pending-key {
@@ -3503,6 +3516,16 @@ button:focus-visible,
   flex: 0 0 9px;
   border-radius: 2px;
   background: repeating-linear-gradient(135deg, var(--orange-soft-dark) 0 3px, var(--orange-soft) 3px 6px);
+  box-shadow: inset 0 0 0 1px rgba(11, 11, 16, 0.25);
+}
+
+.overview-cards-key {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border-radius: 2px;
+  background: repeating-linear-gradient(135deg, #65509f 0 3px, var(--purple) 3px 6px);
   box-shadow: inset 0 0 0 1px rgba(11, 11, 16, 0.25);
 }
 
@@ -3553,6 +3576,14 @@ button:focus-visible,
     0 0 0 1px rgba(11, 11, 16, 0.2);
 }
 
+.income-breakdown-bar .is-cards {
+  border-radius: 999px;
+  background: repeating-linear-gradient(135deg, #65509f 0 4px, var(--purple) 4px 8px);
+  box-shadow:
+    inset 0 0 0 1px rgba(11, 11, 16, 0.48),
+    0 0 0 1px rgba(11, 11, 16, 0.2);
+}
+
 .income-breakdown-bar .is-available {
   background: transparent;
   box-shadow: inset 1px 0 rgba(98, 196, 98, 0.18);
@@ -3593,6 +3624,11 @@ button:focus-visible,
 .income-breakdown-segment-labels .is-pending b,
 .income-breakdown-segment-labels .is-pending small {
   color: var(--orange-soft);
+}
+
+.income-breakdown-segment-labels .is-cards b,
+.income-breakdown-segment-labels .is-cards small {
+  color: var(--purple-soft);
 }
 
 .income-breakdown-segment-labels .is-available b,
@@ -3821,6 +3857,10 @@ button:focus-visible,
 
   .income-breakdown-mobile-legend .is-pending b {
     color: var(--orange-soft);
+  }
+
+  .income-breakdown-mobile-legend .is-cards b {
+    color: var(--purple-soft);
   }
 
   .income-breakdown-mobile-legend .is-available b {
@@ -5030,4 +5070,35 @@ body.annual-drag-active .annual-empty-month-drop-zone {
   .simple-card-section-toolbar .credit-card-search { flex: 1; min-width: 0; }
   .simple-card-timing-summary { grid-template-columns: 1fr; }
   .simple-card-admin > summary { align-items: flex-start; flex-direction: column; }
+}
+
+
+/* Ajustes de cartões no painel Livre */
+.dash-card-group-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 14px 0 7px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  font-weight: 700;
+}
+.dash-card-group-title.is-pending { background: rgba(247, 200, 74, 0.11); color: #fddf7b; }
+.dash-card-group-title.is-paid { background: rgba(98, 196, 98, 0.1); color: #8fdf8f; }
+.dash-card-table-scroll { overflow-x: auto; }
+.dash-card-empty { padding: 10px; color: #a6a6c0; font-size: 0.88rem; }
+.dash-card-invoices-table { min-width: 650px; }
+
+/* Catálogo: Editar e Adicionar com o mesmo tamanho */
+.shopping-catalog-actions > button {
+  flex: 0 0 96px;
+  width: 96px;
+  min-width: 96px;
+  height: 38px;
+  min-height: 38px;
+  padding: 7px 10px;
+}
+@media (max-width: 760px) {
+  .shopping-catalog-actions > button { flex: 1 1 0; width: 100%; min-width: 0; }
 }

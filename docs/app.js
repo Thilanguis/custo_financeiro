@@ -3215,14 +3215,22 @@ function renderFreeProjectionDetails(month, pendingItems, projectedBalance) {
   const freeCard = document.querySelector('.dash-item-free');
   const arrow = document.getElementById('summary-free-projection-arrow');
   const afterFixed = document.getElementById('summary-free-after-fixed');
-  const cardsDue = document.getElementById('summary-credit-cards-due');
+  const oldCardsDue = document.getElementById('summary-credit-cards-due');
   const hasPendingItems = pendingItems.length > 0;
   const cardInvoices = getCreditCardInvoicesForMonth(month);
+  const pendingCardInvoices = cardInvoices.filter((invoice) => invoice.payment.remaining > 0.005);
+  const paidCardInvoices = cardInvoices.filter((invoice) => invoice.payment.remaining <= 0.005);
   const hasCreditCards = cardInvoices.length > 0;
   const hasDetails = hasPendingItems || hasCreditCards;
-  const cardInvoicesTotal = Math.round(cardInvoices.reduce((sum, invoice) => sum + invoice.total, 0) * 100) / 100;
+  const cardsRemainingTotal = Math.round(pendingCardInvoices.reduce((sum, invoice) => sum + invoice.payment.remaining, 0) * 100) / 100;
+  const projectedAfterFixedAndCards = Math.round((projectedBalance - cardsRemainingTotal) * 100) / 100;
 
   if (!summaryFreeProjectionToggle || !details || !freeCard || !arrow) return;
+
+  if (oldCardsDue) {
+    oldCardsDue.textContent = '';
+    oldCardsDue.classList.remove('visible');
+  }
 
   if (!hasDetails) isFreeProjectionExpanded = false;
 
@@ -3231,13 +3239,10 @@ function renderFreeProjectionDetails(month, pendingItems, projectedBalance) {
   summaryFreeProjectionToggle.setAttribute('aria-expanded', String(hasDetails && isFreeProjectionExpanded));
   summaryFreeProjectionToggle.title = hasDetails ? 'Ver fixos pendentes e faturas de cartões' : 'Nenhum compromisso pendente';
   arrow.textContent = isFreeProjectionExpanded ? '▼' : '▶';
+
   if (afterFixed) {
-    afterFixed.textContent = hasPendingItems ? `Após fixos: ${formatCurrency(projectedBalance)}` : '';
-    afterFixed.classList.toggle('visible', hasPendingItems);
-  }
-  if (cardsDue) {
-    cardsDue.textContent = hasCreditCards ? `Cartões a pagar: ${formatCurrency(cardInvoicesTotal)}` : '';
-    cardsDue.classList.toggle('visible', hasCreditCards);
+    afterFixed.textContent = hasDetails ? `Após fixos e cartões: ${formatCurrency(projectedAfterFixedAndCards)}` : '';
+    afterFixed.classList.toggle('visible', hasDetails);
   }
 
   if (!hasDetails || !isFreeProjectionExpanded) {
@@ -3258,6 +3263,7 @@ function renderFreeProjectionDetails(month, pendingItems, projectedBalance) {
       const differenceAmount = Math.round((item.amount - item.actualAmount) * 100) / 100;
       const differenceClass = differenceAmount > 0 ? 'positive' : differenceAmount === 0 ? 'neutral' : 'negative';
       const actualDisplay = item.actualAmount === 0 ? formatCurrency(0) : `- ${formatCurrency(item.actualAmount)}`;
+
       return `
         <tr>
           <td class="dash-fixed-name">
@@ -3271,18 +3277,25 @@ function renderFreeProjectionDetails(month, pendingItems, projectedBalance) {
     })
     .join('');
 
-  const cardRows = cardInvoices
-    .map((invoice) => {
-      const payment = getCreditCardPaymentInfo(invoice);
-      const dueLabel = payment.dueDate ? payment.dueDate.split('-').reverse().join('/') : '—';
-      return `<tr>
-        <td class="dash-fixed-name"><span>${escapeCardDetail(invoice.card.name)}</span><small>Vence em ${dueLabel} · já descontado nas compras</small></td>
-        <td>${formatCurrency(invoice.total)}</td>
-        <td>${formatCurrency(payment.paidAmount)}</td>
-        <td><span class="credit-card-status ${payment.statusClass}">${payment.status}</span></td>
-      </tr>`;
-    })
-    .join('');
+  const renderCardRows = (invoices) =>
+    invoices
+      .map((invoice) => {
+        const payment = invoice.payment;
+        const dueLabel = payment.dueDate ? payment.dueDate.split('-').reverse().join('/') : '—';
+
+        return `<tr>
+          <td class="dash-fixed-name"><span>${escapeCardDetail(invoice.card.name)}</span><small>Vence em ${dueLabel}</small></td>
+          <td>${formatCurrency(payment.billedAmount)}</td>
+          <td>${formatCurrency(payment.paidAmount)}</td>
+          <td>${formatCurrency(payment.remaining)}</td>
+          <td><span class="credit-card-status ${payment.statusClass}">${payment.status}</span></td>
+        </tr>`;
+      })
+      .join('');
+
+  const pendingCardRows = renderCardRows(pendingCardInvoices);
+  const paidCardRows = renderCardRows(paidCardInvoices);
+  const cardTableHead = '<thead><tr><th>Cartão</th><th>Fatura</th><th>Pago</th><th>Restante</th><th>Situação</th></tr></thead>';
 
   details.innerHTML = `
     ${
@@ -3293,11 +3306,15 @@ function renderFreeProjectionDetails(month, pendingItems, projectedBalance) {
     }
     ${
       hasCreditCards
-        ? `<div class="dash-free-details-title dash-card-invoices-title">Cartões a pagar no mês <small>Informativo: estes valores já reduziram o Livre nas compras.</small></div>
-           <table class="dash-fixed-table dash-card-invoices-table"><thead><tr><th>Cartão</th><th>Fatura</th><th>Pago</th><th>Situação</th></tr></thead><tbody>${cardRows}</tbody></table>`
+        ? `<div class="dash-free-details-title dash-card-invoices-title">Cartões do mês <small>Pendentes entram na projeção; pagos e sem pendência ficam apenas no histórico.</small></div>
+           <div class="dash-card-group-title is-pending"><span>Pendentes</span><strong>${formatCurrency(cardsRemainingTotal)}</strong></div>
+           ${pendingCardRows ? `<div class="dash-card-table-scroll"><table class="dash-fixed-table dash-card-invoices-table">${cardTableHead}<tbody>${pendingCardRows}</tbody></table></div>` : '<div class="dash-card-empty">Nenhuma fatura pendente.</div>'}
+           <div class="dash-card-group-title is-paid"><span>Pagos / sem pendência</span><strong>${paidCardInvoices.length}</strong></div>
+           ${paidCardRows ? `<div class="dash-card-table-scroll"><table class="dash-fixed-table dash-card-invoices-table">${cardTableHead}<tbody>${paidCardRows}</tbody></table></div>` : '<div class="dash-card-empty">Nenhum cartão sem pendência neste mês.</div>'}`
         : ''
     }
   `;
+
   details.classList.add('visible');
   freeCard.classList.add('is-expanded');
 }
@@ -3553,12 +3570,18 @@ function updateDashboardView() {
       const tLaz = totalIncome > 0 ? ((totLaz / totalIncome) * 100).toFixed(0) : 0;
 
       const pGastoTotal = baseBarWidth > 0 ? (totalReal / baseBarWidth) * 100 : 0;
-      const pLivreTotal = baseBarWidth > 0 ? Math.max((freeReal / baseBarWidth) * 100, 0) : 0;
       const pendingFixedExpense = getPendingFixedExpenses(month).reduce((total, item) => total + item.remainingAmount, 0);
+      const cardInvoicesForIncome = getCreditCardInvoicesForMonth(month);
+      const pendingCardsExpense = Math.round(
+        cardInvoicesForIncome.reduce((total, invoice) => total + Math.max(Number(invoice.payment?.remaining) || 0, 0), 0) * 100,
+      ) / 100;
       const freeAfterFixed = freeReal - pendingFixedExpense;
+      const freeAfterFixedAndCards = freeAfterFixed - pendingCardsExpense;
       const visibleFreeTotal = Math.max(freeReal, 0);
       const visiblePendingFixed = Math.min(pendingFixedExpense, visibleFreeTotal);
       const visibleFreeAfterFixed = Math.max(freeAfterFixed, 0);
+      const visiblePendingCards = Math.min(pendingCardsExpense, visibleFreeAfterFixed);
+      const visibleFreeAfterFixedAndCards = Math.max(freeAfterFixedAndCards, 0);
       const gabrielPercentOfIncome = baseBarWidth > 0 ? (Math.max(gabTotal, 0) / baseBarWidth) * 100 : 0;
       const luanaPercentOfIncome = baseBarWidth > 0 ? (Math.max(luaTotal, 0) / baseBarWidth) * 100 : 0;
       const bothPercentOfIncome = baseBarWidth > 0 ? (Math.max(ambTotal, 0) / baseBarWidth) * 100 : 0;
@@ -3566,7 +3589,8 @@ function updateDashboardView() {
       const luanaShareOfExpense = totalReal > 0 ? Math.max((luaTotal / totalReal) * 100, 0) : 0;
       const bothShareOfExpense = totalReal > 0 ? Math.max((ambTotal / totalReal) * 100, 0) : 0;
       const pendingFixedPercentOfIncome = baseBarWidth > 0 ? (visiblePendingFixed / baseBarWidth) * 100 : 0;
-      const afterFixedPercentOfIncome = baseBarWidth > 0 ? (visibleFreeAfterFixed / baseBarWidth) * 100 : 0;
+      const pendingCardsPercentOfIncome = baseBarWidth > 0 ? (visiblePendingCards / baseBarWidth) * 100 : 0;
+      const afterFixedAndCardsPercentOfIncome = baseBarWidth > 0 ? (visibleFreeAfterFixedAndCards / baseBarWidth) * 100 : 0;
       const getOwnerComposition = (essential, leisure) => {
         const positiveEssential = Math.max(essential, 0);
         const positiveLeisure = Math.max(leisure, 0);
@@ -3617,20 +3641,21 @@ function updateDashboardView() {
                   : ''
               }
               ${pendingFixedPercentOfIncome > 0 ? `<div class="overview-pending" style="width: ${pendingFixedPercentOfIncome}%;" title="Fixos pendentes: ${formatCurrency(pendingFixedExpense)}"></div>` : ''}
+              ${pendingCardsPercentOfIncome > 0 ? `<div class="overview-cards" style="width: ${pendingCardsPercentOfIncome}%;" title="Cartões a pagar: ${formatCurrency(pendingCardsExpense)}"></div>` : ''}
             </div>
 
             <div style="display: flex; width: 100%;">
               <div style="width: ${pGastoTotal}%; border-top: 2px dashed #ff7b7b;"></div>
-              ${freeReal > 0 ? `<div style="width: ${pLivreTotal}%; border-top: 2px solid #62c462;"></div>` : ''}
+              ${pendingFixedPercentOfIncome > 0 ? `<div style="width: ${pendingFixedPercentOfIncome}%; border-top: 2px dashed var(--orange-soft);"></div>` : ''}
+              ${pendingCardsPercentOfIncome > 0 ? `<div style="width: ${pendingCardsPercentOfIncome}%; border-top: 2px dashed var(--purple);"></div>` : ''}
+              ${afterFixedAndCardsPercentOfIncome > 0 ? `<div style="width: ${afterFixedAndCardsPercentOfIncome}%; border-top: 2px solid #62c462;"></div>` : ''}
             </div>
             <div style="display: flex; justify-content: space-between; width: 100%; margin-bottom: 8px; font-size: 0.8rem; padding-top: 4px; gap: 8px;">
               <span style="color: #ff7b7b; font-weight: 600; white-space: nowrap;">Gasto: ${formatCurrency(totalReal)}</span>
               ${
-                freeReal > 0
-                  ? `<span style="color: #62c462; font-weight: 600; white-space: nowrap; text-align: right;">Livre: ${formatCurrency(freeReal)}</span>`
-                  : freeReal < 0
-                    ? `<span style="color: #ff7b7b; font-weight: 600; white-space: nowrap; text-align: right;">Estouro: ${formatCurrency(freeReal)}</span>`
-                    : ''
+                freeAfterFixedAndCards >= 0
+                  ? `<span style="color: #62c462; font-weight: 600; white-space: nowrap; text-align: right;">Após fixos e cartões: ${formatCurrency(freeAfterFixedAndCards)}</span>`
+                  : `<span style="color: #ff7b7b; font-weight: 600; white-space: nowrap; text-align: right;">Estouro após compromissos: ${formatCurrency(freeAfterFixedAndCards)}</span>`
               }
             </div>
 
@@ -3638,6 +3663,7 @@ function updateDashboardView() {
               ${totEss > 0 ? `<span><strong style="color: #f7c84a;">■</strong> Essenciais: <span style="color:#f5f5f5">${formatCurrency(totEss)}</span> <span style="opacity:0.6; font-size:0.65rem">(${tEss}%)</span></span>` : ''}
               ${totLaz > 0 ? `<span><strong style="color: #ff7b7b;">■</strong> Lazer: <span style="color:#f5f5f5">${formatCurrency(totLaz)}</span> <span style="opacity:0.6; font-size:0.65rem">(${tLaz}%)</span></span>` : ''}
               ${pendingFixedExpense > 0 ? `<span><strong class="overview-pending-key" aria-hidden="true"></strong> Fixos: <span class="overview-pending-value">${formatCurrency(pendingFixedExpense)}</span></span>` : ''}
+              ${pendingCardsExpense > 0 ? `<span><strong class="overview-cards-key" aria-hidden="true"></strong> Cartões: <span class="overview-cards-value">${formatCurrency(pendingCardsExpense)}</span></span>` : ''}
             </div>
             ${
               !isDetailsOpen
@@ -3663,21 +3689,24 @@ function updateDashboardView() {
                 ${luanaPercentOfIncome > 0 ? `<span class="income-owner-segment" style="width: ${luanaPercentOfIncome}%" title="Luana: ${formatCurrency(luaTotal)}"><i class="is-essential" style="width: ${luanaComposition.essential}%"></i><i class="is-leisure" style="width: ${luanaComposition.leisure}%"></i></span>` : ''}
                 ${bothPercentOfIncome > 0 ? `<span class="income-owner-segment" style="width: ${bothPercentOfIncome}%" title="Ambos: ${formatCurrency(ambTotal)}"><i class="is-essential" style="width: ${bothComposition.essential}%"></i><i class="is-leisure" style="width: ${bothComposition.leisure}%"></i></span>` : ''}
                 ${pendingFixedPercentOfIncome > 0 ? `<span class="is-pending" style="width: ${pendingFixedPercentOfIncome}%" title="Fixos pendentes: ${formatCurrency(pendingFixedExpense)}"></span>` : ''}
-                ${afterFixedPercentOfIncome > 0 ? `<span class="is-available" style="width: ${afterFixedPercentOfIncome}%" title="Após fixos: ${formatCurrency(freeAfterFixed)}"></span>` : ''}
+                ${pendingCardsPercentOfIncome > 0 ? `<span class="is-cards" style="width: ${pendingCardsPercentOfIncome}%" title="Cartões a pagar: ${formatCurrency(pendingCardsExpense)}"></span>` : ''}
+                ${afterFixedAndCardsPercentOfIncome > 0 ? `<span class="is-available" style="width: ${afterFixedAndCardsPercentOfIncome}%" title="Após fixos e cartões: ${formatCurrency(freeAfterFixedAndCards)}"></span>` : ''}
               </div>
               <div class="income-breakdown-segment-labels">
                 ${gabrielPercentOfIncome > 0 ? `<span style="width: ${gabrielPercentOfIncome}%"><b>Gabriel</b><abbr>G</abbr></span>` : ''}
                 ${luanaPercentOfIncome > 0 ? `<span style="width: ${luanaPercentOfIncome}%"><b>Luana</b><abbr>L</abbr></span>` : ''}
                 ${bothPercentOfIncome > 0 ? `<span style="width: ${bothPercentOfIncome}%"><b>Ambos</b><abbr>A</abbr></span>` : ''}
                 ${pendingFixedPercentOfIncome > 0 ? `<span class="is-pending" style="width: ${pendingFixedPercentOfIncome}%"><b>Fixos</b><abbr>F</abbr><small>${formatCurrency(pendingFixedExpense)}</small></span>` : ''}
-                ${afterFixedPercentOfIncome > 0 ? `<span class="is-available ${freeAfterFixed < 0 ? 'is-negative' : ''}" style="width: ${afterFixedPercentOfIncome}%"><b>Após fixos</b><abbr>AF</abbr><small>${formatCurrency(freeAfterFixed)}</small></span>` : ''}
+                ${pendingCardsPercentOfIncome > 0 ? `<span class="is-cards" style="width: ${pendingCardsPercentOfIncome}%"><b>Cartões</b><abbr>C</abbr><small>${formatCurrency(pendingCardsExpense)}</small></span>` : ''}
+                ${afterFixedAndCardsPercentOfIncome > 0 ? `<span class="is-available ${freeAfterFixedAndCards < 0 ? 'is-negative' : ''}" style="width: ${afterFixedAndCardsPercentOfIncome}%"><b>Após fixos e cartões</b><abbr>AFC</abbr><small>${formatCurrency(freeAfterFixedAndCards)}</small></span>` : ''}
               </div>
               <div class="income-breakdown-mobile-legend">
                 ${gabrielPercentOfIncome > 0 ? '<span><b>G</b> Gabriel</span>' : ''}
                 ${luanaPercentOfIncome > 0 ? '<span><b>L</b> Luana</span>' : ''}
                 ${bothPercentOfIncome > 0 ? '<span><b>A</b> Ambos</span>' : ''}
                 ${pendingFixedPercentOfIncome > 0 ? '<span class="is-pending"><b>F</b> Fixos</span>' : ''}
-                ${afterFixedPercentOfIncome > 0 ? '<span class="is-available"><b>AF</b> Após fixos</span>' : ''}
+                ${pendingCardsPercentOfIncome > 0 ? '<span class="is-cards"><b>C</b> Cartões</span>' : ''}
+                ${afterFixedAndCardsPercentOfIncome > 0 ? '<span class="is-available"><b>AFC</b> Após fixos e cartões</span>' : ''}
               </div>
       `;
 
@@ -4668,17 +4697,20 @@ function getTodayISO() {
 
 function getCreditCardPaymentInfo(snapshot, paymentRecords = creditCardPayments) {
   const statement = snapshot.statement || findCardStatement(snapshot.card.id, snapshot.dueMonth);
-  const totals = CardStatements.getStatementTotals(statement || { calculatedAmount: snapshot.total });
+  const totals = snapshot?.state?.closedTotals || CardStatements.getStatementTotals(statement || { calculatedAmount: snapshot.total });
   const record = paymentRecords[snapshot.card.id] || null;
   const dueDate = getCreditCardInvoiceDueDate(snapshot.card, snapshot.dueMonth);
-  const paidAmount = totals.paid;
-  const remaining = totals.remaining;
+  const paidAmount = Math.round((Number(totals.paid) || 0) * 100) / 100;
+  const remaining = Math.round((Number(totals.remaining) || 0) * 100) / 100;
+  const creditAmount = Math.round((Number(totals.credit) || 0) * 100) / 100;
+  const billedAmount = Math.round(Math.max(0, (Number(totals.openingApplied) || 0) + (Number(totals.amount) || 0)) * 100) / 100;
 
-  let status = 'Sem fatura';
-  let statusClass = 'is-empty';
-  if (totals.amount > 0.005) {
+  let status = 'Sem pendência';
+  let statusClass = 'is-paid';
+
+  if (billedAmount > 0.005 || paidAmount > 0.005 || remaining > 0.005) {
     if (remaining <= 0.005) {
-      status = 'Paga';
+      status = creditAmount > 0.005 ? 'Paga · crédito' : 'Paga';
       statusClass = 'is-paid';
     } else if (paidAmount > 0.005) {
       status = 'Paga parcialmente';
@@ -4687,12 +4719,12 @@ function getCreditCardPaymentInfo(snapshot, paymentRecords = creditCardPayments)
       status = 'A pagar';
       statusClass = dueDate && getTodayISO() > dueDate ? 'is-overdue' : 'is-pending';
     }
-  } else if (totals.credit > 0.005) {
+  } else if (creditAmount > 0.005) {
     status = 'Crédito';
     statusClass = 'is-paid';
   }
 
-  return { record, statement, dueDate, paidAmount, remaining, status, statusClass };
+  return { record, statement, dueDate, billedAmount, paidAmount, remaining, creditAmount, status, statusClass };
 }
 
 function getSuggestedCreditCardLimit(card, month) {
@@ -4720,8 +4752,10 @@ function getSuggestedCreditCardLimit(card, month) {
 function getCreditCardInvoicesForMonth(month) {
   return paymentMethods
     .filter((method) => method.type === 'credito')
-    .map((card) => getCreditCardInvoiceSnapshot(card, month))
-    .filter((invoice) => invoice.state.isClosed && (invoice.total > 0.005 || invoice.state.closedTotals.credit > 0.005));
+    .map((card) => {
+      const invoice = getCreditCardInvoiceSnapshot(card, month);
+      return { ...invoice, payment: getCreditCardPaymentInfo(invoice) };
+    });
 }
 
 function getCreditCardLimitState(percent) {

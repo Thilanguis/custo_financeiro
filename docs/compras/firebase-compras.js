@@ -12,10 +12,9 @@
 
   window.ShoppingAPI = {
     listenProducts(callback, onError = console.error) {
-      return productsRef().orderBy('name').onSnapshot(
-        (snapshot) => callback(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))),
-        onError,
-      );
+      return productsRef()
+        .orderBy('name')
+        .onSnapshot((snapshot) => callback(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))), onError);
     },
 
     async getProduct(barcode) {
@@ -36,25 +35,35 @@
         isManual: Boolean(product.isManual),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
-      await productsRef().doc(barcode).set(
-        {
-          ...payload,
-          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true },
-      );
+      await productsRef()
+        .doc(barcode)
+        .set(
+          {
+            ...payload,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
       return barcode;
     },
 
-    async deleteProduct(barcode) {
-      await productsRef().doc(String(barcode)).delete();
+    async deleteProduct(barcode, { removeFromActiveList = false } = {}) {
+      const productId = String(barcode || '').trim();
+      if (!productId) throw new Error('Produto inválido.');
+
+      const batch = window.db.batch();
+      batch.delete(productsRef().doc(productId));
+
+      if (removeFromActiveList) {
+        batch.delete(activeItemsRef().doc(productId));
+        batch.set(activeListRef(), { updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      }
+
+      await batch.commit();
     },
 
     listenActiveItems(callback, onError = console.error) {
-      return activeItemsRef().onSnapshot(
-        (snapshot) => callback(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))),
-        onError,
-      );
+      return activeItemsRef().onSnapshot((snapshot) => callback(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))), onError);
     },
 
     async saveActiveItem(item) {
@@ -67,17 +76,19 @@
         },
         { merge: true },
       );
-      await activeItemsRef().doc(barcode).set(
-        cleanUndefined({
-          barcode,
-          quantity: Math.max(1, Number(item.quantity) || 1),
-          checked: Boolean(item.checked),
-          note: String(item.note || '').trim(),
-          addedAt: item.addedAt || firebase.firestore.FieldValue.serverTimestamp(),
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        }),
-        { merge: true },
-      );
+      await activeItemsRef()
+        .doc(barcode)
+        .set(
+          cleanUndefined({
+            barcode,
+            quantity: Math.max(1, Number(item.quantity) || 1),
+            checked: Boolean(item.checked),
+            note: String(item.note || '').trim(),
+            addedAt: item.addedAt || firebase.firestore.FieldValue.serverTimestamp(),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          }),
+          { merge: true },
+        );
       return barcode;
     },
 

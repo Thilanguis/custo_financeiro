@@ -12,6 +12,9 @@
     scanner: new window.ShoppingBarcodeScanner(),
     photoCamera: new window.ShoppingCameraCapture(),
     pendingPhoto: '',
+    pendingScanMetadata: null,
+    pendingScannerContent: null,
+    scannerSmallCodeMode: false,
     productFormMode: 'create',
     addAfterSave: false,
     editingOriginalBarcode: '',
@@ -84,14 +87,33 @@
     <div class="shopping-overlay" id="shopping-scanner-overlay" hidden>
       <div class="shopping-modal shopping-scanner-modal">
         <div class="shopping-modal-head">
-          <div><strong>Escanear produto</strong><small>Centralize o código dentro da área.</small></div>
+          <div><strong>Escanear produto</strong><small>EAN, UPC, Code 128, QR Code e Data Matrix.</small></div>
           <button type="button" class="action-btn shopping-modal-close" data-close="scanner">✕</button>
         </div>
-        <div class="shopping-camera-frame">
+        <div class="shopping-camera-frame" id="shopping-scanner-frame">
           <video id="shopping-scanner-video" muted></video>
           <div class="shopping-camera-guide"><span></span></div>
         </div>
+        <div class="shopping-scanner-controls" aria-label="Controles da câmera">
+          <button type="button" class="action-btn" id="shopping-scanner-focus">◎ Focar</button>
+          <button type="button" class="action-btn" id="shopping-scanner-switch-camera">↻ Câmera</button>
+          <label class="shopping-small-code-toggle"><input type="checkbox" id="shopping-scanner-small-code" /> Código pequeno</label>
+        </div>
+        <label class="shopping-scanner-zoom" id="shopping-scanner-zoom-wrap" hidden>
+          <span>Zoom <output id="shopping-scanner-zoom-value">1,0×</output></span>
+          <input type="range" id="shopping-scanner-zoom" min="1" max="1" step="0.1" value="1" />
+        </label>
         <p id="shopping-scanner-status" class="shopping-scanner-status">Preparando câmera...</p>
+        <div class="shopping-code-content" id="shopping-code-content" hidden>
+          <strong id="shopping-code-content-title">QR Code detectado</strong>
+          <code id="shopping-code-content-value"></code>
+          <small id="shopping-code-content-help">Este conteúdo não possui um GTIN/EAN reconhecido.</small>
+          <div class="shopping-code-content-actions">
+            <button type="button" class="action-btn" id="shopping-code-content-copy">Copiar</button>
+            <button type="button" class="action-btn" id="shopping-code-content-continue">Continuar lendo</button>
+            <button type="button" class="btn-primary" id="shopping-code-content-use">Usar este código</button>
+          </div>
+        </div>
         <form id="shopping-manual-code-form" class="shopping-manual-code-form">
           <input id="shopping-manual-code" inputmode="numeric" autocomplete="off" placeholder="Ou digite o código de barras" required />
           <button type="submit" class="action-btn">Procurar</button>
@@ -208,7 +230,21 @@
     progressFill: document.getElementById('shopping-progress-fill'),
     scannerOverlay: document.getElementById('shopping-scanner-overlay'),
     scannerVideo: document.getElementById('shopping-scanner-video'),
+    scannerFrame: document.getElementById('shopping-scanner-frame'),
     scannerStatus: document.getElementById('shopping-scanner-status'),
+    scannerFocus: document.getElementById('shopping-scanner-focus'),
+    scannerSwitchCamera: document.getElementById('shopping-scanner-switch-camera'),
+    scannerSmallCode: document.getElementById('shopping-scanner-small-code'),
+    scannerZoomWrap: document.getElementById('shopping-scanner-zoom-wrap'),
+    scannerZoom: document.getElementById('shopping-scanner-zoom'),
+    scannerZoomValue: document.getElementById('shopping-scanner-zoom-value'),
+    codeContent: document.getElementById('shopping-code-content'),
+    codeContentTitle: document.getElementById('shopping-code-content-title'),
+    codeContentValue: document.getElementById('shopping-code-content-value'),
+    codeContentHelp: document.getElementById('shopping-code-content-help'),
+    codeContentCopy: document.getElementById('shopping-code-content-copy'),
+    codeContentContinue: document.getElementById('shopping-code-content-continue'),
+    codeContentUse: document.getElementById('shopping-code-content-use'),
     manualCodeForm: document.getElementById('shopping-manual-code-form'),
     manualCode: document.getElementById('shopping-manual-code'),
     productOverlay: document.getElementById('shopping-product-overlay'),
@@ -216,6 +252,7 @@
     productFormTitle: document.getElementById('shopping-product-form-title'),
     productFormSubtitle: document.getElementById('shopping-product-form-subtitle'),
     barcode: document.getElementById('shopping-product-barcode'),
+    barcodeHelp: document.getElementById('shopping-barcode-help'),
     productName: document.getElementById('shopping-product-name'),
     productCategory: document.getElementById('shopping-product-category'),
     productUnit: document.getElementById('shopping-product-unit'),
@@ -243,7 +280,11 @@
   }
 
   async function closeOverlay(element) {
-    if (element === elements.scannerOverlay) await state.scanner.stop();
+    if (element === elements.scannerOverlay) {
+      await state.scanner.stop();
+      hideScannerContent();
+    }
+    if (element === elements.productOverlay) state.pendingScanMetadata = null;
     if (element === elements.photoCameraOverlay) await state.photoCamera.stop();
     element.hidden = true;
     if (![elements.scannerOverlay, elements.productOverlay, elements.photoCameraOverlay, elements.foundOverlay, elements.catalogOverlay].some((overlay) => !overlay.hidden)) {
@@ -528,6 +569,47 @@
     return true;
   }
 
+  function formatZoomValue(value) {
+    return `${Number(value || 1).toFixed(1).replace('.', ',')}×`;
+  }
+
+  function updateScannerControls(capabilities = {}) {
+    const zoom = capabilities.zoom;
+    elements.scannerFocus.disabled = !capabilities.canFocus;
+    elements.scannerFocus.title = capabilities.canFocus ? 'Pedir para a câmera refazer o foco' : 'Foco manual não disponível nesta câmera';
+    elements.scannerSwitchCamera.disabled = Number(capabilities.cameraCount || 0) < 2;
+    elements.scannerSwitchCamera.textContent = Number(capabilities.cameraCount || 0) > 1
+      ? `↻ Câmera ${Number(capabilities.currentCameraIndex || 0) + 1}/${capabilities.cameraCount}`
+      : '↻ Câmera';
+
+    elements.scannerZoomWrap.hidden = !capabilities.canZoom || !zoom;
+    if (capabilities.canZoom && zoom) {
+      elements.scannerZoom.min = String(zoom.min);
+      elements.scannerZoom.max = String(zoom.max);
+      elements.scannerZoom.step = String(zoom.step || 0.1);
+      elements.scannerZoom.value = String(zoom.value);
+      elements.scannerZoomValue.textContent = formatZoomValue(zoom.value);
+    }
+  }
+
+  function hideScannerContent({ resume = false } = {}) {
+    state.pendingScannerContent = null;
+    elements.codeContent.hidden = true;
+    elements.codeContentValue.textContent = '';
+    if (resume) state.scanner.resume();
+  }
+
+  function showScannerContent(decoded) {
+    state.pendingScannerContent = decoded;
+    const isDataMatrix = decoded.format === 'data_matrix';
+    elements.codeContentTitle.textContent = isDataMatrix ? 'Data Matrix detectado' : 'QR Code detectado';
+    elements.codeContentValue.textContent = decoded.rawValue;
+    elements.codeContentHelp.textContent = decoded.isUrl
+      ? 'O código contém um endereço. Ele não será aberto automaticamente.'
+      : 'Nenhum GTIN/EAN/UPC válido foi encontrado. Você pode usar o conteúdo como identificador do produto.';
+    elements.codeContent.hidden = false;
+  }
+
   async function handleCode(code, { fromScanner = false } = {}) {
     const validation = window.ShoppingBarcodeScanner.validateCode(code);
     if (!validation.valid) {
@@ -581,15 +663,30 @@
     elements.productPhotoPlaceholder.hidden = Boolean(state.pendingPhoto);
   }
 
-  function openProductForm({ barcode = '', product = null, addAfterSave = true } = {}) {
+  function openProductForm({ barcode = '', product = null, addAfterSave = true, scanMetadata = null } = {}) {
     state.productFormMode = product ? 'edit' : 'create';
     state.addAfterSave = addAfterSave;
     state.editingOriginalBarcode = String(product?.barcode || '');
+    state.pendingScanMetadata = scanMetadata || (product?.scanRawValue ? {
+      rawValue: product.scanRawValue,
+      format: product.scanFormat || 'qr_code',
+      identifier: product.barcode,
+      isUrl: Boolean(product.scanIsUrl),
+    } : null);
+
+    const isScannedContent = Boolean(state.pendingScanMetadata?.identifier);
     const generatedManualCode = product?.isManual || String(product?.barcode || '').startsWith('manual-') ? '' : barcode || product?.barcode || '';
     elements.productFormTitle.textContent = product ? 'Editar produto' : 'Cadastrar produto';
-    elements.productFormSubtitle.textContent = product ? 'Você pode corrigir os dados e o código de barras.' : barcode ? 'Este código ainda não existe na sua base.' : 'Cadastre um produto para reutilizar nas próximas listas.';
-    elements.barcode.value = generatedManualCode;
-    elements.barcode.readOnly = false;
+    elements.productFormSubtitle.textContent = product
+      ? isScannedContent ? 'Produto identificado por QR Code ou Data Matrix.' : 'Você pode corrigir os dados e o código de barras.'
+      : isScannedContent ? 'Cadastre os dados do produto encontrado no código 2D.' : barcode ? 'Este código ainda não existe na sua base.' : 'Cadastre um produto para reutilizar nas próximas listas.';
+    elements.barcode.value = isScannedContent ? state.pendingScanMetadata.identifier : generatedManualCode;
+    elements.barcode.readOnly = isScannedContent;
+    elements.barcode.inputMode = isScannedContent ? 'text' : 'numeric';
+    elements.barcode.maxLength = isScannedContent ? 80 : 14;
+    elements.barcodeHelp.textContent = isScannedContent
+      ? `Identificador interno de ${state.pendingScanMetadata.format === 'data_matrix' ? 'Data Matrix' : 'QR Code'}. O conteúdo original será preservado.`
+      : '8, 12, 13 ou 14 dígitos. O sistema confere o dígito verificador.';
     elements.productName.value = product?.name || '';
     elements.productCategory.value = product?.category || '';
     elements.productUnit.value = product?.unit || 'unidade';
@@ -605,10 +702,14 @@
     const rawBarcode = window.ShoppingBarcodeScanner.normalizeCode(elements.barcode.value);
     const originalBarcode = String(state.editingOriginalBarcode || '');
     const originalWasManual = originalBarcode.startsWith('manual-');
+    const scannedIdentifier = String(state.pendingScanMetadata?.identifier || '');
     let barcode = rawBarcode;
     let isManual = !barcode;
 
-    if (barcode) {
+    if (scannedIdentifier) {
+      barcode = scannedIdentifier;
+      isManual = false;
+    } else if (barcode) {
       const validation = window.ShoppingBarcodeScanner.validateCode(barcode);
       if (!validation.valid) return notify(validation.reason, 'error');
       barcode = validation.code;
@@ -636,6 +737,9 @@
       defaultQuantity: Math.max(1, Number(elements.productDefaultQuantity.value) || 1),
       photoDataUrl: state.pendingPhoto,
       isManual,
+      scanRawValue: state.pendingScanMetadata?.rawValue || '',
+      scanFormat: state.pendingScanMetadata?.format || '',
+      scanIsUrl: Boolean(state.pendingScanMetadata?.isUrl),
     };
 
     await window.ShoppingAPI.saveProduct(product);
@@ -650,6 +754,7 @@
     }
 
     if (addToList) await addProductToList(product);
+    state.pendingScanMetadata = null;
     await closeOverlay(elements.productOverlay);
     notify(state.productFormMode === 'edit' ? 'Produto atualizado.' : 'Produto cadastrado.');
   }
@@ -694,14 +799,21 @@
 
   async function openScanner() {
     openOverlay(elements.scannerOverlay);
+    hideScannerContent();
     elements.scannerStatus.textContent = 'Preparando câmera...';
+    elements.scannerSmallCode.checked = state.scannerSmallCodeMode;
+    elements.scannerFrame.classList.toggle('is-small-code-mode', state.scannerSmallCodeMode);
+    updateScannerControls({});
     try {
       await state.scanner.start(elements.scannerVideo, {
+        smallCodeMode: state.scannerSmallCodeMode,
         onDetected: (code) => handleCode(code, { fromScanner: true }),
+        onContent: showScannerContent,
         onRejected: (validation) => {
-          elements.scannerStatus.textContent = `Código ignorado: ${validation.reason}`;
+          elements.scannerStatus.textContent = `Código ignorado: ${validation?.reason || 'formato não reconhecido.'}`;
         },
         onStatus: (message) => (elements.scannerStatus.textContent = message),
+        onCapabilities: updateScannerControls,
       });
     } catch (error) {
       elements.scannerStatus.textContent = error.message;
@@ -774,7 +886,70 @@
     event.preventDefault();
     handleCode(elements.manualCode.value, { fromScanner: false });
   });
+  elements.scannerFocus.addEventListener('click', async () => {
+    try {
+      await state.scanner.focus();
+    } catch (error) {
+      elements.scannerStatus.textContent = error.message || 'Não foi possível refazer o foco.';
+    }
+  });
+  elements.scannerSwitchCamera.addEventListener('click', async () => {
+    elements.scannerSwitchCamera.disabled = true;
+    try {
+      await state.scanner.switchCamera();
+    } catch (error) {
+      elements.scannerStatus.textContent = error.message || 'Não foi possível trocar de câmera.';
+    }
+  });
+  elements.scannerSmallCode.addEventListener('change', async () => {
+    state.scannerSmallCodeMode = elements.scannerSmallCode.checked;
+    elements.scannerFrame.classList.toggle('is-small-code-mode', state.scannerSmallCodeMode);
+    try {
+      await state.scanner.setSmallCodeMode(state.scannerSmallCodeMode);
+    } catch (error) {
+      elements.scannerStatus.textContent = error.message || 'Não foi possível ativar o modo Código pequeno.';
+    }
+  });
+  elements.scannerZoom.addEventListener('input', () => {
+    elements.scannerZoomValue.textContent = formatZoomValue(elements.scannerZoom.value);
+  });
+  elements.scannerZoom.addEventListener('change', async () => {
+    try {
+      await state.scanner.setZoom(elements.scannerZoom.value);
+    } catch (error) {
+      elements.scannerStatus.textContent = error.message || 'Não foi possível aplicar o zoom.';
+    }
+  });
+  elements.codeContentContinue.addEventListener('click', () => hideScannerContent({ resume: true }));
+  elements.codeContentCopy.addEventListener('click', async () => {
+    const rawValue = state.pendingScannerContent?.rawValue || '';
+    if (!rawValue) return;
+    try {
+      await navigator.clipboard.writeText(rawValue);
+      notify('Conteúdo copiado.');
+    } catch (error) {
+      console.error(error);
+      elements.scannerStatus.textContent = 'Não foi possível copiar automaticamente. Selecione o conteúdo manualmente.';
+    }
+  });
+  elements.codeContentUse.addEventListener('click', async () => {
+    const decoded = state.pendingScannerContent;
+    if (!decoded?.rawValue) return;
+    const identifier = decoded.identifier || window.ShoppingBarcodeScanner.createContentIdentifier(decoded.rawValue, decoded.format);
+    const scanMetadata = { ...decoded, identifier };
+    try {
+      const existing = getProduct(identifier) || (await window.ShoppingAPI.getProduct(identifier));
+      await closeOverlay(elements.scannerOverlay);
+      if (existing) openFoundProduct(existing);
+      else openProductForm({ barcode: identifier, addAfterSave: true, scanMetadata });
+    } catch (error) {
+      console.error(error);
+      elements.scannerStatus.textContent = error.message || 'Não foi possível usar este código.';
+      state.scanner.resume();
+    }
+  });
   elements.barcode.addEventListener('input', () => {
+    if (elements.barcode.readOnly || state.pendingScanMetadata?.identifier) return;
     const digitsOnly = elements.barcode.value.replace(/\D/g, '').slice(0, 14);
     if (elements.barcode.value !== digitsOnly) elements.barcode.value = digitsOnly;
   });

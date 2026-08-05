@@ -3572,9 +3572,7 @@ function updateDashboardView() {
       const pGastoTotal = baseBarWidth > 0 ? (totalReal / baseBarWidth) * 100 : 0;
       const pendingFixedExpense = getPendingFixedExpenses(month).reduce((total, item) => total + item.remainingAmount, 0);
       const cardInvoicesForIncome = getCreditCardInvoicesForMonth(month);
-      const pendingCardsExpense = Math.round(
-        cardInvoicesForIncome.reduce((total, invoice) => total + Math.max(Number(invoice.payment?.remaining) || 0, 0), 0) * 100,
-      ) / 100;
+      const pendingCardsExpense = Math.round(cardInvoicesForIncome.reduce((total, invoice) => total + Math.max(Number(invoice.payment?.remaining) || 0, 0), 0) * 100) / 100;
       const freeAfterFixed = freeReal - pendingFixedExpense;
       const freeAfterFixedAndCards = freeAfterFixed - pendingCardsExpense;
       const visibleFreeTotal = Math.max(freeReal, 0);
@@ -4567,9 +4565,7 @@ function isCreditCardLimitLocked(card) {
 
 async function migrateLegacyCreditCardLimitLocks(methods) {
   if (creditCardLimitLockMigrationRunning || !Object.keys(legacyCreditCardLimitLocks).length) return;
-  const hasMigration = methods.some(
-    (method) => method.type === 'credito' && typeof method.controlLimitLocked !== 'boolean' && Object.prototype.hasOwnProperty.call(legacyCreditCardLimitLocks, method.id),
-  );
+  const hasMigration = methods.some((method) => method.type === 'credito' && typeof method.controlLimitLocked !== 'boolean' && Object.prototype.hasOwnProperty.call(legacyCreditCardLimitLocks, method.id));
   if (!hasMigration) return;
 
   const migratedMethods = methods.map((method) =>
@@ -7663,29 +7659,34 @@ function showUpdatePrompt() {
       const stepTarget = (currentStep / updatesToApply) * 100;
       progress = Math.min(progress + Math.floor(Math.random() * 12) + 4, stepTarget);
 
-      if (progress >= stepTarget && currentStep < updatesToApply) currentStep++;
+      if (progress >= stepTarget && currentStep < updatesToApply) {
+        currentStep++;
+      }
 
       if (progress >= 100) {
         progress = 100;
         clearInterval(interval);
+
         bar.style.width = '100%';
         statusText.textContent = 'Instalação concluída!';
         statusText.style.color = '#62c462';
         bar.style.background = '#fddf7b';
         percentText.textContent = '100%';
+
         sessionStorage.setItem(SERVICE_WORKER_PENDING_VERSION_KEY, String(updateToApply.newVersion));
 
         setTimeout(() => {
           updateToApply.worker.postMessage('skipWaiting');
-          // Fallback: se o navegador atrasar controllerchange, uma nova carga mantém
-          // a versão como pendente e tenta a ativação novamente, sem marcar sucesso antes.
+
           setTimeout(() => {
             if (!serviceWorkerReloading) window.location.reload();
           }, 5000);
         }, 500);
       } else {
-        bar.style.width = progress + '%';
-        percentText.textContent = progress + '%';
+        const displayProgress = Math.round(progress);
+
+        bar.style.width = `${displayProgress}%`;
+        percentText.textContent = `${displayProgress}%`;
         statusText.textContent = `Consolidando atualizações (${currentStep}/${updatesToApply})...`;
       }
     }, 200);

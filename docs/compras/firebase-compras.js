@@ -33,6 +33,9 @@
         defaultQuantity: Math.max(1, Number(product.defaultQuantity) || 1),
         photoDataUrl: product.photoDataUrl || '',
         isManual: Boolean(product.isManual),
+        scanRawValue: String(product.scanRawValue || ''),
+        scanFormat: String(product.scanFormat || ''),
+        scanIsUrl: Boolean(product.scanIsUrl),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
       await productsRef()

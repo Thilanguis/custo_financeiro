@@ -8,6 +8,7 @@ Este diretório concentra a funcionalidade do carrinho e não depende das regras
 - `camera.js`: abertura da webcam, tratamento de permissões, foco, zoom, troca de câmera e captura de fotos.
 - `scanner.js`: leitura e interpretação dos códigos pela câmera.
 - `firebase-compras.js`: leitura e gravação das coleções exclusivas de compras.
+- `photo-storage.js`: limites, medição e validação das fotos compactadas para o Firestore.
 - `compras.css`: estilos da aba e dos modais.
 
 ## Coleções usadas
@@ -15,7 +16,7 @@ Este diretório concentra a funcionalidade do carrinho e não depende das regras
 - `familias/{familyId}/produtos_compras/{barcode}`
 - `familias/{familyId}/listas_compras/ativa/itens/{barcode}`
 
-As fotos são comprimidas no navegador e enviadas ao Firebase Storage. O Firestore guarda apenas a URL e o caminho do arquivo. Fotos antigas em Data URL continuam compatíveis e podem ser migradas pelo botão disponível no catálogo de produtos.
+As fotos são comprimidas de forma adaptativa no navegador e salvas como Data URL no próprio documento do produto no Firestore. Esse modo funciona no plano gratuito Spark, sem Firebase Storage. Fotos novas buscam ficar abaixo de 160 KB e o cadastro bloqueia imagens acima do limite seguro de 320 KB. No catálogo, o botão **Compactar fotos antigas** converte as fotos antigas uma por uma; cada original só é substituída depois que a versão compactada é salva com sucesso.
 
 ## Scanner
 

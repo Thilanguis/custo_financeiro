@@ -1,100 +1,95 @@
-// Utilitários de foto do Carrinho de Compras.
-// Mantém a transformação de Data URL e a criação de caminhos testáveis fora do Firebase.
+// Utilitários de foto do Carrinho de Compras no plano gratuito Spark.
+// As imagens ficam compactadas como Data URL no próprio documento do produto no Firestore.
 (function attachShoppingPhotoStorage(root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (root) root.ShoppingPhotoStorage = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, () => {
-  const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+  // Os valores abaixo consideram o tamanho da string Data URL já codificada,
+  // que é o que efetivamente ocupa espaço no documento do Firestore.
+  const TARGET_FIRESTORE_PHOTO_BYTES = 160 * 1024;
+  const WARNING_FIRESTORE_PHOTO_BYTES = 220 * 1024;
+  const MAX_FIRESTORE_PHOTO_BYTES = 320 * 1024;
 
   function isDataUrl(value) {
     return /^data:image\/[a-z0-9.+-]+(?:;[^,]*)?,/i.test(String(value || ''));
   }
 
-  function dataUrlToBlob(dataUrl) {
-    const value = String(dataUrl || '');
-    const match = value.match(/^data:([^;,]+)(;base64)?,(.*)$/s);
-    if (!match) throw new Error('A foto não está em um formato válido.');
-
-    const contentType = match[1] || 'image/jpeg';
-    const isBase64 = Boolean(match[2]);
-    const payload = match[3] || '';
-    let bytes;
-
-    if (isBase64) {
-      const decode = typeof atob === 'function'
-        ? atob
-        : (input) => Buffer.from(input, 'base64').toString('binary');
-      const binary = decode(payload);
-      bytes = new Uint8Array(binary.length);
-      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-    } else {
-      const decoded = decodeURIComponent(payload);
-      bytes = new TextEncoder().encode(decoded);
-    }
-
-    return new Blob([bytes], { type: contentType });
-  }
-
-  function hashIdentifier(value) {
-    let hash = 0x811c9dc5;
+  function utf8ByteLength(value) {
     const text = String(value || '');
-    for (let index = 0; index < text.length; index += 1) {
-      hash ^= text.charCodeAt(index);
-      hash = Math.imul(hash, 0x01000193);
+    if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(text).length;
+    if (typeof Buffer !== 'undefined') return Buffer.byteLength(text, 'utf8');
+    return unescape(encodeURIComponent(text)).length;
+  }
+
+  function getDataUrlSize(value) {
+    return isDataUrl(value) ? utf8ByteLength(value) : 0;
+  }
+
+  function formatBytes(bytes) {
+    const amount = Math.max(0, Number(bytes) || 0);
+    if (amount < 1024) return `${Math.round(amount)} B`;
+    if (amount < 1024 * 1024) return `${Math.round(amount / 1024)} KB`;
+    return `${(amount / (1024 * 1024)).toFixed(2).replace('.', ',')} MB`;
+  }
+
+  function getPhotoSizeStatus(value) {
+    if (!isDataUrl(value)) {
+      return {
+        bytes: 0,
+        level: 'empty',
+        message: 'Fotos novas são compactadas e salvas no Firestore do plano Spark.',
+      };
     }
-    return (hash >>> 0).toString(16).padStart(8, '0');
+
+    const bytes = getDataUrlSize(value);
+    if (bytes > MAX_FIRESTORE_PHOTO_BYTES) {
+      return {
+        bytes,
+        level: 'danger',
+        message: `Foto com ${formatBytes(bytes)}. Ela está acima do limite seguro de ${formatBytes(MAX_FIRESTORE_PHOTO_BYTES)}.`,
+      };
+    }
+    if (bytes > WARNING_FIRESTORE_PHOTO_BYTES) {
+      return {
+        bytes,
+        level: 'warning',
+        message: `Foto compactada com ${formatBytes(bytes)}. Está dentro do limite, mas ainda ocupa bastante espaço.`,
+      };
+    }
+    return {
+      bytes,
+      level: 'ok',
+      message: `Foto compactada com ${formatBytes(bytes)} e pronta para salvar no Firestore.`,
+    };
   }
 
-  function sanitizePathSegment(value, fallback = 'item') {
-    const cleaned = String(value || '')
-      .normalize('NFKD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-zA-Z0-9._-]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 80);
-    return cleaned || fallback;
-  }
-
-  function extensionForContentType(contentType) {
-    const type = String(contentType || '').toLowerCase();
-    if (type === 'image/png') return 'png';
-    if (type === 'image/webp') return 'webp';
-    if (type === 'image/gif') return 'gif';
-    return 'jpg';
-  }
-
-  function buildPhotoStoragePath(familyId, barcode, options = {}) {
-    const timestamp = Number(options.timestamp) || Date.now();
-    const contentType = options.contentType || 'image/jpeg';
-    const family = sanitizePathSegment(familyId, 'familia');
-    const product = sanitizePathSegment(barcode, 'produto');
-    const hash = hashIdentifier(barcode);
-    const extension = extensionForContentType(contentType);
-    return `shopping-products/${family}/${product}-${hash}/photo-${timestamp}.${extension}`;
-  }
-
-  function validateImageBlob(blob, maxBytes = MAX_IMAGE_BYTES) {
-    if (!blob || typeof blob.size !== 'number') throw new Error('Não foi possível preparar a foto.');
-    if (!String(blob.type || '').startsWith('image/')) throw new Error('O arquivo selecionado não é uma imagem.');
-    if (blob.size <= 0) throw new Error('A foto está vazia.');
-    if (blob.size > maxBytes) throw new Error('A foto ficou maior que 2 MB mesmo após a compressão.');
+  function validateFirestorePhoto(value, maxBytes = MAX_FIRESTORE_PHOTO_BYTES) {
+    if (!isDataUrl(value)) throw new Error('A foto não está em um formato válido.');
+    const bytes = getDataUrlSize(value);
+    if (bytes <= 0) throw new Error('A foto está vazia.');
+    if (bytes > maxBytes) {
+      throw new Error(`A foto ficou com ${formatBytes(bytes)}, acima do limite seguro de ${formatBytes(maxBytes)}. Escolha outra foto ou recorte mais perto do produto.`);
+    }
     return true;
   }
 
   function getProductPhotoSource(product) {
-    return String(product?.photoUrl || product?.photoDataUrl || '');
+    // No modo Spark, a Data URL é a fonte principal. photoUrl é mantida somente
+    // para compatibilidade com algum produto que já tenha sido enviado ao Storage.
+    return String(product?.photoDataUrl || product?.photoUrl || '');
   }
 
   return {
-    MAX_IMAGE_BYTES,
+    TARGET_FIRESTORE_PHOTO_BYTES,
+    WARNING_FIRESTORE_PHOTO_BYTES,
+    MAX_FIRESTORE_PHOTO_BYTES,
     isDataUrl,
-    dataUrlToBlob,
-    hashIdentifier,
-    sanitizePathSegment,
-    extensionForContentType,
-    buildPhotoStoragePath,
-    validateImageBlob,
+    utf8ByteLength,
+    getDataUrlSize,
+    formatBytes,
+    getPhotoSizeStatus,
+    validateFirestorePhoto,
     getProductPhotoSource,
   };
 });

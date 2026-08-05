@@ -12,9 +12,8 @@
     scanner: new window.ShoppingBarcodeScanner(),
     photoCamera: new window.ShoppingCameraCapture(),
     pendingPhoto: '',
-    pendingPhotoStoragePath: '',
-    originalPhotoStoragePath: '',
     photoChanged: false,
+    photoCompactionRunning: false,
     editingProduct: null,
     pendingScanMetadata: null,
     pendingScannerContent: null,
@@ -143,6 +142,7 @@
                 <label class="action-btn shopping-file-button">🖼️ Arquivo<input type="file" id="shopping-product-photo" accept="image/*" hidden /></label>
                 <button type="button" class="action-btn danger" id="shopping-remove-photo" hidden>Remover</button>
               </div>
+              <small id="shopping-photo-size-status" class="shopping-photo-size-status">Fotos são compactadas e salvas no Firestore do plano Spark.</small>
             </div>
             <div class="shopping-product-main-fields">
               <label>Código de barras<input id="shopping-product-barcode" inputmode="numeric" autocomplete="off" maxlength="14" aria-describedby="shopping-barcode-help" /><small id="shopping-barcode-help" class="shopping-barcode-help">8, 12, 13 ou 14 dígitos. O sistema confere o dígito verificador.</small></label>
@@ -221,9 +221,9 @@
         </div>
         <div class="shopping-catalog-toolbar">
           <input type="search" id="shopping-catalog-search" class="list-search" placeholder="Buscar produto..." />
-          <button type="button" class="action-btn" id="shopping-migrate-photos" hidden>☁️ Migrar fotos antigas</button>
+          <button type="button" class="action-btn" id="shopping-compact-photos" hidden>🗜️ Compactar fotos antigas</button>
         </div>
-        <p class="shopping-storage-status" id="shopping-storage-status" hidden></p>
+        <p class="shopping-photo-maintenance-status" id="shopping-photo-maintenance-status" hidden></p>
         <div id="shopping-catalog-list" class="shopping-catalog-list"></div>
       </div>
     </div>
@@ -269,6 +269,7 @@
     productPhoto: document.getElementById('shopping-product-photo'),
     productPhotoPreview: document.getElementById('shopping-product-photo-preview'),
     productPhotoPlaceholder: document.getElementById('shopping-product-photo-placeholder'),
+    photoSizeStatus: document.getElementById('shopping-photo-size-status'),
     removePhoto: document.getElementById('shopping-remove-photo'),
     openPhotoCamera: document.getElementById('shopping-open-photo-camera'),
     openPhotoCameraSecondary: document.getElementById('shopping-open-photo-camera-secondary'),
@@ -281,8 +282,8 @@
     catalogOverlay: document.getElementById('shopping-catalog-overlay'),
     catalogSearch: document.getElementById('shopping-catalog-search'),
     catalogList: document.getElementById('shopping-catalog-list'),
-    migratePhotos: document.getElementById('shopping-migrate-photos'),
-    storageStatus: document.getElementById('shopping-storage-status'),
+    compactPhotos: document.getElementById('shopping-compact-photos'),
+    photoMaintenanceStatus: document.getElementById('shopping-photo-maintenance-status'),
     marketMode: document.getElementById('shopping-market-mode'),
   };
 
@@ -569,10 +570,13 @@
     });
 
     const categoryGroups = groupByCategory(products, (product) => product);
-    const legacyPhotoCount = [...state.products.values()].filter((product) => !product.photoUrl && window.ShoppingPhotoStorage?.isDataUrl(product.photoDataUrl)).length;
-    elements.migratePhotos.hidden = legacyPhotoCount === 0;
-    if (legacyPhotoCount > 0 && !elements.migratePhotos.disabled) {
-      elements.migratePhotos.textContent = `☁️ Migrar ${legacyPhotoCount} foto${legacyPhotoCount === 1 ? '' : 's'} antiga${legacyPhotoCount === 1 ? '' : 's'}`;
+    const photosToCompact = [...state.products.values()].filter((product) =>
+      window.ShoppingPhotoStorage?.isDataUrl(product.photoDataUrl)
+      && product.photoStorageMode !== 'firestore-data-url-v2',
+    );
+    elements.compactPhotos.hidden = photosToCompact.length === 0;
+    if (photosToCompact.length > 0 && !state.photoCompactionRunning) {
+      elements.compactPhotos.textContent = `🗜️ Compactar ${photosToCompact.length} foto${photosToCompact.length === 1 ? '' : 's'} antiga${photosToCompact.length === 1 ? '' : 's'}`;
     }
 
     elements.catalogList.innerHTML = products.length
@@ -702,15 +706,24 @@
     };
   }
 
-  function resetPhoto(photoSource = '', { storagePath = '', changed = false } = {}) {
+  function updatePhotoSizeStatus(photoSource = '') {
+    const status = window.ShoppingPhotoStorage?.getPhotoSizeStatus(photoSource) || {
+      level: 'empty',
+      message: 'Fotos são compactadas e salvas no Firestore do plano Spark.',
+    };
+    elements.photoSizeStatus.textContent = status.message;
+    elements.photoSizeStatus.dataset.level = status.level;
+  }
+
+  function resetPhoto(photoSource = '', { changed = false } = {}) {
     state.pendingPhoto = photoSource || '';
-    state.pendingPhotoStoragePath = storagePath || '';
     state.photoChanged = Boolean(changed);
     elements.productPhoto.value = '';
     elements.productPhotoPreview.src = state.pendingPhoto;
     elements.productPhotoPreview.hidden = !state.pendingPhoto;
     elements.productPhotoPlaceholder.hidden = Boolean(state.pendingPhoto);
     elements.removePhoto.hidden = !state.pendingPhoto;
+    updatePhotoSizeStatus(state.pendingPhoto);
   }
 
   function openProductForm({ barcode = '', product = null, addAfterSave = true, scanMetadata = null } = {}) {
@@ -718,7 +731,6 @@
     state.addAfterSave = addAfterSave;
     state.editingOriginalBarcode = String(product?.barcode || '');
     state.editingProduct = product || null;
-    state.originalPhotoStoragePath = String(product?.photoStoragePath || '');
     state.pendingScanMetadata = scanMetadata || (product?.scanRawValue ? {
       rawValue: product.scanRawValue,
       format: product.scanFormat || 'qr_code',
@@ -747,8 +759,7 @@
     elements.productDefaultQuantity.value = Math.max(1, Number(product?.defaultQuantity) || 1);
     document.getElementById('shopping-save-add').textContent = product ? 'Salvar alterações' : 'Salvar e adicionar';
     document.getElementById('shopping-save-only').hidden = Boolean(product);
-    resetPhoto(window.ShoppingPhotoStorage?.getProductPhotoSource(product) || product?.photoUrl || product?.photoDataUrl || '', {
-      storagePath: product?.photoStoragePath || '',
+    resetPhoto(window.ShoppingPhotoStorage?.getProductPhotoSource(product) || product?.photoDataUrl || product?.photoUrl || '', {
       changed: false,
     });
     openOverlay(elements.productOverlay);
@@ -792,13 +803,9 @@
       category: elements.productCategory.value.trim(),
       unit: elements.productUnit.value,
       defaultQuantity: Math.max(1, Number(elements.productDefaultQuantity.value) || 1),
-      photoDataUrl: window.ShoppingPhotoStorage?.isDataUrl(state.pendingPhoto)
-        && (state.photoChanged || !state.pendingPhotoStoragePath)
-        ? state.pendingPhoto
-        : '',
+      photoDataUrl: window.ShoppingPhotoStorage?.isDataUrl(state.pendingPhoto) ? state.pendingPhoto : '',
       photoUrl: !state.photoChanged ? String(state.editingProduct?.photoUrl || '') : '',
-      photoStoragePath: !state.photoChanged ? String(state.pendingPhotoStoragePath || state.editingProduct?.photoStoragePath || '') : '',
-      previousPhotoStoragePath: state.originalPhotoStoragePath,
+      photoStoragePath: !state.photoChanged ? String(state.editingProduct?.photoStoragePath || '') : '',
       photoChanged: state.photoChanged,
       isManual,
       scanRawValue: state.pendingScanMetadata?.rawValue || '',
@@ -829,26 +836,70 @@
     notify(state.productFormMode === 'edit' ? 'Produto atualizado.' : 'Produto cadastrado.');
   }
 
+  async function loadPhotoImage(dataUrl) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error('Não foi possível abrir a imagem selecionada.'));
+      image.src = dataUrl;
+    });
+  }
+
+  function renderCompressedPhoto(image, maxSize, quality) {
+    const scale = Math.min(1, maxSize / Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height));
+    const width = Math.max(1, Math.round((image.naturalWidth || image.width) * scale));
+    const height = Math.max(1, Math.round((image.naturalHeight || image.height) * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d', { alpha: false });
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, width, height);
+    context.drawImage(image, 0, 0, width, height);
+    return canvas.toDataURL('image/jpeg', quality);
+  }
+
+  async function compressPhotoDataUrl(dataUrl) {
+    if (!window.ShoppingPhotoStorage?.isDataUrl(dataUrl)) throw new Error('A foto não está em um formato válido.');
+    const image = await loadPhotoImage(dataUrl);
+    const targetBytes = window.ShoppingPhotoStorage.TARGET_FIRESTORE_PHOTO_BYTES;
+    const maxBytes = window.ShoppingPhotoStorage.MAX_FIRESTORE_PHOTO_BYTES;
+    const sizes = [720, 640, 560, 480, 400];
+    const qualities = [0.68, 0.60, 0.52, 0.44, 0.36];
+    const attemptedDimensions = new Set();
+    let smallest = '';
+    let smallestBytes = Number.POSITIVE_INFINITY;
+
+    for (const maxSize of sizes) {
+      const scale = Math.min(1, maxSize / Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height));
+      const dimensionKey = `${Math.round((image.naturalWidth || image.width) * scale)}x${Math.round((image.naturalHeight || image.height) * scale)}`;
+      if (attemptedDimensions.has(dimensionKey)) continue;
+      attemptedDimensions.add(dimensionKey);
+
+      for (const quality of qualities) {
+        const candidate = renderCompressedPhoto(image, maxSize, quality);
+        const bytes = window.ShoppingPhotoStorage.getDataUrlSize(candidate);
+        if (bytes < smallestBytes) {
+          smallest = candidate;
+          smallestBytes = bytes;
+        }
+        if (bytes <= targetBytes) return candidate;
+      }
+    }
+
+    window.ShoppingPhotoStorage.validateFirestorePhoto(smallest, maxBytes);
+    return smallest;
+  }
+
   async function compressImage(file) {
+    if (!String(file?.type || '').startsWith('image/')) throw new Error('O arquivo selecionado não é uma imagem.');
     const dataUrl = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result);
-      reader.onerror = reject;
+      reader.onerror = () => reject(new Error('Não foi possível ler a imagem selecionada.'));
       reader.readAsDataURL(file);
     });
-    const image = await new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = reject;
-      img.src = dataUrl;
-    });
-    const maxSize = 720;
-    const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(image.width * scale));
-    canvas.height = Math.max(1, Math.round(image.height * scale));
-    canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL('image/jpeg', 0.72);
+    return compressPhotoDataUrl(dataUrl);
   }
 
   async function openPhotoCamera() {
@@ -1050,8 +1101,9 @@
   elements.openPhotoCameraSecondary.addEventListener('click', openPhotoCamera);
   elements.capturePhoto.addEventListener('click', async () => {
     try {
-      const capturedPhoto = state.photoCamera.capture();
-      resetPhoto(capturedPhoto, { changed: true });
+      const capturedPhoto = state.photoCamera.capture({ maxSize: 720, quality: 0.68 });
+      const preparedPhoto = await compressPhotoDataUrl(capturedPhoto);
+      resetPhoto(preparedPhoto, { changed: true });
       await closeOverlay(elements.photoCameraOverlay);
       notify('Foto capturada.');
     } catch (error) {
@@ -1068,7 +1120,7 @@
       resetPhoto(preparedPhoto, { changed: true });
     } catch (error) {
       console.error(error);
-      notify('Não foi possível preparar a foto.', 'error');
+      notify(error.message || 'Não foi possível preparar a foto.', 'error');
     }
   });
 
@@ -1077,32 +1129,54 @@
     notify('A foto será removida ao salvar o produto.');
   });
 
-  elements.migratePhotos.addEventListener('click', async () => {
-    const legacyCount = [...state.products.values()].filter((product) => !product.photoUrl && window.ShoppingPhotoStorage?.isDataUrl(product.photoDataUrl)).length;
-    if (!legacyCount) return renderCatalog();
-    const confirmed = await askConfirmation(`Migrar ${legacyCount} foto${legacyCount === 1 ? '' : 's'} antiga${legacyCount === 1 ? '' : 's'} para o Firebase Storage?`);
+  elements.compactPhotos.addEventListener('click', async () => {
+    const candidates = [...state.products.values()].filter((product) =>
+      window.ShoppingPhotoStorage?.isDataUrl(product.photoDataUrl)
+      && product.photoStorageMode !== 'firestore-data-url-v2',
+    );
+    if (!candidates.length || state.photoCompactionRunning) return renderCatalog();
+
+    const confirmed = await askConfirmation(
+      `Compactar ${candidates.length} foto${candidates.length === 1 ? '' : 's'} antiga${candidates.length === 1 ? '' : 's'} dentro do Firestore?\n\nAs fotos originais só serão substituídas depois que cada versão compactada for salva com sucesso.`,
+    );
     if (!confirmed) return;
 
-    elements.migratePhotos.disabled = true;
-    elements.storageStatus.hidden = false;
-    elements.storageStatus.textContent = 'Preparando migração...';
+    state.photoCompactionRunning = true;
+    elements.compactPhotos.disabled = true;
+    elements.photoMaintenanceStatus.hidden = false;
+    let compacted = 0;
+    const failures = [];
+
     try {
-      const result = await window.ShoppingAPI.migrateLegacyPhotos(({ current, total, failures }) => {
-        elements.storageStatus.textContent = `Migrando fotos: ${current}/${total}${failures ? ` • ${failures} falha${failures === 1 ? '' : 's'}` : ''}`;
-      });
-      if (result.failures.length) {
-        elements.storageStatus.textContent = `${result.migrated}/${result.total} fotos migradas. ${result.failures.length} não puderam ser enviadas e continuam preservadas no Firestore.`;
-        notify('Migração concluída com algumas falhas.', 'error');
-      } else {
-        elements.storageStatus.textContent = `${result.migrated} foto${result.migrated === 1 ? '' : 's'} migrada${result.migrated === 1 ? '' : 's'} para o Storage.`;
-        notify('Fotos antigas migradas para o Firebase Storage.');
+      for (let index = 0; index < candidates.length; index += 1) {
+        const product = candidates[index];
+        elements.photoMaintenanceStatus.textContent = `Compactando fotos: ${index + 1}/${candidates.length} • ${product.name || product.barcode}`;
+        try {
+          const compressedPhoto = await compressPhotoDataUrl(product.photoDataUrl);
+          await window.ShoppingAPI.saveProduct({
+            ...product,
+            barcode: product.barcode || product.id,
+            photoDataUrl: compressedPhoto,
+            photoChanged: true,
+          });
+          compacted += 1;
+        } catch (error) {
+          console.error(`Não foi possível compactar a foto de ${product.name || product.barcode}:`, error);
+          failures.push(product.name || product.barcode);
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 20));
       }
-    } catch (error) {
-      console.error(error);
-      elements.storageStatus.textContent = error.message || 'Não foi possível migrar as fotos.';
-      notify('Não foi possível migrar as fotos. Verifique as regras do Firebase Storage.', 'error');
+
+      if (failures.length) {
+        elements.photoMaintenanceStatus.textContent = `${compacted}/${candidates.length} fotos compactadas. ${failures.length} foto${failures.length === 1 ? '' : 's'} permaneceu${failures.length === 1 ? '' : 'ram'} intacta${failures.length === 1 ? '' : 's'} por falha.`;
+        notify('Compactação concluída com algumas falhas. As fotos que falharam foram preservadas.', 'error');
+      } else {
+        elements.photoMaintenanceStatus.textContent = `${compacted} foto${compacted === 1 ? '' : 's'} compactada${compacted === 1 ? '' : 's'} no Firestore.`;
+        notify('Fotos antigas compactadas sem usar Firebase Storage.');
+      }
     } finally {
-      elements.migratePhotos.disabled = false;
+      state.photoCompactionRunning = false;
+      elements.compactPhotos.disabled = false;
       renderCatalog();
     }
   });

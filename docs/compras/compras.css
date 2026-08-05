@@ -471,6 +471,27 @@ body.shopping-modal-open {
 }
 
 #shopping-product-form,
+
+.shopping-photo-size-status {
+  display: block;
+  min-height: 2.5em;
+  color: #aaaac0;
+  font-size: 0.66rem;
+  line-height: 1.3;
+}
+
+.shopping-photo-size-status[data-level='ok'] {
+  color: #8fd59a;
+}
+
+.shopping-photo-size-status[data-level='warning'] {
+  color: #f5d67d;
+}
+
+.shopping-photo-size-status[data-level='danger'] {
+  color: #ff9a9a;
+}
+
 .shopping-product-main-fields,
 .shopping-product-fields,
 .shopping-product-fields .field {
@@ -1043,7 +1064,7 @@ body.shopping-modal-open {
 }
 
 
-/* Firebase Storage: migração e gerenciamento das fotos do catálogo */
+/* Busca e manutenção local das fotos do catálogo */
 .shopping-catalog-toolbar {
   display: flex;
   gap: 10px;
@@ -1057,7 +1078,7 @@ body.shopping-modal-open {
   margin: 0;
 }
 
-.shopping-storage-status {
+.shopping-photo-maintenance-status {
   margin: 0 0 10px;
   padding: 9px 11px;
   border: 1px solid rgba(253, 223, 123, 0.25);

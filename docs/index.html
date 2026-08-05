@@ -802,6 +802,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.11.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.11.0/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.11.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.11.0/firebase-storage-compat.js"></script>
 
     <script>
       const firebaseConfig = {
@@ -825,12 +826,14 @@
       });
 
       window.auth = firebase.auth();
+      window.storage = firebase.storage();
     </script>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="firebase-api.js"></script>
     <script src="card-statements.js"></script>
     <script src="app.js"></script>
+    <script src="compras/photo-storage.js"></script>
     <script src="compras/firebase-compras.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@zxing/browser@0.2.1/umd/zxing-browser.min.js"></script>
     <script src="compras/camera.js"></script>

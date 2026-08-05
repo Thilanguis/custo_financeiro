@@ -1041,3 +1041,40 @@ body.shopping-modal-open {
     grid-template-columns: 1fr;
   }
 }
+
+
+/* Firebase Storage: migração e gerenciamento das fotos do catálogo */
+.shopping-catalog-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.shopping-catalog-toolbar .list-search {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.shopping-storage-status {
+  margin: 0 0 10px;
+  padding: 9px 11px;
+  border: 1px solid rgba(253, 223, 123, 0.25);
+  border-radius: 10px;
+  background: rgba(253, 223, 123, 0.08);
+  color: #f5e5a8;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+@media (max-width: 640px) {
+  .shopping-catalog-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .shopping-catalog-toolbar .action-btn {
+    width: 100%;
+  }
+}

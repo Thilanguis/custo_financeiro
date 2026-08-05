@@ -42,16 +42,14 @@ test('QR sem GTIN entra no fluxo de conteúdo sem abrir URL automaticamente', ()
   const decoded = Scanner.decodeValue('https://fabricante.test/lote/ABC-123', 'qr_code');
   assert.equal(decoded.kind, 'content');
   assert.equal(decoded.isUrl, true);
-  assert.match(decoded.identifier, /^qr-[a-z0-9]+$/);
+  assert.match(decoded.identifier, /^scan-[a-z0-9]+$/);
 });
 
-test('identificador de conteúdo 2D é estável e diferencia formatos', () => {
+test('identificador de conteúdo 2D é estável mesmo quando o leitor muda o formato', () => {
   const first = Scanner.createContentIdentifier('LOTE-ABC-123', 'qr_code');
-  const second = Scanner.createContentIdentifier('LOTE-ABC-123', 'qr_code');
-  const dataMatrix = Scanner.createContentIdentifier('LOTE-ABC-123', 'data_matrix');
+  const second = Scanner.createContentIdentifier('LOTE-ABC-123', 'data_matrix');
   assert.equal(first, second);
-  assert.notEqual(first, dataMatrix);
-  assert.match(dataMatrix, /^dm-[a-z0-9]+$/);
+  assert.match(first, /^scan-[a-z0-9]+$/);
 });
 
 test('aceita GTIN numérico lido em Code 128', () => {
@@ -65,4 +63,25 @@ test('aceita UPC-E válido e preserva a forma comprimida', () => {
   assert.equal(validation.valid, true);
   assert.equal(validation.format, 'UPC-E');
   assert.equal(validation.expandedUpcA, '012345000065');
+});
+
+
+test('extrai GTIN de Data Matrix GS1 contínuo sem separador depois do AI 01', () => {
+  const decoded = Scanner.decodeValue('01100123456789021727083110LOTE5X147', 'data_matrix');
+  assert.equal(decoded.kind, 'product');
+  assert.equal(decoded.code, '10012345678902');
+});
+
+test('o mesmo Data Matrix gera o mesmo identificador com prefixo e separadores diferentes', () => {
+  const withPrefix = Scanner.decodeValue(']d201100123456789021727083110LOTE5X147', 'data_matrix');
+  const withoutPrefix = Scanner.decodeValue('01100123456789021727083110LOTE5X147', 'unknown');
+  assert.equal(withPrefix.kind, 'product');
+  assert.equal(withoutPrefix.kind, 'product');
+  assert.equal(withPrefix.code, withoutPrefix.code);
+});
+
+test('conteúdo 2D não-GTIN ignora prefixo de simbologia ao gerar identidade', () => {
+  const first = Scanner.createContentIdentifier(']d2LOTE-ABC-123');
+  const second = Scanner.createContentIdentifier('LOTE-ABC-123');
+  assert.equal(first, second);
 });

@@ -12,6 +12,10 @@
     scanner: new window.ShoppingBarcodeScanner(),
     photoCamera: new window.ShoppingCameraCapture(),
     pendingPhoto: '',
+    pendingPhotoStoragePath: '',
+    originalPhotoStoragePath: '',
+    photoChanged: false,
+    editingProduct: null,
     pendingScanMetadata: null,
     pendingScannerContent: null,
     scannerSmallCodeMode: false,
@@ -137,6 +141,7 @@
               <div class="shopping-photo-actions">
                 <button type="button" class="action-btn" id="shopping-open-photo-camera-secondary">📷 Câmera</button>
                 <label class="action-btn shopping-file-button">🖼️ Arquivo<input type="file" id="shopping-product-photo" accept="image/*" hidden /></label>
+                <button type="button" class="action-btn danger" id="shopping-remove-photo" hidden>Remover</button>
               </div>
             </div>
             <div class="shopping-product-main-fields">
@@ -214,7 +219,11 @@
           <div><strong>Catálogo de produtos</strong><small>Produtos que vocês já cadastraram.</small></div>
           <button type="button" class="action-btn shopping-modal-close" data-close="catalog">✕</button>
         </div>
-        <input type="search" id="shopping-catalog-search" class="list-search" placeholder="Buscar produto..." />
+        <div class="shopping-catalog-toolbar">
+          <input type="search" id="shopping-catalog-search" class="list-search" placeholder="Buscar produto..." />
+          <button type="button" class="action-btn" id="shopping-migrate-photos" hidden>☁️ Migrar fotos antigas</button>
+        </div>
+        <p class="shopping-storage-status" id="shopping-storage-status" hidden></p>
         <div id="shopping-catalog-list" class="shopping-catalog-list"></div>
       </div>
     </div>
@@ -260,6 +269,7 @@
     productPhoto: document.getElementById('shopping-product-photo'),
     productPhotoPreview: document.getElementById('shopping-product-photo-preview'),
     productPhotoPlaceholder: document.getElementById('shopping-product-photo-placeholder'),
+    removePhoto: document.getElementById('shopping-remove-photo'),
     openPhotoCamera: document.getElementById('shopping-open-photo-camera'),
     openPhotoCameraSecondary: document.getElementById('shopping-open-photo-camera-secondary'),
     photoCameraOverlay: document.getElementById('shopping-photo-camera-overlay'),
@@ -271,6 +281,8 @@
     catalogOverlay: document.getElementById('shopping-catalog-overlay'),
     catalogSearch: document.getElementById('shopping-catalog-search'),
     catalogList: document.getElementById('shopping-catalog-list'),
+    migratePhotos: document.getElementById('shopping-migrate-photos'),
+    storageStatus: document.getElementById('shopping-storage-status'),
     marketMode: document.getElementById('shopping-market-mode'),
   };
 
@@ -296,12 +308,38 @@
     return state.products.get(String(barcode));
   }
 
+  function getProductByScan(decoded = {}) {
+    const identifiers = new Set([decoded.code, decoded.identifier, ...(decoded.identifiers || [])].filter(Boolean).map(String));
+    for (const identifier of identifiers) {
+      const direct = getProduct(identifier);
+      if (direct) return direct;
+    }
+
+    const normalizedValue = String(decoded.normalizedValue || '');
+    for (const product of state.products.values()) {
+      const productIdentifiers = new Set([
+        product.barcode,
+        product.scanFingerprint,
+        ...(Array.isArray(product.scanIdentifiers) ? product.scanIdentifiers : []),
+      ].filter(Boolean).map(String));
+      if ([...identifiers].some((identifier) => productIdentifiers.has(identifier))) return product;
+      if (normalizedValue && String(product.scanNormalizedValue || '') === normalizedValue) return product;
+      if (normalizedValue && product.scanRawValue && window.ShoppingBarcodeScanner.normalizeContentForIdentifier(product.scanRawValue) === normalizedValue) return product;
+      if (decoded.code && product.scanRawValue) {
+        const extracted = window.ShoppingBarcodeScanner.extractProductCode(product.scanRawValue, product.scanFormat || 'unknown');
+        if (extracted?.code === String(decoded.code)) return product;
+      }
+    }
+    return null;
+  }
+
   function getItem(barcode) {
     return state.items.find((item) => String(item.barcode || item.id) === String(barcode));
   }
 
   function productImage(product, className = '') {
-    if (product?.photoDataUrl) return `<img class="${className}" src="${product.photoDataUrl}" alt="${escapeHtml(product.name)}" />`;
+    const photoSource = window.ShoppingPhotoStorage?.getProductPhotoSource(product) || product?.photoUrl || product?.photoDataUrl || '';
+    if (photoSource) return `<img class="${className}" src="${escapeHtml(photoSource)}" alt="${escapeHtml(product.name)}" />`;
     return `<span class="shopping-product-fallback ${className}" aria-hidden="true">📦</span>`;
   }
 
@@ -531,6 +569,11 @@
     });
 
     const categoryGroups = groupByCategory(products, (product) => product);
+    const legacyPhotoCount = [...state.products.values()].filter((product) => !product.photoUrl && window.ShoppingPhotoStorage?.isDataUrl(product.photoDataUrl)).length;
+    elements.migratePhotos.hidden = legacyPhotoCount === 0;
+    if (legacyPhotoCount > 0 && !elements.migratePhotos.disabled) {
+      elements.migratePhotos.textContent = `☁️ Migrar ${legacyPhotoCount} foto${legacyPhotoCount === 1 ? '' : 's'} antiga${legacyPhotoCount === 1 ? '' : 's'}`;
+    }
 
     elements.catalogList.innerHTML = products.length
       ? categoryGroups.map(({ category, entries }) => renderCategoryGroup(category, entries, renderCatalogProduct, 'shopping-catalog-category')).join('')
@@ -610,7 +653,7 @@
     elements.codeContent.hidden = false;
   }
 
-  async function handleCode(code, { fromScanner = false } = {}) {
+  async function handleCode(code, { fromScanner = false, decoded = null } = {}) {
     const validation = window.ShoppingBarcodeScanner.validateCode(code);
     if (!validation.valid) {
       elements.scannerStatus.textContent = validation.reason;
@@ -618,10 +661,14 @@
       return false;
     }
     const barcode = validation.code;
+    const scanLookup = decoded || { kind: 'product', code: barcode, identifier: barcode, identifiers: [barcode] };
     await closeOverlay(elements.scannerOverlay);
-    const product = getProduct(barcode) || (await window.ShoppingAPI.getProduct(barcode));
+    const product = getProduct(barcode)
+      || getProductByScan(scanLookup)
+      || (await window.ShoppingAPI.getProduct(barcode))
+      || (await window.ShoppingAPI.findProductByScan(scanLookup));
     if (product) openFoundProduct(product);
-    else openProductForm({ barcode, addAfterSave: true });
+    else openProductForm({ barcode, addAfterSave: true, scanMetadata: decoded?.rawValue ? scanLookup : null });
     return true;
   }
 
@@ -655,22 +702,29 @@
     };
   }
 
-  function resetPhoto(photoDataUrl = '') {
-    state.pendingPhoto = photoDataUrl || '';
+  function resetPhoto(photoSource = '', { storagePath = '', changed = false } = {}) {
+    state.pendingPhoto = photoSource || '';
+    state.pendingPhotoStoragePath = storagePath || '';
+    state.photoChanged = Boolean(changed);
     elements.productPhoto.value = '';
     elements.productPhotoPreview.src = state.pendingPhoto;
     elements.productPhotoPreview.hidden = !state.pendingPhoto;
     elements.productPhotoPlaceholder.hidden = Boolean(state.pendingPhoto);
+    elements.removePhoto.hidden = !state.pendingPhoto;
   }
 
   function openProductForm({ barcode = '', product = null, addAfterSave = true, scanMetadata = null } = {}) {
     state.productFormMode = product ? 'edit' : 'create';
     state.addAfterSave = addAfterSave;
     state.editingOriginalBarcode = String(product?.barcode || '');
+    state.editingProduct = product || null;
+    state.originalPhotoStoragePath = String(product?.photoStoragePath || '');
     state.pendingScanMetadata = scanMetadata || (product?.scanRawValue ? {
       rawValue: product.scanRawValue,
       format: product.scanFormat || 'qr_code',
-      identifier: product.barcode,
+      identifier: product.scanFingerprint || product.barcode,
+      identifiers: Array.isArray(product.scanIdentifiers) ? product.scanIdentifiers : [product.barcode],
+      normalizedValue: product.scanNormalizedValue || window.ShoppingBarcodeScanner.normalizeContentForIdentifier(product.scanRawValue),
       isUrl: Boolean(product.scanIsUrl),
     } : null);
 
@@ -693,7 +747,10 @@
     elements.productDefaultQuantity.value = Math.max(1, Number(product?.defaultQuantity) || 1);
     document.getElementById('shopping-save-add').textContent = product ? 'Salvar alterações' : 'Salvar e adicionar';
     document.getElementById('shopping-save-only').hidden = Boolean(product);
-    resetPhoto(product?.photoDataUrl || '');
+    resetPhoto(window.ShoppingPhotoStorage?.getProductPhotoSource(product) || product?.photoUrl || product?.photoDataUrl || '', {
+      storagePath: product?.photoStoragePath || '',
+      changed: false,
+    });
     openOverlay(elements.productOverlay);
     setTimeout(() => elements.productName.focus(), 80);
   }
@@ -735,14 +792,27 @@
       category: elements.productCategory.value.trim(),
       unit: elements.productUnit.value,
       defaultQuantity: Math.max(1, Number(elements.productDefaultQuantity.value) || 1),
-      photoDataUrl: state.pendingPhoto,
+      photoDataUrl: window.ShoppingPhotoStorage?.isDataUrl(state.pendingPhoto)
+        && (state.photoChanged || !state.pendingPhotoStoragePath)
+        ? state.pendingPhoto
+        : '',
+      photoUrl: !state.photoChanged ? String(state.editingProduct?.photoUrl || '') : '',
+      photoStoragePath: !state.photoChanged ? String(state.pendingPhotoStoragePath || state.editingProduct?.photoStoragePath || '') : '',
+      previousPhotoStoragePath: state.originalPhotoStoragePath,
+      photoChanged: state.photoChanged,
       isManual,
       scanRawValue: state.pendingScanMetadata?.rawValue || '',
       scanFormat: state.pendingScanMetadata?.format || '',
       scanIsUrl: Boolean(state.pendingScanMetadata?.isUrl),
+      scanNormalizedValue: state.pendingScanMetadata?.normalizedValue || '',
+      scanFingerprint: state.pendingScanMetadata?.identifier || '',
+      scanIdentifiers: state.pendingScanMetadata?.identifiers || (state.pendingScanMetadata?.identifier ? [state.pendingScanMetadata.identifier] : []),
     };
 
-    await window.ShoppingAPI.saveProduct(product);
+    const savedPhoto = await window.ShoppingAPI.saveProduct(product);
+    product.photoUrl = savedPhoto.photoUrl;
+    product.photoStoragePath = savedPhoto.photoStoragePath;
+    product.photoDataUrl = savedPhoto.photoDataUrl;
 
     if (state.productFormMode === 'edit' && originalBarcode && originalBarcode !== barcode) {
       const currentItem = getItem(originalBarcode);
@@ -750,7 +820,7 @@
         await window.ShoppingAPI.saveActiveItem({ ...currentItem, barcode });
         await window.ShoppingAPI.deleteActiveItem(originalBarcode);
       }
-      await window.ShoppingAPI.deleteProduct(originalBarcode);
+      await window.ShoppingAPI.deleteProduct(originalBarcode, { preservePhoto: true });
     }
 
     if (addToList) await addProductToList(product);
@@ -807,7 +877,7 @@
     try {
       await state.scanner.start(elements.scannerVideo, {
         smallCodeMode: state.scannerSmallCodeMode,
-        onDetected: (code) => handleCode(code, { fromScanner: true }),
+        onDetected: (code, result, validation, decoded) => handleCode(code, { fromScanner: true, decoded }),
         onContent: showScannerContent,
         onRejected: (validation) => {
           elements.scannerStatus.textContent = `Código ignorado: ${validation?.reason || 'formato não reconhecido.'}`;
@@ -935,10 +1005,15 @@
   elements.codeContentUse.addEventListener('click', async () => {
     const decoded = state.pendingScannerContent;
     if (!decoded?.rawValue) return;
-    const identifier = decoded.identifier || window.ShoppingBarcodeScanner.createContentIdentifier(decoded.rawValue, decoded.format);
-    const scanMetadata = { ...decoded, identifier };
+    const identifier = decoded.identifier || window.ShoppingBarcodeScanner.createContentIdentifier(decoded.rawValue);
+    const scanMetadata = {
+      ...decoded,
+      identifier,
+      normalizedValue: decoded.normalizedValue || window.ShoppingBarcodeScanner.normalizeContentForIdentifier(decoded.rawValue),
+      identifiers: decoded.identifiers || window.ShoppingBarcodeScanner.getContentIdentifiers(decoded.rawValue, decoded.format),
+    };
     try {
-      const existing = getProduct(identifier) || (await window.ShoppingAPI.getProduct(identifier));
+      const existing = getProductByScan(scanMetadata) || (await window.ShoppingAPI.findProductByScan(scanMetadata));
       await closeOverlay(elements.scannerOverlay);
       if (existing) openFoundProduct(existing);
       else openProductForm({ barcode: identifier, addAfterSave: true, scanMetadata });
@@ -975,8 +1050,8 @@
   elements.openPhotoCameraSecondary.addEventListener('click', openPhotoCamera);
   elements.capturePhoto.addEventListener('click', async () => {
     try {
-      state.pendingPhoto = state.photoCamera.capture();
-      resetPhoto(state.pendingPhoto);
+      const capturedPhoto = state.photoCamera.capture();
+      resetPhoto(capturedPhoto, { changed: true });
       await closeOverlay(elements.photoCameraOverlay);
       notify('Foto capturada.');
     } catch (error) {
@@ -989,13 +1064,46 @@
     const file = elements.productPhoto.files?.[0];
     if (!file) return;
     try {
-      state.pendingPhoto = await compressImage(file);
-      elements.productPhotoPreview.src = state.pendingPhoto;
-      elements.productPhotoPreview.hidden = false;
-      elements.productPhotoPlaceholder.hidden = true;
+      const preparedPhoto = await compressImage(file);
+      resetPhoto(preparedPhoto, { changed: true });
     } catch (error) {
       console.error(error);
       notify('Não foi possível preparar a foto.', 'error');
+    }
+  });
+
+  elements.removePhoto.addEventListener('click', () => {
+    resetPhoto('', { changed: true });
+    notify('A foto será removida ao salvar o produto.');
+  });
+
+  elements.migratePhotos.addEventListener('click', async () => {
+    const legacyCount = [...state.products.values()].filter((product) => !product.photoUrl && window.ShoppingPhotoStorage?.isDataUrl(product.photoDataUrl)).length;
+    if (!legacyCount) return renderCatalog();
+    const confirmed = await askConfirmation(`Migrar ${legacyCount} foto${legacyCount === 1 ? '' : 's'} antiga${legacyCount === 1 ? '' : 's'} para o Firebase Storage?`);
+    if (!confirmed) return;
+
+    elements.migratePhotos.disabled = true;
+    elements.storageStatus.hidden = false;
+    elements.storageStatus.textContent = 'Preparando migração...';
+    try {
+      const result = await window.ShoppingAPI.migrateLegacyPhotos(({ current, total, failures }) => {
+        elements.storageStatus.textContent = `Migrando fotos: ${current}/${total}${failures ? ` • ${failures} falha${failures === 1 ? '' : 's'}` : ''}`;
+      });
+      if (result.failures.length) {
+        elements.storageStatus.textContent = `${result.migrated}/${result.total} fotos migradas. ${result.failures.length} não puderam ser enviadas e continuam preservadas no Firestore.`;
+        notify('Migração concluída com algumas falhas.', 'error');
+      } else {
+        elements.storageStatus.textContent = `${result.migrated} foto${result.migrated === 1 ? '' : 's'} migrada${result.migrated === 1 ? '' : 's'} para o Storage.`;
+        notify('Fotos antigas migradas para o Firebase Storage.');
+      }
+    } catch (error) {
+      console.error(error);
+      elements.storageStatus.textContent = error.message || 'Não foi possível migrar as fotos.';
+      notify('Não foi possível migrar as fotos. Verifique as regras do Firebase Storage.', 'error');
+    } finally {
+      elements.migratePhotos.disabled = false;
+      renderCatalog();
     }
   });
 

@@ -156,7 +156,31 @@
       }
     }
 
-    static collectNumericCandidates(rawValue) {
+    static normalizeScannedContent(rawValue) {
+      return String(rawValue || '')
+        .normalize('NFKC')
+        .replace(/^\uFEFF/, '')
+        .replace(/^\][A-Za-z0-9]{2}/, '')
+        .replace(/<GS>/gi, '\u001d')
+        .replace(/\r\n?/g, '\n')
+        .replace(/\u0000/g, '')
+        .replace(/[\u0001-\u0008\u000b\u000c\u000e-\u001c\u001e\u001f\u007f]/g, '')
+        .trim();
+    }
+
+    static normalizeContentForIdentifier(rawValue) {
+      const normalized = ShoppingBarcodeScanner.normalizeScannedContent(rawValue);
+      const looksLikeGs1 = /^(?:01\d{14}|\(01\)\s*\d{14})/.test(normalized) || normalized.includes('\u001d');
+      if (looksLikeGs1) {
+        return normalized
+          .replace(/[()]/g, '')
+          .replace(/\u001d/g, '')
+          .replace(/\s+/g, '');
+      }
+      return normalized.replace(/[ \t]+/g, ' ').replace(/\n+/g, '\n');
+    }
+
+    static collectNumericCandidates(rawValue, format = 'unknown') {
       const raw = String(rawValue || '').trim();
       const candidates = [];
       const addCandidate = (value, source) => {
@@ -174,6 +198,7 @@
         /(?:^|[\u001d|])01(\d{14})(?=$|[\u001d|])/g,
         /(?:^|[?&#/;\s])01[=:/.\s-]*(\d{14})(?=$|[?&#/;\s])/gi,
       ];
+      gs1Patterns.unshift(/^(?:\]d2)?01(\d{14})/gi);
       gs1Patterns.forEach((pattern) => {
         let match;
         while ((match = pattern.exec(raw))) addCandidate(match[1], 'gs1-ai-01');
@@ -195,8 +220,8 @@
       return candidates;
     }
 
-    static extractProductCode(rawValue) {
-      const candidates = ShoppingBarcodeScanner.collectNumericCandidates(rawValue);
+    static extractProductCode(rawValue, format = 'unknown') {
+      const candidates = ShoppingBarcodeScanner.collectNumericCandidates(rawValue, format);
       for (const candidate of candidates) {
         const validation = ShoppingBarcodeScanner.validateCode(candidate.code);
         if (validation.valid) return { ...validation, source: candidate.source };
@@ -204,8 +229,8 @@
       return null;
     }
 
-    static createContentIdentifier(rawValue, format = 'qr_code') {
-      const text = String(rawValue || '');
+    static hashContent(value) {
+      const text = String(value || '');
       let hashA = 0x811c9dc5;
       let hashB = 0x9e3779b9;
       for (let index = 0; index < text.length; index += 1) {
@@ -215,10 +240,30 @@
         hashB ^= code + index;
         hashB = Math.imul(hashB, 0x85ebca6b);
       }
+      return `${(hashA >>> 0).toString(36)}${(hashB >>> 0).toString(36)}`;
+    }
+
+    static createLegacyContentIdentifier(rawValue, format = 'qr_code') {
       const normalizedFormat = ShoppingBarcodeScanner.normalizeFormat(format);
       const prefix = normalizedFormat === 'data_matrix' ? 'dm' : normalizedFormat === 'qr_code' ? 'qr' : 'code2d';
-      const digest = `${(hashA >>> 0).toString(36)}${(hashB >>> 0).toString(36)}`;
-      return `${prefix}-${digest}`;
+      return `${prefix}-${ShoppingBarcodeScanner.hashContent(String(rawValue || ''))}`;
+    }
+
+    static createContentIdentifier(rawValue) {
+      const canonical = ShoppingBarcodeScanner.normalizeContentForIdentifier(rawValue);
+      return `scan-${ShoppingBarcodeScanner.hashContent(canonical)}`;
+    }
+
+    static getContentIdentifiers(rawValue, format = 'unknown') {
+      const raw = String(rawValue || '').trim();
+      const canonical = ShoppingBarcodeScanner.normalizeContentForIdentifier(raw);
+      const formats = [format, 'data_matrix', 'qr_code', 'unknown'];
+      const identifiers = [ShoppingBarcodeScanner.createContentIdentifier(raw)];
+      for (const candidateFormat of formats) {
+        identifiers.push(ShoppingBarcodeScanner.createLegacyContentIdentifier(raw, candidateFormat));
+        if (canonical !== raw) identifiers.push(ShoppingBarcodeScanner.createLegacyContentIdentifier(canonical, candidateFormat));
+      }
+      return [...new Set(identifiers.filter(Boolean))];
     }
 
     static decodeValue(rawValue, format = 'unknown') {
@@ -227,7 +272,7 @@
       const directValidation = /^\d+$/.test(ShoppingBarcodeScanner.normalizeCode(raw))
         ? ShoppingBarcodeScanner.validateCode(raw, { format: normalizedFormat })
         : null;
-      const productCode = directValidation?.valid ? { ...directValidation, source: 'direct' } : ShoppingBarcodeScanner.extractProductCode(raw);
+      const productCode = directValidation?.valid ? { ...directValidation, source: 'direct' } : ShoppingBarcodeScanner.extractProductCode(raw, normalizedFormat);
       if (productCode) {
         return {
           kind: 'product',
@@ -248,7 +293,9 @@
           rawValue: raw,
           format: normalizedFormat,
           isUrl: ShoppingBarcodeScanner.isHttpUrl(raw),
-          identifier: ShoppingBarcodeScanner.createContentIdentifier(raw, normalizedFormat),
+          normalizedValue: ShoppingBarcodeScanner.normalizeContentForIdentifier(raw),
+          identifier: ShoppingBarcodeScanner.createContentIdentifier(raw),
+          identifiers: ShoppingBarcodeScanner.getContentIdentifiers(raw, normalizedFormat),
         };
       }
 

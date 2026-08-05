@@ -15,7 +15,7 @@ Este diretório concentra a funcionalidade do carrinho e não depende das regras
 - `familias/{familyId}/produtos_compras/{barcode}`
 - `familias/{familyId}/listas_compras/ativa/itens/{barcode}`
 
-As fotos são comprimidas no navegador e gravadas temporariamente como Data URL no documento do produto. Em uma etapa futura, elas podem ser migradas para o Firebase Storage sem alterar a lista de compras.
+As fotos são comprimidas no navegador e enviadas ao Firebase Storage. O Firestore guarda apenas a URL e o caminho do arquivo. Fotos antigas em Data URL continuam compatíveis e podem ser migradas pelo botão disponível no catálogo de produtos.
 
 ## Scanner
 

@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 global.window = global;
 global.navigator = {};
@@ -84,4 +86,12 @@ test('conteúdo 2D não-GTIN ignora prefixo de simbologia ao gerar identidade', 
   const first = Scanner.createContentIdentifier(']d2LOTE-ABC-123');
   const second = Scanner.createContentIdentifier('LOTE-ABC-123');
   assert.equal(first, second);
+});
+
+
+test('conteúdo 2D consulta o catálogo antes de perguntar pelo identificador novamente', () => {
+  const comprasSource = fs.readFileSync(path.join(__dirname, '../docs/compras/compras.js'), 'utf8');
+  assert.match(comprasSource, /async function handleScannerContent\(decoded\)/);
+  assert.match(comprasSource, /getProductByScan\(decoded\) \|\| \(await window\.ShoppingAPI\.findProductByScan\(decoded\)\)/);
+  assert.match(comprasSource, /onContent:\s*handleScannerContent/);
 });

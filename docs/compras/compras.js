@@ -657,6 +657,27 @@
     elements.codeContent.hidden = false;
   }
 
+  async function handleScannerContent(decoded) {
+    if (!decoded?.rawValue) return;
+
+    try {
+      elements.scannerStatus.textContent = 'Verificando se este código já está cadastrado...';
+      const product = getProductByScan(decoded) || (await window.ShoppingAPI.findProductByScan(decoded));
+
+      if (product) {
+        await closeOverlay(elements.scannerOverlay);
+        openFoundProduct(product);
+        return;
+      }
+
+      showScannerContent(decoded);
+    } catch (error) {
+      console.error('Erro ao procurar produto pelo código 2D:', error);
+      elements.scannerStatus.textContent = 'Não foi possível consultar o catálogo. Tente novamente.';
+      state.scanner.resume();
+    }
+  }
+
   async function handleCode(code, { fromScanner = false, decoded = null } = {}) {
     const validation = window.ShoppingBarcodeScanner.validateCode(code);
     if (!validation.valid) {
@@ -929,7 +950,7 @@
       await state.scanner.start(elements.scannerVideo, {
         smallCodeMode: state.scannerSmallCodeMode,
         onDetected: (code, result, validation, decoded) => handleCode(code, { fromScanner: true, decoded }),
-        onContent: showScannerContent,
+        onContent: handleScannerContent,
         onRejected: (validation) => {
           elements.scannerStatus.textContent = `Código ignorado: ${validation?.reason || 'formato não reconhecido.'}`;
         },

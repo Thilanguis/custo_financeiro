@@ -36,3 +36,7 @@ QR Code e Data Matrix são tratados de duas formas:
 
 1. quando contêm um GTIN/EAN/UPC válido, o número é extraído e segue o fluxo normal do produto;
 2. quando contêm texto ou URL sem GTIN, o conteúdo é mostrado sem abrir links automaticamente. O usuário pode copiar, continuar lendo ou criar um identificador interno estável para cadastrar o produto. O conteúdo original e o formato ficam salvos no cadastro.
+
+### Releitura de QR Code e Data Matrix
+
+Quando o usuário escolhe usar o identificador interno gerado pelo sistema, o conteúdo bruto, a forma normalizada e os identificadores equivalentes ficam associados ao produto. Nas leituras seguintes, o catálogo é consultado antes de exibir novamente a escolha, abrindo diretamente o produto já cadastrado quando houver correspondência.

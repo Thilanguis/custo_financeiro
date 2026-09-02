@@ -6346,6 +6346,163 @@ async function updateInstallmentPlanEntry(planId, installmentNumber, changes) {
   await FinanceAPI.saveInstallmentPlan(updatedPlan);
 }
 
+function buildInstallmentPaymentRecords(plan, installment, amount) {
+  const targetDate = installment.targetDate;
+  const targetMonth = targetDate.substring(0, 7);
+  const installmentCount = Number(plan.installmentCount || plan.installments?.length || 0);
+  const stageLabel = getInstallmentStageLabel(installment, plan);
+  const description =
+    plan.mode === 'rent_to_own'
+      ? `${plan.name} • ${stageLabel}`
+      : `${plan.name} (${installment.number}/${installmentCount})`;
+  const staticSyncId = `installment_${plan.id}_${installment.number}`;
+  const sharedData = {
+    date: targetDate,
+    category: plan.category,
+    amount,
+    owner: plan.owner,
+    paymentMethodId: plan.paymentMethodId || 'dinheiro',
+    observation: plan.observation || '',
+    isStatic: true,
+    staticSyncId,
+    installmentPlanId: plan.id,
+    installmentNumber: installment.number,
+    installmentCount,
+    installmentMode: plan.mode,
+    installmentStage: installment.type || null,
+    rentalNumber: installment.rentalNumber || null,
+    rentalCount: installment.rentalCount || plan.rentalMonths || null,
+    installmentOriginalName: plan.name,
+    installmentAutomationMode: 'fixed-static-clone',
+  };
+
+  if (plan.paymentFrequency === 'biweekly' && installment.type !== 'buyout') {
+    sharedData.isBiweeklyConverted = true;
+    sharedData.biweeklyAmount = plan.paymentAmount;
+    sharedData.biweeklyMonthlyAmount = amount;
+  }
+
+  Object.keys(sharedData).forEach((key) => {
+    if (sharedData[key] === undefined) delete sharedData[key];
+  });
+
+  return {
+    targetMonth,
+    plannedData: {
+      ...sharedData,
+      description,
+      fixed: true,
+      month: targetMonth,
+    },
+    receiptData: {
+      ...sharedData,
+      merchant: description,
+    },
+  };
+}
+
+window.markInstallmentAsPaid = async function (planId, installmentNumber, event) {
+  event?.preventDefault();
+  event?.stopPropagation();
+  const button = event?.currentTarget;
+  const localPlan = getInstallmentPlan(planId);
+  const localInstallment = localPlan?.installments?.find((entry) => entry.number === Number(installmentNumber));
+  if (!localPlan || !localInstallment) return showToast('Não foi possível localizar esta parcela.', 'error');
+  if (!['pending', 'budgeted'].includes(localInstallment.status)) return showToast('Esta parcela não está pendente.', 'info');
+
+  const stageLabel = getInstallmentStageLabel(localInstallment, localPlan) || `Parcela ${localInstallment.number}/${localPlan.installmentCount || localPlan.installments.length}`;
+  if (!(await showConfirm(`Marcar "${stageLabel}" como paga?\n\nO lançamento será criado no mês correto: ${formatShortDate(localInstallment.targetDate)}.`))) return;
+
+  const originalText = button?.textContent;
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Lançando...';
+  }
+
+  let createdPlannedId = null;
+  let createdReceiptId = null;
+  try {
+    const plan = (await FinanceAPI.getInstallmentPlan(planId)) || localPlan;
+    const installment = plan.installments?.find((entry) => entry.number === Number(installmentNumber));
+    if (!installment) throw new Error('Parcela não encontrada no parcelamento atualizado.');
+    if (installment.status === 'paid') return showToast('Esta parcela já foi marcada como paga.', 'info');
+    if (!['pending', 'budgeted'].includes(installment.status)) return showToast('Esta parcela não pode mais ser paga.', 'info');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(installment.targetDate || '')) throw new Error('A parcela não possui uma data válida.');
+
+    let paidAmount = Number(installment.amount) || 0;
+    if (plan.mode === 'rent_to_own' && installment.type === 'buyout') {
+      const paidRentalCredit = (plan.installments || [])
+        .filter((entry) => entry.type === 'rental' && entry.status === 'paid')
+        .reduce((total, entry) => total + Math.abs(Number(entry.paidAmount ?? entry.amount) || 0), 0);
+      const buyoutAmount = Math.max(0, Math.round((Math.abs(Number(plan.assetPrice || plan.principalAmount) || 0) - paidRentalCredit) * 100) / 100);
+      paidAmount = plan.isIncome ? -buyoutAmount : buyoutAmount;
+    }
+
+    const { targetMonth, plannedData, receiptData } = buildInstallmentPaymentRecords(plan, installment, paidAmount);
+    const canReusePlanned = Boolean(installment.plannedId && (installment.plannedMonth || targetMonth) === targetMonth);
+    if (canReusePlanned) plannedData.id = installment.plannedId;
+    const plannedId = await FinanceAPI.savePlanned(targetMonth, plannedData);
+    if (!canReusePlanned) createdPlannedId = plannedId;
+
+    receiptData.linkedPlannedId = plannedId;
+    const canReuseReceipt = Boolean(installment.receiptId && (installment.receiptMonth || targetMonth) === targetMonth);
+    if (canReuseReceipt) receiptData.id = installment.receiptId;
+    const receiptId = await FinanceAPI.saveReceipt(targetMonth, receiptData);
+    if (!canReuseReceipt) createdReceiptId = receiptId;
+
+    const updatedInstallments = plan.installments.map((entry) =>
+      entry.number === installment.number
+        ? {
+            ...entry,
+            amount: paidAmount,
+            status: 'paid',
+            plannedId,
+            plannedMonth: targetMonth,
+            receiptId,
+            receiptMonth: targetMonth,
+            paidAmount,
+            paidAt: installment.targetDate,
+          }
+        : entry,
+    );
+    const isCompleted = updatedInstallments.every((entry) => ['paid', 'cancelled'].includes(entry.status));
+    await FinanceAPI.saveInstallmentPlan({
+      ...plan,
+      status: isCompleted ? 'completed' : 'active',
+      projectedBuyoutAmount: installment.type === 'buyout' ? Math.abs(paidAmount) : plan.projectedBuyoutAmount,
+      totalAmount: updatedInstallments.reduce((total, entry) => total + (Number(entry.amount) || 0), 0),
+      installments: updatedInstallments,
+      updatedAt: new Date().toISOString(),
+      completedAt: isCompleted ? installment.targetDate : plan.completedAt || null,
+    });
+
+    logActivity('Adicionou', `${plan.name} • ${stageLabel} - ${formatCurrency(Math.abs(paidAmount))} em ${targetMonth}`);
+    showToast(`${stageLabel} paga e lançada em ${targetMonth}.`, 'success');
+  } catch (error) {
+    if (createdReceiptId && localInstallment.targetDate) {
+      try {
+        await FinanceAPI.deleteReceipt(localInstallment.targetDate.substring(0, 7), createdReceiptId);
+      } catch (rollbackError) {
+        console.error('Erro ao desfazer a nota criada:', rollbackError);
+      }
+    }
+    if (createdPlannedId && localInstallment.targetDate) {
+      try {
+        await FinanceAPI.deletePlanned(localInstallment.targetDate.substring(0, 7), createdPlannedId);
+      } catch (rollbackError) {
+        console.error('Erro ao desfazer o orçamento criado:', rollbackError);
+      }
+    }
+    console.error('Erro ao marcar parcela como paga:', error);
+    showToast('Não foi possível lançar esta parcela.', 'error');
+  } finally {
+    if (button?.isConnected) {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  }
+};
+
 function getInstallmentStatusPresentation(status) {
   if (status === 'paid') return { label: 'Paga', className: 'paid' };
   if (status === 'budgeted') return { label: 'No orçamento', className: 'budgeted' };
@@ -6406,7 +6563,11 @@ function renderInstallmentPlans() {
             return `<div class="installment-plan-item">
               <strong>${stageLabel || `${installment.number}/${installments.length}`}</strong>
               <span>${formatShortDate(installment.targetDate)} • ${formatCurrency(Math.abs(installment.amount))}</span>
-              <span class="installment-status installment-status--${presentation.className}">${presentation.label}</span>
+              ${
+                ['pending', 'budgeted'].includes(installment.status) && plan.automationMode === 'fixed-static-clone'
+                  ? `<button type="button" class="installment-status installment-status-action installment-status--${presentation.className}" onclick="markInstallmentAsPaid('${plan.id}', ${installment.number}, event)" title="Marcar como paga e lançar em ${installment.targetDate}">${presentation.label} → Pagar</button>`
+                  : `<span class="installment-status installment-status--${presentation.className}">${presentation.label}</span>`
+              }
             </div>`;
           })
           .join('')}

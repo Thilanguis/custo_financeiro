@@ -361,6 +361,20 @@ const incomeGabrielBiweeklyCheckbox = document.getElementById('income-gabriel-bi
 const incomeLuanaBiweeklyPreview = document.getElementById('income-luana-biweekly-preview');
 const incomeGabrielBiweeklyPreview = document.getElementById('income-gabriel-biweekly-preview');
 const btnSaveIncome = document.getElementById('btn-save-income');
+const temporaryIncomeExpanded = document.getElementById('temporary-income-expanded');
+const temporaryIncomeContent = document.getElementById('temporary-income-content');
+const temporaryIncomeGabrielStart = document.getElementById('temporary-income-gabriel-start');
+const temporaryIncomeGabrielEnd = document.getElementById('temporary-income-gabriel-end');
+const temporaryIncomeGabriel = document.getElementById('temporary-income-gabriel');
+const temporaryIncomeGabrielBiweeklyCheckbox = document.getElementById('temporary-income-gabriel-biweekly');
+const temporaryIncomeGabrielBiweeklyPreview = document.getElementById('temporary-income-gabriel-biweekly-preview');
+const temporaryIncomeLuanaStart = document.getElementById('temporary-income-luana-start');
+const temporaryIncomeLuanaEnd = document.getElementById('temporary-income-luana-end');
+const temporaryIncomeLuana = document.getElementById('temporary-income-luana');
+const temporaryIncomeLuanaBiweeklyCheckbox = document.getElementById('temporary-income-luana-biweekly');
+const temporaryIncomeLuanaBiweeklyPreview = document.getElementById('temporary-income-luana-biweekly-preview');
+const temporaryIncomeStatus = document.getElementById('temporary-income-status');
+const btnSaveTemporaryIncome = document.getElementById('btn-save-temporary-income');
 const btnLoadMonth = document.getElementById('btn-load-month');
 const btnToggleIncome = document.getElementById('btn-toggle-income');
 const incomePanel = document.getElementById('income-panel');
@@ -696,6 +710,7 @@ function getPaymentName(id) {
 // ===================================
 
 const summaryIncomeInline = document.getElementById('summary-income-inline');
+const summaryIncomeContext = document.getElementById('summary-income-context');
 const summaryExpenseInline = document.getElementById('summary-expense-inline');
 const summarySaldoLivre = document.getElementById('summary-saldo-livre');
 
@@ -733,6 +748,162 @@ function getIncomeRecordForMonth(month, allowPrevious = true) {
   if (exact || !allowPrevious) return exact || null;
   return incomes.filter((income) => income.month < month && hasIncomeData(income)).sort((a, b) => b.month.localeCompare(a.month))[0] || null;
 }
+
+let temporaryIncome = null;
+
+function getTemporaryIncomePersonData(person, data = temporaryIncome) {
+  return TemporaryIncomeRules.getPersonData(person, data);
+}
+
+function isTemporaryIncomePersonActiveForMonth(month, person, data = temporaryIncome) {
+  return TemporaryIncomeRules.isPersonActiveForMonth(month, person, data);
+}
+
+function getTemporaryIncomePeopleForMonth(month, data = temporaryIncome) {
+  return TemporaryIncomeRules.getActivePeople(month, data);
+}
+
+function isTemporaryIncomeActiveForMonth(month, data = temporaryIncome) {
+  return getTemporaryIncomePeopleForMonth(month, data).length > 0;
+}
+
+function getEffectiveIncomeRecordForMonth(month) {
+  return TemporaryIncomeRules.getEffectiveIncome(getIncomeRecordForMonth(month), month, temporaryIncome);
+}
+
+function updateTemporaryIncomeForm() {
+  const savedGabriel = getTemporaryIncomePersonData('gabriel');
+  const savedLuana = getTemporaryIncomePersonData('luana');
+  const gabriel = temporaryIncome?.enabled && savedGabriel.enabled ? savedGabriel : getTemporaryIncomePersonData('gabriel', null);
+  const luana = temporaryIncome?.enabled && savedLuana.enabled ? savedLuana : getTemporaryIncomePersonData('luana', null);
+  temporaryIncomeGabrielStart.value = gabriel.startDate;
+  temporaryIncomeGabrielEnd.value = gabriel.endDate;
+  temporaryIncomeGabrielBiweeklyCheckbox.checked = gabriel.isBiweekly;
+  temporaryIncomeGabriel.value = gabriel.enabled ? (gabriel.isBiweekly ? gabriel.biweeklyAmount : gabriel.amount) : '';
+  temporaryIncomeLuanaStart.value = luana.startDate;
+  temporaryIncomeLuanaEnd.value = luana.endDate;
+  temporaryIncomeLuanaBiweeklyCheckbox.checked = luana.isBiweekly;
+  temporaryIncomeLuana.value = luana.enabled ? (luana.isBiweekly ? luana.biweeklyAmount : luana.amount) : '';
+  temporaryIncomeExpanded.checked = Boolean(temporaryIncome?.enabled);
+  temporaryIncomeContent.hidden = !temporaryIncomeExpanded.checked;
+  updateTemporaryIncomeBiweeklyPreviews();
+  updateTemporaryIncomeStatus();
+}
+
+temporaryIncomeExpanded?.addEventListener('change', () => {
+  temporaryIncomeContent.hidden = !temporaryIncomeExpanded.checked;
+});
+
+function updateTemporaryIncomeBiweeklyPreviews() {
+  updateIncomeBiweeklyPreview(temporaryIncomeGabriel, temporaryIncomeGabrielBiweeklyCheckbox, temporaryIncomeGabrielBiweeklyPreview);
+  updateIncomeBiweeklyPreview(temporaryIncomeLuana, temporaryIncomeLuanaBiweeklyCheckbox, temporaryIncomeLuanaBiweeklyPreview);
+}
+
+function getTemporaryIncomeFormData() {
+  const buildPerson = (person, startInput, endInput, amountInput, biweeklyInput) => {
+    const startDate = startInput?.value || '';
+    const endDate = endInput?.value || '';
+    const sourceText = amountInput?.value || '';
+    const sourceAmount = parseAmount(sourceText);
+    const isBiweekly = Boolean(biweeklyInput?.checked);
+    const hasAnyValue = Boolean(startDate || endDate || sourceText !== '' || isBiweekly);
+    return {
+      person,
+      enabled: hasAnyValue,
+      complete: Boolean(startDate && endDate && sourceText !== '' && Number.isFinite(sourceAmount) && sourceAmount >= 0),
+      startDate,
+      endDate,
+      sourceText,
+      sourceAmount,
+      amount: Number.isFinite(sourceAmount) ? (isBiweekly ? TemporaryIncomeRules.convertBiweeklyToMonthly(sourceAmount) : sourceAmount) : 0,
+      isBiweekly,
+      biweeklyAmount: isBiweekly && Number.isFinite(sourceAmount) ? sourceAmount : null,
+    };
+  };
+
+  const gabriel = buildPerson('gabriel', temporaryIncomeGabrielStart, temporaryIncomeGabrielEnd, temporaryIncomeGabriel, temporaryIncomeGabrielBiweeklyCheckbox);
+  const luana = buildPerson('luana', temporaryIncomeLuanaStart, temporaryIncomeLuanaEnd, temporaryIncomeLuana, temporaryIncomeLuanaBiweeklyCheckbox);
+  return { enabled: gabriel.enabled || luana.enabled, gabriel, luana };
+}
+
+function updateTemporaryIncomeStatus() {
+  if (!temporaryIncomeStatus) return;
+  const selectedMonth = getCurrentMonth();
+  const form = getTemporaryIncomeFormData();
+  const savedGabriel = getTemporaryIncomePersonData('gabriel');
+  const savedLuana = getTemporaryIncomePersonData('luana');
+  const savedGabrielEnabled = Boolean(temporaryIncome?.enabled && savedGabriel.enabled);
+  const savedLuanaEnabled = Boolean(temporaryIncome?.enabled && savedLuana.enabled);
+  const formData = {
+    enabled: form.enabled,
+    gabrielEnabled: form.gabriel.enabled,
+    gabrielStartDate: form.gabriel.startDate,
+    gabrielEndDate: form.gabriel.endDate,
+    gabrielAmount: form.gabriel.amount,
+    gabrielIsBiweekly: form.gabriel.isBiweekly,
+    gabrielBiweeklyAmount: form.gabriel.biweeklyAmount,
+    luanaEnabled: form.luana.enabled,
+    luanaStartDate: form.luana.startDate,
+    luanaEndDate: form.luana.endDate,
+    luanaAmount: form.luana.amount,
+    luanaIsBiweekly: form.luana.isBiweekly,
+    luanaBiweeklyAmount: form.luana.biweeklyAmount,
+  };
+  const hasUnsavedChanges =
+    form.enabled !== Boolean(temporaryIncome?.enabled) ||
+    form.gabriel.enabled !== savedGabrielEnabled ||
+    (form.gabriel.enabled &&
+      (form.gabriel.startDate !== savedGabriel.startDate || form.gabriel.endDate !== savedGabriel.endDate || form.gabriel.isBiweekly !== savedGabriel.isBiweekly || form.gabriel.amount !== savedGabriel.amount || form.gabriel.biweeklyAmount !== savedGabriel.biweeklyAmount)) ||
+    form.luana.enabled !== savedLuanaEnabled ||
+    (form.luana.enabled &&
+      (form.luana.startDate !== savedLuana.startDate || form.luana.endDate !== savedLuana.endDate || form.luana.isBiweekly !== savedLuana.isBiweekly || form.luana.amount !== savedLuana.amount || form.luana.biweeklyAmount !== savedLuana.biweeklyAmount));
+
+  if (hasUnsavedChanges) {
+    const incompletePerson = [form.gabriel, form.luana].find((person) => person.enabled && !person.complete);
+    temporaryIncomeStatus.textContent = incompletePerson ? `Complete os campos de ${incompletePerson.person === 'gabriel' ? 'Gabriel' : 'Luana'} ou use Limpar.` : form.enabled ? 'Alterações ainda não salvas.' : 'Clique em salvar para voltar à renda normal.';
+    temporaryIncomeStatus.className = 'temporary-income-status is-pending';
+    return;
+  }
+
+  if (!form.enabled) {
+    temporaryIncomeStatus.textContent = 'Desativada — o sistema usa a renda normal.';
+    temporaryIncomeStatus.className = 'temporary-income-status';
+    return;
+  }
+
+  const activePeople = getTemporaryIncomePeopleForMonth(selectedMonth, formData).map((person) => getTemporaryIncomePersonData(person, formData).title);
+  temporaryIncomeStatus.textContent = activePeople.length
+    ? `Ativa em ${selectedMonth} para ${activePeople.join(' e ')}. Para cada pessoa fora do período, vale a renda normal.`
+    : `Fora do período em ${selectedMonth || 'este mês'} — a renda normal continua sendo usada.`;
+  temporaryIncomeStatus.className = `temporary-income-status ${activePeople.length ? 'is-active' : ''}`;
+}
+
+[temporaryIncomeGabrielStart, temporaryIncomeGabrielEnd, temporaryIncomeGabriel, temporaryIncomeLuanaStart, temporaryIncomeLuanaEnd, temporaryIncomeLuana].forEach((input) =>
+  input?.addEventListener('input', () => {
+    updateTemporaryIncomeBiweeklyPreviews();
+    updateTemporaryIncomeStatus();
+  }),
+);
+document.querySelectorAll('[data-clear-temporary-income]').forEach((button) =>
+  button.addEventListener('click', () => {
+    const isGabriel = button.dataset.clearTemporaryIncome === 'gabriel';
+    const inputs = isGabriel
+      ? [temporaryIncomeGabrielStart, temporaryIncomeGabrielEnd, temporaryIncomeGabriel, temporaryIncomeGabrielBiweeklyCheckbox]
+      : [temporaryIncomeLuanaStart, temporaryIncomeLuanaEnd, temporaryIncomeLuana, temporaryIncomeLuanaBiweeklyCheckbox];
+    inputs.forEach((input) => {
+      if (input.type === 'checkbox') input.checked = false;
+      else input.value = '';
+    });
+    updateTemporaryIncomeBiweeklyPreviews();
+    updateTemporaryIncomeStatus();
+  }),
+);
+[temporaryIncomeGabrielBiweeklyCheckbox, temporaryIncomeLuanaBiweeklyCheckbox].forEach((checkbox) =>
+  checkbox?.addEventListener('change', () => {
+    updateTemporaryIncomeBiweeklyPreviews();
+    updateTemporaryIncomeStatus();
+  }),
+);
 
 function loadIncomeToInputs(month) {
   const income = getIncomeRecordForMonth(month);
@@ -1490,14 +1661,64 @@ btnSaveIncome.addEventListener('click', async () => {
   refreshAll();
 });
 
+btnSaveTemporaryIncome?.addEventListener('click', async () => {
+  const form = getTemporaryIncomeFormData();
+  for (const person of [form.gabriel, form.luana]) {
+    if (!person.enabled) continue;
+    const name = person.person === 'gabriel' ? 'Gabriel' : 'Luana';
+    if (!person.startDate || !person.endDate) return showToast(`Informe as datas inicial e final de ${name}, ou use Limpar.`, 'error');
+    if (person.endDate < person.startDate) return showToast(`Para ${name}, a data final precisa ser igual ou posterior à inicial.`, 'error');
+    if (person.sourceText === '' || !Number.isFinite(person.sourceAmount) || person.sourceAmount < 0) return showToast(`Informe o valor temporário de ${name}, mesmo que seja zero.`, 'error');
+  }
+
+  const data = {
+    enabled: form.enabled,
+    gabrielEnabled: form.gabriel.enabled,
+    gabrielStartDate: form.gabriel.enabled ? form.gabriel.startDate : '',
+    gabrielEndDate: form.gabriel.enabled ? form.gabriel.endDate : '',
+    gabrielAmount: form.gabriel.enabled ? form.gabriel.amount : 0,
+    gabrielIsBiweekly: form.gabriel.enabled ? form.gabriel.isBiweekly : false,
+    gabrielBiweeklyAmount: form.gabriel.enabled ? form.gabriel.biweeklyAmount : null,
+    luanaEnabled: form.luana.enabled,
+    luanaStartDate: form.luana.enabled ? form.luana.startDate : '',
+    luanaEndDate: form.luana.enabled ? form.luana.endDate : '',
+    luanaAmount: form.luana.enabled ? form.luana.amount : 0,
+    luanaIsBiweekly: form.luana.enabled ? form.luana.isBiweekly : false,
+    luanaBiweeklyAmount: form.luana.enabled ? form.luana.biweeklyAmount : null,
+    updatedAt: new Date().toISOString(),
+  };
+  const originalText = btnSaveTemporaryIncome.textContent;
+  btnSaveTemporaryIncome.disabled = true;
+  btnSaveTemporaryIncome.textContent = 'Salvando...';
+
+  try {
+    await FinanceAPI.saveTemporaryIncome(data);
+    temporaryIncome = data;
+    updateTemporaryIncomeForm();
+    refreshAll();
+    const activeDescriptions = [form.gabriel, form.luana]
+      .filter((person) => person.enabled)
+      .map((person) => `${person.person === 'gabriel' ? 'Gabriel' : 'Luana'} ${person.startDate} a ${person.endDate}`);
+    logActivity('Editou', form.enabled ? `Renda temporária: ${activeDescriptions.join('; ')}` : 'Renda temporária removida');
+    showToast(form.enabled ? 'Renda temporária salva. A troca mensal será automática.' : 'Campos temporários limpos. A renda normal voltou a valer.', 'success');
+  } catch (error) {
+    console.error('Erro ao salvar renda temporária:', error);
+    showToast('Não foi possível salvar a renda temporária.', 'error');
+  } finally {
+    btnSaveTemporaryIncome.disabled = false;
+    btnSaveTemporaryIncome.textContent = originalText;
+  }
+});
+
 function getIncomeTotalForMonth(month) {
-  const income = getIncomeRecordForMonth(month);
+  const income = getEffectiveIncomeRecordForMonth(month);
   return income ? (income.luana || 0) + (income.gabriel || 0) : 0;
 }
 
 monthInput.addEventListener('change', () => {
   const newMonth = getCurrentMonth();
   syncData(newMonth);
+  updateTemporaryIncomeStatus();
 
   const today = getLocalDateString();
   const newDefaultDate = today.startsWith(newMonth) ? today : `${newMonth}-01`;
@@ -3369,6 +3590,11 @@ function updateGlobalSummaries() {
 
   /// UI - Renda (Mostra a Renda Total real) - Identificado como true para o modo seletivo
   document.getElementById('summary-income-inline').textContent = formatCurrency(totalIncomeReal, true);
+  if (summaryIncomeContext) {
+    const activePeople = getTemporaryIncomePeopleForMonth(month).map((person) => getTemporaryIncomePersonData(person).title);
+    summaryIncomeContext.hidden = activePeople.length === 0;
+    summaryIncomeContext.textContent = activePeople.length === 2 ? 'temporária: ambos' : `temporária: ${activePeople[0] || ''}`;
+  }
 
   // UI - Gasto (Gasto Líquido: Gastos - Reembolsos)
   const elExpense = document.getElementById('summary-expense-inline');
@@ -5574,6 +5800,7 @@ function refreshAll() {
       summaryIncomeInline.textContent = 'CAD 0,00';
       summaryIncomeInline.className = '';
     }
+    if (summaryIncomeContext) summaryIncomeContext.hidden = true;
     if (summaryExpenseInline) {
       summaryExpenseInline.textContent = 'CAD 0,00';
       summaryExpenseInline.className = '';
@@ -5689,6 +5916,12 @@ function syncData(month) {
     (items || []).forEach((key) => favoriteCompanyKeys.add(key));
     updatePlannedChips();
     updateReceiptChips();
+  });
+
+  FinanceAPI.listenTemporaryIncome((data) => {
+    temporaryIncome = data;
+    updateTemporaryIncomeForm();
+    refreshAll();
   });
 
   FinanceAPI.listenIncome(month, (inc) => {

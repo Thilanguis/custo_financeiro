@@ -671,7 +671,9 @@ h2 {
 
 #planned-biweekly:checked,
 #income-luana-biweekly:checked,
-#income-gabriel-biweekly:checked {
+#income-gabriel-biweekly:checked,
+#temporary-income-gabriel-biweekly:checked,
+#temporary-income-luana-biweekly:checked {
   background: var(--purple);
   border-color: var(--purple);
 }
@@ -698,6 +700,136 @@ h2 {
 .income-biweekly-control input[type='checkbox'] {
   width: 16px;
   height: 16px;
+}
+
+.temporary-income-card {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid rgba(143, 120, 219, 0.38);
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(143, 120, 219, 0.1), rgba(98, 196, 98, 0.05));
+}
+
+.temporary-income-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  cursor: pointer;
+}
+
+.temporary-income-toggle input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+}
+
+.temporary-income-toggle span,
+.temporary-income-toggle strong,
+.temporary-income-toggle small {
+  display: block;
+}
+
+.temporary-income-toggle strong {
+  color: #f5f5f5;
+  font-size: 0.86rem;
+}
+
+.temporary-income-toggle small {
+  margin-top: 2px;
+  color: #a6a6c0;
+  font-size: 0.7rem;
+  font-weight: 400;
+}
+
+.temporary-income-content[hidden] {
+  display: none;
+}
+
+.temporary-income-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(143, 120, 219, 0.24);
+}
+
+.temporary-income-fields[hidden] {
+  display: none;
+}
+
+.temporary-income-person {
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 9px;
+  background: rgba(8, 8, 20, 0.2);
+}
+
+.temporary-income-person + .temporary-income-person {
+  margin-top: 0;
+}
+
+.temporary-income-person-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  margin: 0 0 8px;
+}
+
+.temporary-income-person-heading strong {
+  color: #fddf7b;
+  font-size: 0.8rem;
+}
+
+.temporary-income-clear {
+  padding: 3px 8px;
+  border: 1px solid rgba(166, 166, 192, 0.24);
+  background: rgba(166, 166, 192, 0.08);
+  color: #a6a6c0;
+  font-size: 0.62rem;
+}
+
+.temporary-income-clear:hover {
+  border-color: rgba(247, 200, 74, 0.46);
+  color: #fddf7b;
+}
+
+.temporary-income-person > .field {
+  margin-top: 7px;
+}
+
+.temporary-income-hint,
+.temporary-income-status {
+  margin: 7px 0 0;
+  color: #a6a6c0;
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
+.temporary-income-hint {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 700px) {
+  .temporary-income-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+.temporary-income-status.is-active {
+  color: #81dc81;
+}
+
+.temporary-income-status.is-pending {
+  color: #f7c84a;
+}
+
+.temporary-income-save {
+  width: 100%;
+  margin-top: 9px;
+  border-color: rgba(143, 120, 219, 0.48);
 }
 
 .biweekly-conversion-preview {
@@ -835,6 +967,23 @@ button:active {
 .income-inline .summary-value {
   font-size: 0.95rem;
   font-weight: 600;
+}
+
+.summary-income-context {
+  margin-left: 3px;
+  padding: 1px 5px;
+  border: 1px solid rgba(98, 196, 98, 0.38);
+  border-radius: 999px;
+  background: rgba(98, 196, 98, 0.1);
+  color: #81dc81;
+  font-size: 0.52rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.summary-income-context[hidden] {
+  display: none;
 }
 
 .summary-row {

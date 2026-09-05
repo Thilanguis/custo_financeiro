@@ -153,6 +153,20 @@ window.FinanceAPI = {
     await db.collection('familias').doc(this.familyId).collection('meses').doc(month).set({ luana, gabriel, ...conversionData }, { merge: true });
   },
 
+  listenTemporaryIncome(callback) {
+    const unsub = db
+      .collection('familias')
+      .doc(this.familyId)
+      .collection('configuracoes')
+      .doc('renda_temporaria')
+      .onSnapshot((doc) => callback(doc.exists ? doc.data() : null));
+    this.unsubscribers.push(unsub);
+  },
+
+  async saveTemporaryIncome(data) {
+    await db.collection('familias').doc(this.familyId).collection('configuracoes').doc('renda_temporaria').set(data);
+  },
+
   // ===== ORÇAMENTO (PREVISTO) =====
   listenPlanned(month, callback) {
     const unsub = db

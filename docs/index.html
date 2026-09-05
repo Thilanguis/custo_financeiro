@@ -76,6 +76,7 @@
           <span class="dash-label">
             <span class="summary-context-icon" aria-hidden="true">💰</span>
             RENDA
+            <small id="summary-income-context" class="summary-income-context" hidden>temporária</small>
           </span>
           <strong id="summary-income-inline" class="positive">CAD 0,00</strong>
         </div>
@@ -214,7 +215,7 @@
           <div id="income-panel" style="display: none; margin-top: 12px; border-top: 1px solid #252537; padding-top: 12px; animation: fadeIn 0.15s ease-out">
             <div class="field-row">
               <div class="field">
-                <label>Renda Luana (CAD)</label>
+                <label>Renda normal Luana (CAD)</label>
                 <input type="number" step="0.01" id="income-luana" />
                 <div class="income-biweekly-control checkbox-field">
                   <label>
@@ -225,7 +226,7 @@
                 <small id="income-luana-biweekly-preview" class="biweekly-conversion-preview" aria-live="polite"></small>
               </div>
               <div class="field">
-                <label>Renda Gabriel (CAD)</label>
+                <label>Renda normal Gabriel (CAD)</label>
                 <input type="number" step="0.01" id="income-gabriel" />
                 <div class="income-biweekly-control checkbox-field">
                   <label>
@@ -237,6 +238,80 @@
               </div>
             </div>
             <button id="btn-save-income" class="btn-primary" style="margin-top: 4px">Salvar Rendas</button>
+
+            <section class="temporary-income-card" aria-labelledby="temporary-income-title">
+              <label class="temporary-income-toggle">
+                <input type="checkbox" id="temporary-income-expanded" />
+                <span>
+                  <strong id="temporary-income-title">⏳ Renda temporária</strong>
+                  <small>Preencha somente a pessoa que precisar. Um bloco vazio usa a renda normal.</small>
+                </span>
+              </label>
+
+              <div id="temporary-income-content" class="temporary-income-content" hidden>
+                <div id="temporary-income-fields" class="temporary-income-fields">
+                  <div class="temporary-income-person">
+                  <div class="temporary-income-person-heading">
+                    <strong>Gabriel</strong>
+                    <button type="button" class="temporary-income-clear" data-clear-temporary-income="gabriel">Limpar</button>
+                  </div>
+                  <div class="field-row">
+                    <div class="field">
+                      <label for="temporary-income-gabriel-start">De</label>
+                      <input type="date" id="temporary-income-gabriel-start" />
+                    </div>
+                    <div class="field">
+                      <label for="temporary-income-gabriel-end">Até</label>
+                      <input type="date" id="temporary-income-gabriel-end" />
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label for="temporary-income-gabriel">Valor temporário (CAD)</label>
+                    <input type="number" min="0" step="0.01" id="temporary-income-gabriel" />
+                    <div class="income-biweekly-control checkbox-field">
+                      <label>
+                        <input type="checkbox" id="temporary-income-gabriel-biweekly" />
+                        Bisemanal
+                      </label>
+                    </div>
+                    <small id="temporary-income-gabriel-biweekly-preview" class="biweekly-conversion-preview" aria-live="polite"></small>
+                  </div>
+                  </div>
+
+                  <div class="temporary-income-person">
+                  <div class="temporary-income-person-heading">
+                    <strong>Luana</strong>
+                    <button type="button" class="temporary-income-clear" data-clear-temporary-income="luana">Limpar</button>
+                  </div>
+                  <div class="field-row">
+                    <div class="field">
+                      <label for="temporary-income-luana-start">De</label>
+                      <input type="date" id="temporary-income-luana-start" />
+                    </div>
+                    <div class="field">
+                      <label for="temporary-income-luana-end">Até</label>
+                      <input type="date" id="temporary-income-luana-end" />
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label for="temporary-income-luana">Valor temporário (CAD)</label>
+                    <input type="number" min="0" step="0.01" id="temporary-income-luana" />
+                    <div class="income-biweekly-control checkbox-field">
+                      <label>
+                        <input type="checkbox" id="temporary-income-luana-biweekly" />
+                        Bisemanal
+                      </label>
+                    </div>
+                    <small id="temporary-income-luana-biweekly-preview" class="biweekly-conversion-preview" aria-live="polite"></small>
+                  </div>
+                  </div>
+                  <p class="temporary-income-hint">O sistema calcula por mês: todos os meses alcançados pelo período usarão estes valores por inteiro.</p>
+                </div>
+
+                <p id="temporary-income-status" class="temporary-income-status" aria-live="polite"></p>
+                <button type="button" id="btn-save-temporary-income" class="action-btn temporary-income-save">Salvar renda temporária</button>
+              </div>
+            </section>
           </div>
 
           <div id="payments-panel" style="display: none; margin-top: 12px; border-top: 1px solid #252537; padding-top: 12px; animation: fadeIn 0.15s ease-out">
@@ -829,6 +904,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="firebase-api.js"></script>
     <script src="card-statements.js"></script>
+    <script src="temporary-income.js"></script>
     <script src="app.js"></script>
     <script src="compras/photo-storage.js"></script>
     <script src="compras/firebase-compras.js"></script>

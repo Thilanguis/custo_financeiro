@@ -1,5 +1,5 @@
 // docs/service-worker.js
-const CACHE_NAME = 'controle-financeiro-v91';
+const CACHE_NAME = 'controle-financeiro-v92';
 const urlsToCache = [
   './',
   './index.html',
@@ -7,6 +7,7 @@ const urlsToCache = [
   './app.js',
   './firebase-api.js',
   './temporary-income.js',
+  './free-projection.js',
   './annual-planning.js',
   './bank-import.js',
   './pdf-statement-reader.js',

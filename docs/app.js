@@ -225,6 +225,9 @@ function showPrompt(message, defaultValue = '') {
 const plannedItems = [];
 const receipts = [];
 const incomes = [];
+let incomeHistoryLoaded = false;
+let incomeHistoryLoadPromise = null;
+let incomeHistoryLoadFailed = false;
 let paymentMethods = [];
 let creditCardPayments = {};
 let previousCreditCardPayments = {};
@@ -758,9 +761,46 @@ function hasIncomeData(income) {
 }
 
 function getIncomeRecordForMonth(month, allowPrevious = true) {
-  const exact = incomes.find((income) => income.month === month && hasIncomeData(income));
-  if (exact || !allowPrevious) return exact || null;
-  return incomes.filter((income) => income.month < month && hasIncomeData(income)).sort((a, b) => b.month.localeCompare(a.month))[0] || null;
+  const resolution = FreeProjection.resolveIncomeForMonth(incomes, month, { historyLoaded: incomeHistoryLoaded, historyFailed: incomeHistoryLoadFailed });
+  if (resolution.status === 'exact') return resolution.record;
+  return allowPrevious && resolution.status === 'previous' ? resolution.record : null;
+}
+
+function mergeIncomeRecord(month, data) {
+  const index = incomes.findIndex((income) => income.month === month);
+  if (!hasIncomeData(data)) {
+    if (index >= 0) incomes.splice(index, 1);
+    return;
+  }
+
+  const record = { month, ...data, luana: Number(data.luana) || 0, gabriel: Number(data.gabriel) || 0 };
+  if (index >= 0) incomes[index] = record;
+  else incomes.push(record);
+}
+
+async function ensureIncomeHistoryLoaded() {
+  if (incomeHistoryLoaded) return true;
+  if (incomeHistoryLoadPromise) return incomeHistoryLoadPromise;
+
+  incomeHistoryLoadPromise = (async () => {
+    try {
+      const snap = await window.db.collection('familias').doc(FinanceAPI.familyId).collection('meses').get();
+      snap.forEach((doc) => {
+        if (/^\d{4}-\d{2}$/.test(doc.id)) mergeIncomeRecord(doc.id, doc.data());
+      });
+      incomeHistoryLoaded = true;
+      incomeHistoryLoadFailed = false;
+      return true;
+    } catch (error) {
+      incomeHistoryLoadFailed = true;
+      console.error('Erro ao carregar o histórico de rendas:', error);
+      return false;
+    } finally {
+      incomeHistoryLoadPromise = null;
+    }
+  })();
+
+  return incomeHistoryLoadPromise;
 }
 
 let temporaryIncome = null;
@@ -1726,9 +1766,20 @@ btnSaveTemporaryIncome?.addEventListener('click', async () => {
   }
 });
 
+function getIncomeResolutionForMonth(month) {
+  const resolution = FreeProjection.resolveIncomeForMonth(incomes, month, { historyLoaded: incomeHistoryLoaded, historyFailed: incomeHistoryLoadFailed });
+  if (!resolution.available) return { ...resolution, total: null, effectiveRecord: null };
+
+  const effectiveRecord = TemporaryIncomeRules.getEffectiveIncome(resolution.record, month, temporaryIncome);
+  return {
+    ...resolution,
+    effectiveRecord,
+    total: (Number(effectiveRecord?.luana) || 0) + (Number(effectiveRecord?.gabriel) || 0),
+  };
+}
+
 function getIncomeTotalForMonth(month) {
-  const income = getEffectiveIncomeRecordForMonth(month);
-  return income ? (income.luana || 0) + (income.gabriel || 0) : 0;
+  return getIncomeResolutionForMonth(month).total;
 }
 
 monthInput.addEventListener('change', () => {
@@ -3974,47 +4025,12 @@ function updateReceiptsView() {
 // do que o valor realmente disponível. Itens estáticos ficam de fora pois já foram
 // espelhados automaticamente nas Notas.
 function getPendingFixedExpenses(month) {
-  // Um mês já encerrado não deve continuar reservando valores: nele, o Livre
-  // representa o resultado real final. A projeção vale apenas no mês atual e futuros.
-  if (month < getCurrentMonthISO()) return [];
-
-  const fixedByCategory = new Map();
-
-  // Usa a mesma leitura do comparativo Orçamento x Real: previsto e realizado
-  // são agrupados pela categoria, mesmo que os nomes dos estabelecimentos variem.
-  plannedItems
-    .filter((item) => item.month === month && item.fixed && !item.isStatic && item.amount > 0)
-    .forEach((item) => {
-      if (!fixedByCategory.has(item.category)) {
-        fixedByCategory.set(item.category, { category: item.category, amount: 0, dates: [], hasUndatedItem: false });
-      }
-
-      const group = fixedByCategory.get(item.category);
-      group.amount += item.amount;
-      if (item.date && item.date.startsWith(month)) group.dates.push(item.date);
-      else group.hasUndatedItem = true;
-    });
-
-  return Array.from(fixedByCategory.values())
-    .map((group) => {
-      // Notas estáticas já estão incluídas no Real automaticamente e pertencem
-      // aos seus próprios itens previstos. Elas não podem quitar outro fixo não
-      // estático da mesma categoria (ex.: CARRO não quita ESTACIONAMENTO).
-      const actualAmount = receipts
-        .filter((receipt) => receipt.date.startsWith(month) && receipt.amount > 0 && !receipt.isReimbursement && !receipt.isStatic && receipt.category === group.category)
-        .reduce((total, receipt) => total + receipt.amount, 0);
-      const remainingAmount = Math.max(group.amount - actualAmount, 0);
-      const sortedDates = group.dates.sort();
-      return {
-        category: group.category,
-        description: group.category,
-        amount: group.amount,
-        actualAmount,
-        remainingAmount,
-        date: group.hasUndatedItem ? '' : sortedDates[sortedDates.length - 1] || '',
-      };
-    })
-    .filter((item) => item.remainingAmount > 0.005);
+  return FreeProjection.reconcilePendingFixedExpenses({
+    month,
+    currentMonth: getCurrentMonthISO(),
+    plannedItems,
+    receipts,
+  });
 }
 
 function getPendingFixedProjectionEnd(month, pendingItems) {
@@ -4035,7 +4051,7 @@ function formatShortDate(date) {
   return date.split('-').reverse().slice(0, 2).join('/');
 }
 
-function renderFreeProjectionDetails(month, pendingItems, projectedBalance) {
+function renderFreeProjectionDetails(month, pendingItems, projection, incomeResolution) {
   const details = document.getElementById('summary-fixed-details');
   const freeCard = document.querySelector('.dash-item-free');
   const arrow = document.getElementById('summary-free-projection-arrow');
@@ -4046,15 +4062,14 @@ function renderFreeProjectionDetails(month, pendingItems, projectedBalance) {
   const pendingCardInvoices = cardInvoices.filter((invoice) => invoice.payment.remaining > 0.005);
   const paidCardInvoices = cardInvoices.filter((invoice) => invoice.payment.remaining <= 0.005);
   const hasCreditCards = cardInvoices.length > 0;
-  const hasDetails = hasPendingItems || hasCreditCards;
+  const hasDetails = Boolean(projection);
   const cardsRemainingTotal = Math.round(pendingCardInvoices.reduce((sum, invoice) => sum + invoice.payment.remaining, 0) * 100) / 100;
-  const projectedAfterFixedAndCards = Math.round((projectedBalance - cardsRemainingTotal) * 100) / 100;
 
   if (!summaryFreeProjectionToggle || !details || !freeCard || !arrow) return;
 
   if (oldCardsDue) {
-    oldCardsDue.textContent = '';
-    oldCardsDue.classList.remove('visible');
+    oldCardsDue.textContent = hasCreditCards ? `Faturas pendentes (separadas): ${formatCurrency(cardsRemainingTotal)}` : '';
+    oldCardsDue.classList.toggle('visible', hasCreditCards);
   }
 
   if (!hasDetails) isFreeProjectionExpanded = false;
@@ -4062,11 +4077,11 @@ function renderFreeProjectionDetails(month, pendingItems, projectedBalance) {
   summaryFreeProjectionToggle.classList.toggle('is-available', hasDetails);
   summaryFreeProjectionToggle.setAttribute('aria-disabled', String(!hasDetails));
   summaryFreeProjectionToggle.setAttribute('aria-expanded', String(hasDetails && isFreeProjectionExpanded));
-  summaryFreeProjectionToggle.title = hasDetails ? 'Ver fixos pendentes e faturas de cartões' : 'Nenhum compromisso pendente';
+  summaryFreeProjectionToggle.title = hasDetails ? 'Ver composição do Saldo Livre, fixos e faturas' : 'Projeção indisponível';
   arrow.textContent = isFreeProjectionExpanded ? '▼' : '▶';
 
   if (afterFixed) {
-    afterFixed.textContent = hasDetails ? `Após fixos e cartões: ${formatCurrency(projectedAfterFixedAndCards)}` : '';
+    afterFixed.textContent = projection?.incomeAvailable ? `Após fixos pendentes: ${formatCurrency(projection.afterPendingFixed)}` : 'Saldo indisponível: renda não carregada';
     afterFixed.classList.toggle('visible', hasDetails);
   }
 
@@ -4085,9 +4100,9 @@ function renderFreeProjectionDetails(month, pendingItems, projectedBalance) {
       const visualPercent = Math.min(percent, 100);
       const roundedPercent = Math.round(percent * 100) / 100;
       const progressClass = roundedPercent < 100 ? 'progress-safe' : roundedPercent === 100 ? 'progress-warning' : 'progress-danger';
-      const differenceAmount = Math.round((item.amount - item.actualAmount) * 100) / 100;
+      const differenceAmount = item.remainingAmount;
       const differenceClass = differenceAmount > 0 ? 'positive' : differenceAmount === 0 ? 'neutral' : 'negative';
-      const actualDisplay = item.actualAmount === 0 ? formatCurrency(0) : `- ${formatCurrency(item.actualAmount)}`;
+      const actualDisplay = formatCurrency(item.actualAmount);
 
       return `
         <tr>
@@ -4122,16 +4137,30 @@ function renderFreeProjectionDetails(month, pendingItems, projectedBalance) {
   const paidCardRows = renderCardRows(paidCardInvoices);
   const cardTableHead = '<thead><tr><th>Cartão</th><th>Fatura</th><th>Pago</th><th>Restante</th><th>Situação</th></tr></thead>';
 
+  const incomeSource = incomeResolution?.status === 'previous' ? `Base herdada de ${incomeResolution.sourceMonth}` : incomeResolution?.status === 'exact' ? 'Renda do mês selecionado' : incomeResolution?.status === 'loading' ? 'Histórico de rendas ainda carregando' : incomeResolution?.status === 'error' ? 'Falha ao carregar o histórico de rendas' : 'Nenhuma renda cadastrada neste mês ou antes dele';
+  const breakdownRows = projection.incomeAvailable
+    ? `<tr><td>Renda base <small>${incomeSource}</small></td><td>${formatCurrency(projection.baseIncome)}</td></tr>
+       <tr><td>Entradas extras reais</td><td>+ ${formatCurrency(projection.extraIncome)}</td></tr>
+       <tr><td>Despesas nas Notas Reais <small>inclui compras de cartão</small></td><td>- ${formatCurrency(projection.actualExpenses)}</td></tr>
+       <tr><td>Reembolsos</td><td>+ ${formatCurrency(projection.reimbursements)}</td></tr>
+       <tr class="is-total"><td>Saldo Livre Real</td><td>${formatCurrency(projection.freeReal)}</td></tr>
+       <tr><td>Fixos não estáticos pendentes</td><td>- ${formatCurrency(projection.pendingFixedTotal)}</td></tr>
+       <tr class="is-total"><td>Saldo estimado após esses fixos</td><td>${formatCurrency(projection.afterPendingFixed)}</td></tr>
+       <tr class="is-separated"><td>Faturas pendentes <small>obrigação separada; compras já descontadas acima</small></td><td>${formatCurrency(cardsRemainingTotal)}</td></tr>`
+    : `<tr class="is-warning"><td>Projeção indisponível <small>${incomeSource}. O sistema não assume renda zero.</small></td><td>—</td></tr>`;
+
   details.innerHTML = `
+    <div class="dash-free-details-title">Composição do Saldo Livre</div>
+    <table class="dash-projection-breakdown"><tbody>${breakdownRows}</tbody></table>
     ${
       hasPendingItems
-        ? `<div class="dash-free-details-title">Fixos pendentes até ${formatShortDate(projectionEnd)}</div>
-           <table class="dash-fixed-table"><thead><tr><th>Fixo</th><th>Prev.</th><th>Real</th><th>Diferença</th></tr></thead><tbody>${fixedRows}</tbody></table>`
-        : ''
+        ? `<div class="dash-free-details-title">Fixos não estáticos pendentes até ${formatShortDate(projectionEnd)}</div>
+           <table class="dash-fixed-table"><thead><tr><th>Fixo</th><th>Previsto</th><th>Conciliado</th><th>Pendente</th></tr></thead><tbody>${fixedRows}</tbody></table>`
+        : '<div class="dash-card-empty">Nenhum fixo não estático pendente.</div>'
     }
     ${
       hasCreditCards
-        ? `<div class="dash-free-details-title dash-card-invoices-title">Cartões do mês <small>Pendentes entram na projeção; pagos e sem pendência ficam apenas no histórico.</small></div>
+        ? `<div class="dash-free-details-title dash-card-invoices-title">Faturas e saldos transportados <small>Exibidos como obrigação de pagamento; não são subtraídos novamente do Livre.</small></div>
            <div class="dash-card-group-title is-pending"><span>Pendentes</span><strong>${formatCurrency(cardsRemainingTotal)}</strong></div>
            ${pendingCardRows ? `<div class="dash-card-table-scroll"><table class="dash-fixed-table dash-card-invoices-table">${cardTableHead}<tbody>${pendingCardRows}</tbody></table></div>` : '<div class="dash-card-empty">Nenhuma fatura pendente.</div>'}
            <div class="dash-card-group-title is-paid"><span>Pagos / sem pendência</span><strong>${paidCardInvoices.length}</strong></div>
@@ -4149,7 +4178,8 @@ function updateGlobalSummaries() {
   if (!month) return;
 
   // Renda Base (Seu salário fixo cadastrado)
-  const baseIncome = getIncomeTotalForMonth(month);
+  const incomeResolution = getIncomeResolutionForMonth(month);
+  const baseIncome = incomeResolution.total;
 
   // Cálculo Previsto
   let pExp = 0; // Gastos (+)
@@ -4180,20 +4210,30 @@ function updateGlobalSummaries() {
 
   // Gasto Líquido (Abate apenas os Reembolsos)
   const netPlannedExpense = pExp;
-  const netActualExpense = rExp - rReimb;
-
-  // Renda Total (Salário Base + Entradas de Eventos/Avulsas)
-  const totalIncomePlanned = baseIncome + pExtraInc;
-  const totalIncomeReal = baseIncome + rExtraInc;
-
-  const saldoPrevisto = totalIncomePlanned - netPlannedExpense;
-  const saldoReal = totalIncomeReal - netActualExpense;
   const pendingFixedItems = getPendingFixedExpenses(month);
-  const pendingFixedExpense = pendingFixedItems.reduce((total, item) => total + item.remainingAmount, 0);
-  const saldoAfterPendingFixed = saldoReal - pendingFixedExpense;
+  const cardInvoices = getCreditCardInvoicesForMonth(month);
+  const projection = FreeProjection.calculateProjection({
+    baseIncome,
+    extraIncome: rExtraInc,
+    actualExpenses: rExp,
+    reimbursements: rReimb,
+    pendingFixedItems,
+    pendingCardInvoices: cardInvoices.filter((invoice) => invoice.payment.remaining > 0.005),
+  });
+  const totalIncomePlanned = incomeResolution.available ? baseIncome + pExtraInc : null;
+  const saldoPrevisto = totalIncomePlanned === null ? null : totalIncomePlanned - netPlannedExpense;
 
   /// UI - Renda (Mostra a Renda Total real) - Identificado como true para o modo seletivo
-  document.getElementById('summary-income-inline').textContent = formatCurrency(totalIncomeReal, true);
+  document.getElementById('summary-income-inline').textContent = projection.incomeAvailable ? formatCurrency(projection.totalIncomeReal, true) : '—';
+  document.getElementById('summary-income-inline').title = projection.incomeAvailable
+    ? incomeResolution.status === 'previous'
+      ? `Renda base carregada de ${incomeResolution.sourceMonth}`
+      : 'Renda do mês selecionado'
+    : incomeResolution.status === 'loading'
+      ? 'Carregando histórico de rendas'
+      : incomeResolution.status === 'error'
+        ? 'Falha ao carregar o histórico de rendas'
+        : 'Nenhuma renda cadastrada neste mês ou em mês anterior';
   if (summaryIncomeContext) {
     const activePeople = getTemporaryIncomePeopleForMonth(month).map((person) => getTemporaryIncomePersonData(person).title);
     summaryIncomeContext.hidden = activePeople.length === 0;
@@ -4202,43 +4242,28 @@ function updateGlobalSummaries() {
 
   // UI - Gasto (Gasto Líquido: Gastos - Reembolsos)
   const elExpense = document.getElementById('summary-expense-inline');
-  elExpense.textContent = formatCurrency(netActualExpense);
+  elExpense.textContent = formatCurrency(projection.netActualExpense);
   document.getElementById('summary-planned-expense').textContent = formatCurrency(netPlannedExpense).replace('CAD ', '');
-  elExpense.className = netActualExpense > totalIncomeReal ? 'status-danger' : netActualExpense > netPlannedExpense ? 'status-warning' : 'status-success';
+  elExpense.className = !projection.incomeAvailable ? 'status-warning' : projection.netActualExpense > projection.totalIncomeReal ? 'status-danger' : projection.netActualExpense > netPlannedExpense ? 'status-warning' : 'status-success';
 
   // UI - Livre: mantém Real e Previsto; os fixos pendentes aparecem no detalhe expansível.
   const elLivre = document.getElementById('summary-saldo-livre');
-  elLivre.textContent = formatCurrency(saldoReal);
+  elLivre.textContent = projection.incomeAvailable ? formatCurrency(projection.freeReal) : '—';
   const plannedBalanceEl = document.getElementById('summary-saldo-previsto');
-  if (plannedBalanceEl) plannedBalanceEl.textContent = formatCurrency(saldoPrevisto).replace('CAD ', '');
-  elLivre.className = saldoReal < 0 ? 'status-danger' : saldoReal < saldoPrevisto ? 'status-warning' : 'status-success';
+  if (plannedBalanceEl) plannedBalanceEl.textContent = saldoPrevisto === null ? '—' : formatCurrency(saldoPrevisto).replace('CAD ', '');
+  elLivre.className = !projection.incomeAvailable ? 'status-warning' : projection.freeReal < 0 ? 'status-danger' : projection.freeReal < saldoPrevisto ? 'status-warning' : 'status-success';
 
-  renderFreeProjectionDetails(month, pendingFixedItems, saldoAfterPendingFixed);
+  renderFreeProjectionDetails(month, pendingFixedItems, projection, incomeResolution);
 
   renderPlannedItemsList(month);
 }
 
 // Função nova para pré-carregar rendas e evitar bug da virada de mês
 async function preloadAllIncomes() {
-  try {
-    const snap = await window.db.collection('familias').doc(FinanceAPI.familyId).collection('meses').get();
-    snap.forEach((doc) => {
-      // Pega apenas documentos no formato de mês (ex: 2026-04)
-      if (/^\d{4}-\d{2}$/.test(doc.id)) {
-        const data = doc.data();
-        if (data.luana !== undefined || data.gabriel !== undefined) {
-          const exists = incomes.find((i) => i.month === doc.id);
-          if (!exists) {
-            incomes.push({ month: doc.id, ...data, luana: data.luana || 0, gabriel: data.gabriel || 0 });
-          }
-        }
-      }
-    });
-    // Atualiza a tela assim que tiver o histórico em mãos
+  const loaded = await ensureIncomeHistoryLoaded();
+  if (loaded) {
     loadIncomeToInputs(getCurrentMonth());
     refreshAll();
-  } catch (e) {
-    console.error('Erro ao pré-carregar rendas do histórico:', e);
   }
 }
 
@@ -4266,23 +4291,9 @@ async function initAppUI() {
   updatePlannedChips();
   updateReceiptChips();
 
-  // Busca todo o histórico de rendas ANTES de sincronizar o mês atual
-  try {
-    const snap = await window.db.collection('familias').doc(FinanceAPI.familyId).collection('meses').get();
-    snap.forEach((doc) => {
-      if (/^\d{4}-\d{2}$/.test(doc.id)) {
-        const data = doc.data();
-        if (data.luana !== undefined || data.gabriel !== undefined) {
-          const exists = incomes.find((i) => i.month === doc.id);
-          if (!exists) {
-            incomes.push({ month: doc.id, ...data, luana: data.luana || 0, gabriel: data.gabriel || 0 });
-          }
-        }
-      }
-    });
-  } catch (e) {
-    console.error('Erro ao pré-carregar rendas:', e);
-  }
+  // Busca todo o histórico de rendas ANTES de calcular o Livre. Se falhar,
+  // a interface mostra a renda como indisponível em vez de assumir zero.
+  await ensureIncomeHistoryLoaded();
 
   syncData(m);
   listenToLogs();
@@ -4385,10 +4396,13 @@ function updateDashboardView() {
     });
 
     // Recalcula a Renda Real Total e o Gasto Líquido perfeitamente
-    const totalIncome = getIncomeTotalForMonth(month) + rExtraInc;
+    const dashboardBaseIncome = getIncomeTotalForMonth(month);
+    const totalIncome = dashboardBaseIncome === null ? null : dashboardBaseIncome + rExtraInc;
     const totalReal = totEss + totLaz;
 
-    if (totalIncome === 0 && totalReal === 0) {
+    if (totalIncome === null) {
+      ownerContainer.innerHTML = "<p class='hint small' style='margin-top: 8px;'>Renda indisponível. O histórico ainda está carregando ou não há renda cadastrada neste mês ou antes dele.</p>";
+    } else if (totalIncome === 0 && totalReal === 0) {
       ownerContainer.innerHTML = "<p class='hint small' style='margin-top: 8px;'>Nenhum dado para este mês.</p>";
     } else {
       const baseBarWidth = Math.max(totalIncome, totalReal);
@@ -4405,12 +4419,9 @@ function updateDashboardView() {
       const cardInvoicesForIncome = getCreditCardInvoicesForMonth(month);
       const pendingCardsExpense = Math.round(cardInvoicesForIncome.reduce((total, invoice) => total + Math.max(Number(invoice.payment?.remaining) || 0, 0), 0) * 100) / 100;
       const freeAfterFixed = freeReal - pendingFixedExpense;
-      const freeAfterFixedAndCards = freeAfterFixed - pendingCardsExpense;
       const visibleFreeTotal = Math.max(freeReal, 0);
       const visiblePendingFixed = Math.min(pendingFixedExpense, visibleFreeTotal);
       const visibleFreeAfterFixed = Math.max(freeAfterFixed, 0);
-      const visiblePendingCards = Math.min(pendingCardsExpense, visibleFreeAfterFixed);
-      const visibleFreeAfterFixedAndCards = Math.max(freeAfterFixedAndCards, 0);
       const gabrielPercentOfIncome = baseBarWidth > 0 ? (Math.max(gabTotal, 0) / baseBarWidth) * 100 : 0;
       const luanaPercentOfIncome = baseBarWidth > 0 ? (Math.max(luaTotal, 0) / baseBarWidth) * 100 : 0;
       const bothPercentOfIncome = baseBarWidth > 0 ? (Math.max(ambTotal, 0) / baseBarWidth) * 100 : 0;
@@ -4418,8 +4429,7 @@ function updateDashboardView() {
       const luanaShareOfExpense = totalReal > 0 ? Math.max((luaTotal / totalReal) * 100, 0) : 0;
       const bothShareOfExpense = totalReal > 0 ? Math.max((ambTotal / totalReal) * 100, 0) : 0;
       const pendingFixedPercentOfIncome = baseBarWidth > 0 ? (visiblePendingFixed / baseBarWidth) * 100 : 0;
-      const pendingCardsPercentOfIncome = baseBarWidth > 0 ? (visiblePendingCards / baseBarWidth) * 100 : 0;
-      const afterFixedAndCardsPercentOfIncome = baseBarWidth > 0 ? (visibleFreeAfterFixedAndCards / baseBarWidth) * 100 : 0;
+      const afterFixedPercentOfIncome = baseBarWidth > 0 ? (visibleFreeAfterFixed / baseBarWidth) * 100 : 0;
       const getOwnerComposition = (essential, leisure) => {
         const positiveEssential = Math.max(essential, 0);
         const positiveLeisure = Math.max(leisure, 0);
@@ -4470,21 +4480,19 @@ function updateDashboardView() {
                   : ''
               }
               ${pendingFixedPercentOfIncome > 0 ? `<div class="overview-pending" style="width: ${pendingFixedPercentOfIncome}%;" title="Fixos pendentes: ${formatCurrency(pendingFixedExpense)}"></div>` : ''}
-              ${pendingCardsPercentOfIncome > 0 ? `<div class="overview-cards" style="width: ${pendingCardsPercentOfIncome}%;" title="Cartões a pagar: ${formatCurrency(pendingCardsExpense)}"></div>` : ''}
             </div>
 
             <div style="display: flex; width: 100%;">
               <div style="width: ${pGastoTotal}%; border-top: 2px dashed #ff7b7b;"></div>
               ${pendingFixedPercentOfIncome > 0 ? `<div style="width: ${pendingFixedPercentOfIncome}%; border-top: 2px dashed var(--orange-soft);"></div>` : ''}
-              ${pendingCardsPercentOfIncome > 0 ? `<div style="width: ${pendingCardsPercentOfIncome}%; border-top: 2px dashed var(--purple);"></div>` : ''}
-              ${afterFixedAndCardsPercentOfIncome > 0 ? `<div style="width: ${afterFixedAndCardsPercentOfIncome}%; border-top: 2px solid #62c462;"></div>` : ''}
+              ${afterFixedPercentOfIncome > 0 ? `<div style="width: ${afterFixedPercentOfIncome}%; border-top: 2px solid #62c462;"></div>` : ''}
             </div>
             <div style="display: flex; justify-content: space-between; width: 100%; margin-bottom: 8px; font-size: 0.8rem; padding-top: 4px; gap: 8px;">
               <span style="color: #ff7b7b; font-weight: 600; white-space: nowrap;">Gasto: ${formatCurrency(totalReal)}</span>
               ${
-                freeAfterFixedAndCards >= 0
-                  ? `<span style="color: #62c462; font-weight: 600; white-space: nowrap; text-align: right;">Após fixos e cartões: ${formatCurrency(freeAfterFixedAndCards)}</span>`
-                  : `<span style="color: #ff7b7b; font-weight: 600; white-space: nowrap; text-align: right;">Estouro após compromissos: ${formatCurrency(freeAfterFixedAndCards)}</span>`
+                freeAfterFixed >= 0
+                  ? `<span style="color: #62c462; font-weight: 600; white-space: nowrap; text-align: right;">Após fixos: ${formatCurrency(freeAfterFixed)}</span>`
+                  : `<span style="color: #ff7b7b; font-weight: 600; white-space: nowrap; text-align: right;">Estouro após fixos: ${formatCurrency(freeAfterFixed)}</span>`
               }
             </div>
 
@@ -4492,7 +4500,7 @@ function updateDashboardView() {
               ${totEss > 0 ? `<span><strong style="color: #f7c84a;">■</strong> Essenciais: <span style="color:#f5f5f5">${formatCurrency(totEss)}</span> <span style="opacity:0.6; font-size:0.65rem">(${tEss}%)</span></span>` : ''}
               ${totLaz > 0 ? `<span><strong style="color: #ff7b7b;">■</strong> Lazer: <span style="color:#f5f5f5">${formatCurrency(totLaz)}</span> <span style="opacity:0.6; font-size:0.65rem">(${tLaz}%)</span></span>` : ''}
               ${pendingFixedExpense > 0 ? `<span><strong class="overview-pending-key" aria-hidden="true"></strong> Fixos: <span class="overview-pending-value">${formatCurrency(pendingFixedExpense)}</span></span>` : ''}
-              ${pendingCardsExpense > 0 ? `<span><strong class="overview-cards-key" aria-hidden="true"></strong> Cartões: <span class="overview-cards-value">${formatCurrency(pendingCardsExpense)}</span></span>` : ''}
+              ${pendingCardsExpense > 0 ? `<span><strong class="overview-cards-key" aria-hidden="true"></strong> Faturas (separadas): <span class="overview-cards-value">${formatCurrency(pendingCardsExpense)}</span></span>` : ''}
             </div>
             ${
               !isDetailsOpen
@@ -4518,24 +4526,21 @@ function updateDashboardView() {
                 ${luanaPercentOfIncome > 0 ? `<span class="income-owner-segment" style="width: ${luanaPercentOfIncome}%" title="Luana: ${formatCurrency(luaTotal)}"><i class="is-essential" style="width: ${luanaComposition.essential}%"></i><i class="is-leisure" style="width: ${luanaComposition.leisure}%"></i></span>` : ''}
                 ${bothPercentOfIncome > 0 ? `<span class="income-owner-segment" style="width: ${bothPercentOfIncome}%" title="Ambos: ${formatCurrency(ambTotal)}"><i class="is-essential" style="width: ${bothComposition.essential}%"></i><i class="is-leisure" style="width: ${bothComposition.leisure}%"></i></span>` : ''}
                 ${pendingFixedPercentOfIncome > 0 ? `<span class="is-pending" style="width: ${pendingFixedPercentOfIncome}%" title="Fixos pendentes: ${formatCurrency(pendingFixedExpense)}"></span>` : ''}
-                ${pendingCardsPercentOfIncome > 0 ? `<span class="is-cards" style="width: ${pendingCardsPercentOfIncome}%" title="Cartões a pagar: ${formatCurrency(pendingCardsExpense)}"></span>` : ''}
-                ${afterFixedAndCardsPercentOfIncome > 0 ? `<span class="is-available" style="width: ${afterFixedAndCardsPercentOfIncome}%" title="Após fixos e cartões: ${formatCurrency(freeAfterFixedAndCards)}"></span>` : ''}
+                ${afterFixedPercentOfIncome > 0 ? `<span class="is-available" style="width: ${afterFixedPercentOfIncome}%" title="Após fixos: ${formatCurrency(freeAfterFixed)}"></span>` : ''}
               </div>
               <div class="income-breakdown-segment-labels">
                 ${gabrielPercentOfIncome > 0 ? `<span style="width: ${gabrielPercentOfIncome}%"><b>Gabriel</b><abbr>G</abbr></span>` : ''}
                 ${luanaPercentOfIncome > 0 ? `<span style="width: ${luanaPercentOfIncome}%"><b>Luana</b><abbr>L</abbr></span>` : ''}
                 ${bothPercentOfIncome > 0 ? `<span style="width: ${bothPercentOfIncome}%"><b>Ambos</b><abbr>A</abbr></span>` : ''}
                 ${pendingFixedPercentOfIncome > 0 ? `<span class="is-pending" style="width: ${pendingFixedPercentOfIncome}%"><b>Fixos</b><abbr>F</abbr><small>${formatCurrency(pendingFixedExpense)}</small></span>` : ''}
-                ${pendingCardsPercentOfIncome > 0 ? `<span class="is-cards" style="width: ${pendingCardsPercentOfIncome}%"><b>Cartões</b><abbr>C</abbr><small>${formatCurrency(pendingCardsExpense)}</small></span>` : ''}
-                ${afterFixedAndCardsPercentOfIncome > 0 ? `<span class="is-available ${freeAfterFixedAndCards < 0 ? 'is-negative' : ''}" style="width: ${afterFixedAndCardsPercentOfIncome}%"><b>Após fixos e cartões</b><abbr>AFC</abbr><small>${formatCurrency(freeAfterFixedAndCards)}</small></span>` : ''}
+                ${afterFixedPercentOfIncome > 0 ? `<span class="is-available ${freeAfterFixed < 0 ? 'is-negative' : ''}" style="width: ${afterFixedPercentOfIncome}%"><b>Após fixos</b><abbr>AF</abbr><small>${formatCurrency(freeAfterFixed)}</small></span>` : ''}
               </div>
               <div class="income-breakdown-mobile-legend">
                 ${gabrielPercentOfIncome > 0 ? '<span><b>G</b> Gabriel</span>' : ''}
                 ${luanaPercentOfIncome > 0 ? '<span><b>L</b> Luana</span>' : ''}
                 ${bothPercentOfIncome > 0 ? '<span><b>A</b> Ambos</span>' : ''}
                 ${pendingFixedPercentOfIncome > 0 ? '<span class="is-pending"><b>F</b> Fixos</span>' : ''}
-                ${pendingCardsPercentOfIncome > 0 ? '<span class="is-cards"><b>C</b> Cartões</span>' : ''}
-                ${afterFixedAndCardsPercentOfIncome > 0 ? '<span class="is-available"><b>AFC</b> Após fixos e cartões</span>' : ''}
+                ${afterFixedPercentOfIncome > 0 ? '<span class="is-available"><b>AF</b> Após fixos</span>' : ''}
               </div>
       `;
 
@@ -5301,10 +5306,10 @@ function updateHistoricalChart() {
       let selectedPeriodTotal = 0;
 
       allMonthsData.forEach((d) => {
-        const bal = d.income - d.expense;
+        const bal = d.income === null ? null : d.income - d.expense;
         labels.push(d.month);
         monthlyBalances.push(bal);
-        selectedPeriodTotal += bal;
+        if (bal !== null) selectedPeriodTotal += bal;
       });
 
       const totalEl = document.getElementById('history-total-accumulated');
@@ -6489,6 +6494,15 @@ const btnDoLogin = document.getElementById('btn-do-login');
 function syncData(month) {
   if (!month) return;
 
+  if (!incomeHistoryLoaded && !incomeHistoryLoadPromise) {
+    ensureIncomeHistoryLoaded().then((loaded) => {
+      if (loaded) {
+        loadIncomeToInputs(month);
+        refreshAll();
+      }
+    });
+  }
+
   FinanceAPI.clearListeners();
   creditCardPayments = {};
   previousCreditCardPayments = {};
@@ -6530,13 +6544,7 @@ function syncData(month) {
   });
 
   FinanceAPI.listenIncome(month, (inc) => {
-    const idx = incomes.findIndex((i) => i.month === month);
-    if (inc) {
-      if (idx >= 0) incomes[idx] = { month, ...inc };
-      else incomes.push({ month, ...inc });
-    } else if (idx >= 0) {
-      incomes.splice(idx, 1);
-    }
+    mergeIncomeRecord(month, inc);
     loadIncomeToInputs(month);
     refreshAll();
   });

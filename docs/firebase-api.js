@@ -227,8 +227,217 @@ window.FinanceAPI = {
     }
   },
 
+  async getReceiptsOnce(month) {
+    const snapshot = await db.collection('familias').doc(this.familyId).collection('meses').doc(month).collection('notas_fiscais').get();
+    return snapshot.docs.map((document) => ({ id: document.id, month, ...document.data() }));
+  },
+
+  async getReceiptsForMonths(months) {
+    const uniqueMonths = [...new Set((months || []).filter((month) => /^\d{4}-\d{2}$/.test(month)))];
+    const groups = await Promise.all(uniqueMonths.map((month) => this.getReceiptsOnce(month)));
+    return groups.flat();
+  },
+
+  // Grava a nota e o marcador de importação na mesma transação. O ID da nota é
+  // derivado da impressão digital da operação, portanto uma repetição segura
+  // apenas devolve o vínculo já existente.
+  async saveImportedReceiptAtomic(month, item, metadata = {}) {
+    const fingerprint = String(item.bankImportFingerprint || metadata.fingerprint || '').trim();
+    if (!/^[-_a-z0-9]{8,128}$/i.test(fingerprint)) throw new Error('Impressão digital de importação inválida.');
+    if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('Mês de importação inválido.');
+    const familyRef = db.collection('familias').doc(this.familyId);
+    const monthRef = familyRef.collection('meses').doc(month);
+    const receiptId = `bank_${fingerprint}`;
+    const receiptRef = monthRef.collection('notas_fiscais').doc(receiptId);
+    const importRef = familyRef.collection('importacoes_bancarias').doc(`tx_${fingerprint}`);
+    const receiptData = { ...item };
+    delete receiptData.id;
+    delete receiptData.month;
+    if (!String(receiptData.category || '').trim() || !String(receiptData.merchant || '').trim()) {
+      throw new Error('Categoria e estabelecimento são obrigatórios para importar uma Nota Real.');
+    }
+    if (receiptData.isStatic || receiptData.staticSyncId) throw new Error('Uma importação bancária não pode criar nem reutilizar um vínculo estático.');
+    const installmentGuard = metadata.installmentGuard || null;
+    const plannedGuard = metadata.plannedGuard || null;
+    if (receiptData.installmentPlanId && !installmentGuard) throw new Error('A parcela precisa ser revalidada antes da importação.');
+    if (installmentGuard && (String(installmentGuard.planId || '') !== String(receiptData.installmentPlanId || '') || Number(installmentGuard.installmentNumber) !== Number(receiptData.installmentNumber))) {
+      throw new Error('O vínculo da parcela mudou durante a importação.');
+    }
+    if (receiptData.linkedPlannedId && !plannedGuard) throw new Error('O item previsto precisa ser revalidado antes da importação.');
+    if (plannedGuard && (String(plannedGuard.plannedId || '') !== String(receiptData.linkedPlannedId || '') || !/^\d{4}-\d{2}$/.test(String(plannedGuard.plannedMonth || '')))) {
+      throw new Error('O vínculo com o item previsto mudou durante a importação.');
+    }
+
+    return db.runTransaction(async (transaction) => {
+      const importDocument = await transaction.get(importRef);
+      if (importDocument.exists) {
+        const previous = importDocument.data();
+        return { alreadyImported: true, receiptId: previous.receiptId || receiptId, month: previous.month || month };
+      }
+      let planRef = null;
+      let updatedInstallments = null;
+      let completed = false;
+      if (installmentGuard) {
+        planRef = familyRef.collection('parcelamentos').doc(String(installmentGuard.planId));
+        const planDocument = await transaction.get(planRef);
+        if (!planDocument.exists) throw new Error('O parcelamento não existe mais. Revise antes de importar.');
+        const plan = planDocument.data();
+        if (plan.automationMode === 'fixed-static-clone') throw new Error('Uma parcela estática deve usar a Nota Real criada automaticamente.');
+        const position = (plan.installments || []).findIndex((entry) => Number(entry.number) === Number(installmentGuard.installmentNumber));
+        if (position < 0) throw new Error('A parcela não existe mais no plano.');
+        const current = plan.installments[position];
+        const currentStatus = current.status || 'pending';
+        if (currentStatus !== (installmentGuard.expectedStatus || 'pending') || !['pending', 'budgeted'].includes(currentStatus)) {
+          throw new Error('O status da parcela mudou durante a revisão.');
+        }
+        if (String(current.receiptId || '') !== String(installmentGuard.expectedReceiptId || '')) {
+          throw new Error('A parcela já foi vinculada a outra Nota Real.');
+        }
+        if (String(current.plannedId || '') !== String(installmentGuard.expectedPlannedId || '')) {
+          throw new Error('O vínculo da parcela com o orçamento mudou durante a revisão.');
+        }
+        if (Number.isFinite(Number(installmentGuard.expectedAmount)) && Math.round(Number(current.amount) * 100) !== Math.round(Number(installmentGuard.expectedAmount) * 100)) {
+          throw new Error('O valor cadastrado da parcela mudou durante a revisão.');
+        }
+        updatedInstallments = plan.installments.map((entry, index) =>
+          index === position
+            ? { ...entry, status: 'paid', receiptId, receiptMonth: month, paidAmount: receiptData.amount, paidAt: receiptData.date }
+            : entry
+        );
+        completed = updatedInstallments.every((entry) => ['paid', 'cancelled'].includes(entry.status));
+      }
+      let plannedRef = null;
+      if (plannedGuard) {
+        plannedRef = familyRef
+          .collection('meses')
+          .doc(String(plannedGuard.plannedMonth))
+          .collection('orcamento_previsto')
+          .doc(String(plannedGuard.plannedId));
+        const plannedDocument = await transaction.get(plannedRef);
+        if (!plannedDocument.exists) throw new Error('O item previsto não existe mais. Revise antes de importar.');
+        const current = plannedDocument.data();
+        const expected = plannedGuard.expected || {};
+        const textFields = ['date', 'description', 'category', 'owner', 'paymentMethodId', 'staticSyncId', 'bankImportReceiptId'];
+        if (textFields.some((field) => String(current[field] || '') !== String(expected[field] || ''))) {
+          throw new Error('O item previsto foi alterado durante a revisão.');
+        }
+        if (Math.round(Number(current.amount) * 100) !== Math.round(Number(expected.amount) * 100) || Boolean(current.fixed) !== Boolean(expected.fixed) || Boolean(current.isStatic) !== Boolean(expected.isStatic)) {
+          throw new Error('Os dados financeiros do item previsto mudaram durante a revisão.');
+        }
+        if (current.isStatic || current.staticSyncId) throw new Error('Um item estático não pode receber uma segunda Nota Real pela importação.');
+        if (current.bankImportReceiptId && current.bankImportReceiptId !== receiptId) {
+          throw new Error('O item previsto já foi reservado por outra Nota Real.');
+        }
+      }
+      transaction.set(monthRef, { backupMonthMarker: true }, { merge: true });
+      transaction.set(receiptRef, receiptData);
+      transaction.set(importRef, {
+        recordType: 'transaction',
+        fingerprint,
+        receiptId,
+        month,
+        paymentMethodId: receiptData.paymentMethodId || '',
+        bankTransactionId: receiptData.bankTransactionId || '',
+        source: String(metadata.source || 'pdf').slice(0, 24),
+        importedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      if (planRef) {
+        const planUpdate = {
+          installments: updatedInstallments,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+        if (completed) {
+          planUpdate.status = 'completed';
+          planUpdate.completedAt = firebase.firestore.FieldValue.serverTimestamp();
+        }
+        transaction.update(planRef, planUpdate);
+      }
+      if (plannedRef) {
+        transaction.update(plannedRef, {
+          bankImportReceiptId: receiptId,
+          bankImportReceiptMonth: month,
+          bankImportFingerprint: fingerprint,
+          bankImportLinkedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      }
+      return { alreadyImported: false, receiptId, month, installmentUpdated: Boolean(planRef), plannedLinked: Boolean(plannedRef) };
+    });
+  },
+
+  async saveBankImportExistingDecision(item = {}) {
+    const fingerprint = String(item.fingerprint || item.bankImportFingerprint || '');
+    const month = String(item.month || item.date || '').slice(0, 7);
+    if (!/^[-_a-z0-9]{8,128}$/i.test(fingerprint)) throw new Error('Impressão digital de importação inválida.');
+    if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('Mês da movimentação inválido.');
+    const familyRef = db.collection('familias').doc(this.familyId);
+    const importRef = familyRef.collection('importacoes_bancarias').doc(`tx_${fingerprint}`);
+    return db.runTransaction(async (transaction) => {
+      const current = await transaction.get(importRef);
+      if (current.exists) return { alreadyRecorded: true, ...current.data() };
+      const data = {
+        recordType: 'transaction',
+        fingerprint,
+        decision: 'already-registered',
+        receiptId: String(item.matchedReceipt?.id || '').slice(0, 160),
+        month,
+        paymentMethodId: String(item.paymentMethodId || '').slice(0, 160),
+        bankTransactionId: String(item.bankTransactionId || '').slice(0, 160),
+        source: String(item.source || 'pdf').slice(0, 24),
+        decidedAt: firebase.firestore.FieldValue.serverTimestamp()
+      };
+      transaction.set(importRef, data);
+      return { alreadyRecorded: false, ...data };
+    });
+  },
+
+  async getBankImportState() {
+    const snapshot = await db.collection('familias').doc(this.familyId).collection('importacoes_bancarias').get();
+    const records = [];
+    const aliases = {};
+    snapshot.docs.forEach((document) => {
+      const data = document.data();
+      if (data.recordType === 'alias' && data.normalizedDescription) aliases[data.normalizedDescription] = data;
+      else if (data.recordType === 'transaction') records.push({ id: document.id, ...data });
+    });
+    return { records, aliases };
+  },
+
+  async saveBankImportAlias(aliasId, alias) {
+    if (!/^[-_a-z0-9]{8,128}$/i.test(aliasId)) throw new Error('Identificador de associação inválido.');
+    const data = {
+      recordType: 'alias',
+      normalizedDescription: String(alias.normalizedDescription || '').slice(0, 240),
+      merchant: String(alias.merchant || '').slice(0, 160),
+      category: String(alias.category || '').slice(0, 120),
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+    await db.collection('familias').doc(this.familyId).collection('importacoes_bancarias').doc(`alias_${aliasId}`).set(data, { merge: true });
+  },
+
   async deleteReceipt(month, id) {
     await db.collection('familias').doc(this.familyId).collection('meses').doc(month).collection('notas_fiscais').doc(id).delete();
+  },
+
+  async deleteImportedReceiptAndReleasePlannedClaim(month, id, plannedId, plannedMonth = month) {
+    const familyRef = db.collection('familias').doc(this.familyId);
+    const receiptRef = familyRef.collection('meses').doc(month).collection('notas_fiscais').doc(id);
+    const plannedRef = familyRef.collection('meses').doc(plannedMonth).collection('orcamento_previsto').doc(plannedId);
+    await db.runTransaction(async (transaction) => {
+      const plannedDocument = await transaction.get(plannedRef);
+      transaction.delete(receiptRef);
+      if (plannedDocument.exists && plannedDocument.data().bankImportReceiptId === id) {
+        const claimedFingerprint = String(plannedDocument.data().bankImportFingerprint || '');
+        if (/^[-_a-z0-9]{8,128}$/i.test(claimedFingerprint)) {
+          transaction.delete(familyRef.collection('importacoes_bancarias').doc(`tx_${claimedFingerprint}`));
+        }
+        transaction.update(plannedRef, {
+          bankImportReceiptId: firebase.firestore.FieldValue.delete(),
+          bankImportReceiptMonth: firebase.firestore.FieldValue.delete(),
+          bankImportFingerprint: firebase.firestore.FieldValue.delete(),
+          bankImportLinkedAt: firebase.firestore.FieldValue.delete()
+        });
+      }
+    });
   },
 
   // ===== PLANEJAMENTO ANUAL =====
@@ -288,6 +497,11 @@ window.FinanceAPI = {
     return document.exists ? { id: document.id, ...document.data() } : null;
   },
 
+  async getInstallmentPlansOnce() {
+    const snapshot = await db.collection('familias').doc(this.familyId).collection('parcelamentos').get();
+    return snapshot.docs.map((document) => ({ id: document.id, ...document.data() }));
+  },
+
   async deleteInstallmentPlan(id) {
     await db.collection('familias').doc(this.familyId).collection('parcelamentos').doc(id).delete();
   },
@@ -299,12 +513,13 @@ window.FinanceAPI = {
 
   async getFullBackupData() {
     const familyRef = db.collection('familias').doc(this.familyId);
-    const [familyDoc, configurationsSnapshot, annualEventsSnapshot, installmentPlansSnapshot, cardStatementsSnapshot, userPreferencesSnapshot, logsSnapshot, monthsSnapshot] = await Promise.all([
+    const [familyDoc, configurationsSnapshot, annualEventsSnapshot, installmentPlansSnapshot, cardStatementsSnapshot, bankImportsSnapshot, userPreferencesSnapshot, logsSnapshot, monthsSnapshot] = await Promise.all([
       familyRef.get(),
       familyRef.collection('configuracoes').get(),
       familyRef.collection('eventos_anuais').get(),
       familyRef.collection('parcelamentos').get(),
       familyRef.collection('faturas_cartoes').get(),
+      familyRef.collection('importacoes_bancarias').get(),
       familyRef.collection('user_prefs').get(),
       familyRef.collection('logs').get(),
       familyRef.collection('meses').get(),
@@ -318,6 +533,7 @@ window.FinanceAPI = {
     const annualEvents = annualEventsSnapshot.docs.map((document) => ({ id: document.id, data: document.data() }));
     const installmentPlans = installmentPlansSnapshot.docs.map((document) => ({ id: document.id, data: document.data() }));
     const cardStatements = cardStatementsSnapshot.docs.map((document) => ({ id: document.id, data: document.data() }));
+    const bankImports = bankImportsSnapshot.docs.map((document) => ({ id: document.id, data: document.data() }));
     const userPreferences = userPreferencesSnapshot.docs.map((document) => ({ id: document.id, data: document.data() }));
     const logs = logsSnapshot.docs.map((document) => ({ id: document.id, data: document.data() }));
     const months = {};
@@ -343,6 +559,7 @@ window.FinanceAPI = {
       annualEvents,
       installmentPlans,
       cardStatements,
+      bankImports,
       userPreferences,
       logs,
       months,
@@ -370,11 +587,12 @@ window.FinanceAPI = {
     };
 
     if (mode === 'replace') {
-      const [configurationsSnapshot, annualEventsSnapshot, installmentPlansSnapshot, cardStatementsSnapshot, userPreferencesSnapshot, logsSnapshot, monthsSnapshot] = await Promise.all([
+      const [configurationsSnapshot, annualEventsSnapshot, installmentPlansSnapshot, cardStatementsSnapshot, bankImportsSnapshot, userPreferencesSnapshot, logsSnapshot, monthsSnapshot] = await Promise.all([
         familyRef.collection('configuracoes').get(),
         familyRef.collection('eventos_anuais').get(),
         familyRef.collection('parcelamentos').get(),
         familyRef.collection('faturas_cartoes').get(),
+        familyRef.collection('importacoes_bancarias').get(),
         familyRef.collection('user_prefs').get(),
         familyRef.collection('logs').get(),
         familyRef.collection('meses').get(),
@@ -384,6 +602,7 @@ window.FinanceAPI = {
       for (const document of annualEventsSnapshot.docs) await queueOperation('delete', document.ref);
       for (const document of installmentPlansSnapshot.docs) await queueOperation('delete', document.ref);
       for (const document of cardStatementsSnapshot.docs) await queueOperation('delete', document.ref);
+      for (const document of bankImportsSnapshot.docs) await queueOperation('delete', document.ref);
       for (const document of userPreferencesSnapshot.docs) await queueOperation('delete', document.ref);
       for (const document of logsSnapshot.docs) await queueOperation('delete', document.ref);
 
@@ -415,6 +634,10 @@ window.FinanceAPI = {
 
     for (const statement of backupData.cardStatements || []) {
       await queueOperation('set', familyRef.collection('faturas_cartoes').doc(statement.id), statement.data);
+    }
+
+    for (const importRecord of backupData.bankImports || []) {
+      await queueOperation('set', familyRef.collection('importacoes_bancarias').doc(importRecord.id), importRecord.data);
     }
 
     for (const preference of backupData.userPreferences || []) {

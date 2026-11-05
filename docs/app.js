@@ -354,6 +354,7 @@ navButtons.forEach((btn) => {
 // ===== Controles globais (mês + rendas + resumo) =====
 
 const monthInput = document.getElementById('current-month');
+const currentMonthNumber = document.getElementById('current-month-number');
 const incomeLuanaInput = document.getElementById('income-luana');
 const incomeGabrielInput = document.getElementById('income-gabriel');
 const incomeLuanaBiweeklyCheckbox = document.getElementById('income-luana-biweekly');
@@ -647,6 +648,7 @@ const paymentTypeConfig = {
 function updatePaymentSelects() {
   const selectPlanned = document.getElementById('planned-payment');
   const selectActual = document.getElementById('actual-payment');
+  const selectBankImport = document.getElementById('bank-import-payment');
 
   let optionsHtml = `
     <option value="" disabled selected>Selecione o pagamento...</option>
@@ -682,6 +684,12 @@ function updatePaymentSelects() {
     selectActual.innerHTML = optionsHtml;
     if (currentVal) selectActual.value = currentVal;
     updateActualPostedDateVisibility();
+  }
+
+  if (selectBankImport) {
+    const currentVal = selectBankImport.value;
+    selectBankImport.innerHTML = optionsHtml;
+    if (currentVal) selectBankImport.value = currentVal;
   }
 
   const selectReimb = document.getElementById('reimb-payment');
@@ -737,6 +745,12 @@ summaryFreeProjectionToggle?.addEventListener('keydown', (event) => {
 
 function getCurrentMonth() {
   return monthInput.value;
+}
+
+function updateReferenceMonthNumber() {
+  if (!currentMonthNumber) return;
+  const monthNumber = String(monthInput.value || '').split('-')[1];
+  currentMonthNumber.textContent = /^\d{2}$/.test(monthNumber) ? `${monthNumber} —` : '-- —';
 }
 
 function hasIncomeData(income) {
@@ -976,6 +990,7 @@ function getBackupStats(data) {
     annualEvents: (data.annualEvents || []).length,
     installmentPlans: (data.installmentPlans || []).length,
     cardStatements: (data.cardStatements || []).length,
+    bankImports: (data.bankImports || []).length,
     configurations: Object.keys(data.configurations || {}).length,
     userPreferences: (data.userPreferences || []).length,
     logs: (data.logs || []).length,
@@ -1029,7 +1044,7 @@ function validateBackupPayload(payload) {
   if (payload.familyId !== FinanceAPI.familyId) throw new Error('O backup pertence a outra família e não pode ser restaurado aqui.');
   if (!payload.data || typeof payload.data !== 'object') throw new Error('O backup não possui dados para restaurar.');
 
-  const { family = null, configurations = {}, annualEvents = [], installmentPlans = [], cardStatements = [], userPreferences = [], logs = [], months = {} } = payload.data;
+  const { family = null, configurations = {}, annualEvents = [], installmentPlans = [], cardStatements = [], bankImports = [], userPreferences = [], logs = [], months = {} } = payload.data;
   if ((family !== null && !isBackupObject(family)) || !isBackupObject(configurations) || !isBackupObject(months)) {
     throw new Error('A estrutura interna do backup está inválida.');
   }
@@ -1038,6 +1053,7 @@ function validateBackupPayload(payload) {
   validateBackupDocumentList(annualEvents, 'eventos anuais');
   validateBackupDocumentList(installmentPlans, 'parcelamentos');
   validateBackupDocumentList(cardStatements, 'faturas de cartões');
+  validateBackupDocumentList(bankImports, 'metadados de importação bancária');
   validateBackupDocumentList(userPreferences, 'preferências');
   validateBackupDocumentList(logs, 'registros de atividades');
 
@@ -1717,6 +1733,7 @@ function getIncomeTotalForMonth(month) {
 
 monthInput.addEventListener('change', () => {
   const newMonth = getCurrentMonth();
+  updateReferenceMonthNumber();
   syncData(newMonth);
   updateTemporaryIncomeStatus();
 
@@ -2586,7 +2603,11 @@ async function deleteReceipt(id) {
   if (!(await showConfirm(msg, true))) return;
 
   const month = r.date.substring(0, 7);
-  await FinanceAPI.deleteReceipt(month, id);
+  if (r.bankImportFingerprint && r.linkedPlannedId) {
+    await FinanceAPI.deleteImportedReceiptAndReleasePlannedClaim(month, id, r.linkedPlannedId, month);
+  } else {
+    await FinanceAPI.deleteReceipt(month, id);
+  }
   await reconcileClosedStatementsForReceiptChange(r, null);
   if (r.installmentPlanId) {
     await updateInstallmentPlanEntry(r.installmentPlanId, r.installmentNumber, {
@@ -3101,6 +3122,589 @@ function resetReceiptForm() {
   updateReceiptChips();
   updateActualPostedDateVisibility();
 }
+
+// ===== Importação local de extratos bancários =====
+
+const bankImportUi = {
+  overlay: document.getElementById('bank-import-overlay'),
+  openButton: document.getElementById('btn-open-bank-import'),
+  closeButton: document.getElementById('btn-close-bank-import'),
+  fileInput: document.getElementById('bank-import-file'),
+  fileName: document.getElementById('bank-import-file-name'),
+  payment: document.getElementById('bank-import-payment'),
+  owner: document.getElementById('bank-import-owner'),
+  analyze: document.getElementById('btn-analyze-bank-import'),
+  message: document.getElementById('bank-import-message'),
+  preview: document.getElementById('bank-import-preview'),
+  stats: document.getElementById('bank-import-stats'),
+  list: document.getElementById('bank-import-list'),
+  selectAll: document.getElementById('bank-import-select-all'),
+  approvedSummary: document.getElementById('bank-import-approved-summary'),
+  confirm: document.getElementById('btn-confirm-bank-import')
+};
+
+const bankImportState = {
+  transactions: [],
+  fileName: '',
+  busy: false,
+  existingReceipts: [],
+  plannedItems: [],
+  installmentPlans: [],
+  aliases: {}
+};
+
+let bankImportAliasSaveQueue = Promise.resolve();
+
+const bankImportStatusLabels = {
+  new: 'Novo',
+  existing: 'Já cadastrado',
+  review: 'Revisar',
+  invalid: 'Inválido',
+  ignored: 'Ignorado'
+};
+
+const bankImportTypeLabels = {
+  expense: 'Despesa',
+  credit: 'Crédito',
+  refund: 'Estorno',
+  payment: 'Pagamento',
+  transfer: 'Transferência'
+};
+
+function setBankImportMessage(message, type = '') {
+  if (!bankImportUi.message) return;
+  bankImportUi.message.textContent = message;
+  bankImportUi.message.className = `bank-import-message${type ? ` is-${type}` : ''}`;
+}
+
+function resetBankImport() {
+  bankImportState.transactions = [];
+  bankImportState.fileName = '';
+  bankImportState.busy = false;
+  bankImportState.existingReceipts = [];
+  bankImportState.plannedItems = [];
+  bankImportState.installmentPlans = [];
+  bankImportState.aliases = {};
+  if (bankImportUi.fileInput) bankImportUi.fileInput.value = '';
+  if (bankImportUi.fileName) bankImportUi.fileName.textContent = 'PDF com texto selecionável, até 20 MB';
+  if (bankImportUi.preview) bankImportUi.preview.hidden = true;
+  if (bankImportUi.list) bankImportUi.list.innerHTML = '';
+  if (bankImportUi.selectAll) bankImportUi.selectAll.checked = false;
+  setBankImportMessage('Selecione o método correto. O sistema não tentará adivinhar o cartão.');
+}
+
+function openBankImport() {
+  if (!window.BankImport || !window.PdfStatementReader) {
+    showToast('O módulo de importação não foi carregado. Atualize a página.', 'error');
+    return;
+  }
+  updatePaymentSelects();
+  resetBankImport();
+  bankImportUi.overlay.hidden = false;
+  document.body.style.overflow = 'hidden';
+}
+
+function closeBankImport() {
+  if (bankImportState.busy) return;
+  bankImportUi.overlay.hidden = true;
+  document.body.style.overflow = '';
+  resetBankImport();
+}
+
+function getBankImportPaymentOptions(selectedValue) {
+  const source = bankImportUi.payment;
+  if (!source) return '';
+  const wrapper = document.createElement('select');
+  wrapper.innerHTML = source.innerHTML;
+  wrapper.querySelectorAll('option').forEach((option) => {
+    option.selected = option.value === selectedValue;
+    if (option.selected) option.setAttribute('selected', '');
+    else option.removeAttribute('selected');
+  });
+  return wrapper.innerHTML;
+}
+
+function getBankImportCategoryOptions(selectedCategory) {
+  const categories = getCategories();
+  const hasSelected = categories.some((category) => normalizeSearchText(category) === normalizeSearchText(selectedCategory));
+  const available = selectedCategory && !hasSelected ? [selectedCategory, ...categories] : categories;
+  return `<option value="" ${selectedCategory ? '' : 'selected'}>Selecionar categoria...</option>${available
+    .map((category) => `<option value="${escapeCardDetail(category)}" ${normalizeSearchText(category) === normalizeSearchText(selectedCategory) ? 'selected' : ''}>${escapeCardDetail(category)}</option>`)
+    .join('')}`;
+}
+
+function getBankImportMerchantOptions(category) {
+  return BankImport.companiesForCategory(companyDirectory, category)
+    .sort(compareFinancialNames)
+    .map((merchant) => `<option value="${escapeCardDetail(merchant)}"></option>`)
+    .join('');
+}
+
+function bankImportMatchedDetails(transaction) {
+  const match = transaction.matchedReceipt;
+  if (!match) return null;
+  const name = match.merchant || match.description || 'lançamento existente';
+  const date = match.date ? match.date.split('-').reverse().join('/') : 'sem data';
+  return { name, date, amount: formatCurrency(match.amount) };
+}
+
+function bankImportStatusTitle(transaction) {
+  if (transaction.status === BankImport.STATUS.REVIEW) return 'Precisa da sua atenção';
+  if (transaction.status === BankImport.STATUS.NEW) return 'Pronto para importar';
+  if (transaction.status === BankImport.STATUS.EXISTING) return 'Já está no sistema';
+  if (transaction.status === BankImport.STATUS.INVALID) return 'Dados incompletos';
+  return 'Não será importado';
+}
+
+function hasRequiredBankImportFields(transaction) {
+  return Boolean(String(transaction.category || '').trim() && String(transaction.merchant || '').trim());
+}
+
+function renderBankImportRow(transaction, index) {
+  const locked = transaction.status === BankImport.STATUS.EXISTING;
+  const possibleDuplicate = transaction.status === BankImport.STATUS.REVIEW && transaction.reviewKind === BankImport.REVIEW_KIND.POSSIBLE_DUPLICATE;
+  const protectedDuplicate = transaction.status === BankImport.STATUS.REVIEW && transaction.reviewKind === BankImport.REVIEW_KIND.PROTECTED && Boolean(transaction.matchedReceipt);
+  const hasRequiredFields = hasRequiredBankImportFields(transaction);
+  const canApprove = hasRequiredFields && !possibleDuplicate && transaction.allowImport !== false && !locked && ![BankImport.STATUS.INVALID, BankImport.STATUS.IGNORED].includes(transaction.status);
+  const typeOptions = Object.entries(bankImportTypeLabels)
+    .map(([value, label]) => `<option value="${value}" ${transaction.type === value ? 'selected' : ''}>${label}</option>`)
+    .join('');
+  const ownerOptions = ['Gabriel', 'Luana', 'Ambos'].map((owner) => `<option value="${owner}" ${transaction.owner === owner ? 'selected' : ''}>${owner}</option>`).join('');
+  const lockAttribute = locked ? 'disabled' : '';
+  const matched = bankImportMatchedDetails(transaction);
+  const merchantListId = `bank-import-merchant-options-${index}`;
+  const canMarkAsExisting = [BankImport.STATUS.NEW, BankImport.STATUS.REVIEW].includes(transaction.status);
+  const duplicateActions = possibleDuplicate
+    ? `<div class="bank-import-duplicate-actions" role="group" aria-label="Decisão sobre possível duplicata">
+        <button type="button" data-duplicate-action="skip" class="${transaction.duplicateDecision === 'skip' ? 'is-selected' : ''}">Já está cadastrado — não importar</button>
+        <button type="button" data-duplicate-action="import" class="${transaction.duplicateDecision === 'import' ? 'is-selected' : ''}" ${hasRequiredFields ? '' : 'disabled'}>É outra compra — importar</button>
+      </div>`
+    : protectedDuplicate
+      ? `<div class="bank-import-duplicate-actions" role="group" aria-label="Decisão sobre lançamento protegido">
+          <button type="button" data-duplicate-action="skip">Já está cadastrado — não importar</button>
+          <small>Fixo ou parcela protegida: outra despesa não pode ser criada com este vínculo.</small>
+        </div>`
+      : canMarkAsExisting
+        ? `<div class="bank-import-duplicate-actions" role="group" aria-label="Decisão manual sobre o lançamento">
+            <button type="button" data-duplicate-action="skip">Já está cadastrado — não importar</button>
+            <small>Use quando você encontrou o lançamento no sistema, mesmo que a comparação automática não tenha encontrado.</small>
+          </div>`
+        : '';
+  return `
+    <article class="bank-import-row" data-index="${index}" data-status="${transaction.status}">
+      <input class="bank-import-approve" type="checkbox" aria-label="Aprovar lançamento" ${transaction.approved && canApprove ? 'checked' : ''} ${canApprove ? '' : 'disabled'} />
+      <label>Data da compra<input type="date" data-field="date" value="${escapeCardDetail(transaction.date || '')}" ${lockAttribute} /></label>
+      <label>Processamento<input type="date" data-field="postedDate" value="${escapeCardDetail(transaction.postedDate || '')}" ${lockAttribute} /></label>
+      <label>Categoria<select data-field="category" ${lockAttribute}>${getBankImportCategoryOptions(transaction.category || '')}</select></label>
+      <label>Estabelecimento<input type="text" data-field="merchant" list="${merchantListId}" value="${escapeCardDetail(transaction.merchant || '')}" placeholder="Selecione ou digite" ${lockAttribute} /><datalist id="${merchantListId}">${getBankImportMerchantOptions(transaction.category || '')}</datalist></label>
+      <label>Valor (CAD)<input type="number" step="0.01" data-field="amount" value="${Math.abs(Number(transaction.amount) || 0).toFixed(2)}" ${lockAttribute} /></label>
+      <label>Responsável<select data-field="owner" ${lockAttribute}>${ownerOptions}</select></label>
+      <label>Pagamento<select data-field="paymentMethodId" ${lockAttribute}>${getBankImportPaymentOptions(transaction.paymentMethodId)}</select></label>
+      <label>Natureza<select data-field="type">${typeOptions}</select></label>
+      <div class="bank-import-row-meta${matched ? ' has-match' : ''}">
+        <div class="bank-import-review-message">
+          <span class="bank-import-status">${bankImportStatusLabels[transaction.status] || transaction.status}</span>
+          <div>
+            <strong>${bankImportStatusTitle(transaction)}</strong>
+            <span>${escapeCardDetail(transaction.statusReason || '')}</span>
+          </div>
+        </div>
+        ${matched ? `<div class="bank-import-match-card">
+          <span class="bank-import-meta-label">Encontrado no sistema</span>
+          <strong>${escapeCardDetail(matched.name)}</strong>
+          <div class="bank-import-match-details">
+            <span>Data <b>${escapeCardDetail(matched.date)}</b></span>
+            <span>Valor <b>${escapeCardDetail(matched.amount)}</b></span>
+          </div>
+        </div>` : ''}
+        <div class="bank-import-original-card" title="${escapeCardDetail(transaction.rawDescription || '')}">
+          <span class="bank-import-meta-label">Texto original do extrato</span>
+          <span>${escapeCardDetail(transaction.rawDescription || '')}</span>
+        </div>
+        ${duplicateActions}
+      </div>
+    </article>`;
+}
+
+function renderBankImportStats() {
+  const counts = { new: 0, existing: 0, review: 0, invalid: 0, ignored: 0 };
+  bankImportState.transactions.forEach((transaction) => {
+    counts[transaction.status] = (counts[transaction.status] || 0) + 1;
+  });
+  const totals = BankImport.summarizeImportTotals(bankImportState.transactions);
+  bankImportUi.stats.innerHTML = `
+    <div class="bank-import-stat is-new"><small>Novos</small><strong>${counts.new}</strong></div>
+    <div class="bank-import-stat is-existing"><small>Já cadastrados</small><strong>${counts.existing}</strong></div>
+    <div class="bank-import-stat is-review"><small>Revisar / inválidos</small><strong>${counts.review + counts.invalid}</strong></div>
+    <div class="bank-import-stat"><small>Ignorados</small><strong>${counts.ignored}</strong></div>
+    <div class="bank-import-stat"><small>Despesas encontradas no PDF</small><strong>${formatCurrency(totals.foundExpenses)}</strong></div>
+    <div class="bank-import-stat is-selected"><small>Despesas selecionadas para importar</small><strong>${formatCurrency(totals.selectedExpenses)}</strong></div>
+    <div class="bank-import-stat"><small>Créditos / estornos encontrados</small><strong>${formatCurrency(totals.foundCredits)}</strong></div>`;
+}
+
+function updateBankImportApprovedSummary() {
+  const approved = bankImportState.transactions.filter((transaction) => transaction.approved && hasRequiredBankImportFields(transaction) && transaction.allowImport !== false && ![BankImport.STATUS.EXISTING, BankImport.STATUS.INVALID, BankImport.STATUS.IGNORED].includes(transaction.status));
+  const expenseTotal = approved.filter((transaction) => transaction.type === BankImport.TYPE.EXPENSE).reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount) || 0), 0);
+  const creditTotal = approved.filter((transaction) => [BankImport.TYPE.CREDIT, BankImport.TYPE.REFUND].includes(transaction.type)).reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount) || 0), 0);
+  bankImportUi.approvedSummary.textContent = approved.length
+    ? `${approved.length} aprovado(s) • despesas ${formatCurrency(expenseTotal)} • créditos ${formatCurrency(creditTotal)}`
+    : 'Nenhum lançamento aprovado.';
+  bankImportUi.confirm.disabled = !approved.length || bankImportState.busy;
+  const eligibleNew = bankImportState.transactions.filter((transaction) => transaction.status === BankImport.STATUS.NEW);
+  bankImportUi.selectAll.checked = eligibleNew.length > 0 && eligibleNew.every((transaction) => transaction.approved);
+}
+
+function renderBankImportPreview() {
+  renderBankImportStats();
+  bankImportUi.list.innerHTML = bankImportState.transactions.map(renderBankImportRow).join('');
+  bankImportUi.preview.hidden = false;
+  updateBankImportApprovedSummary();
+}
+
+function validateEditedBankImportTransaction(transaction) {
+  const wasPossibleDuplicate = transaction.reviewKind === BankImport.REVIEW_KIND.POSSIBLE_DUPLICATE;
+  transaction.amount = BankImport.signedAmount(transaction.amount, transaction.type);
+  transaction.fingerprint = BankImport.fingerprint(transaction, { paymentMethodId: transaction.paymentMethodId });
+  if ([BankImport.TYPE.PAYMENT, BankImport.TYPE.TRANSFER].includes(transaction.type)) {
+    transaction.status = BankImport.STATUS.IGNORED;
+    transaction.statusReason = transaction.type === BankImport.TYPE.PAYMENT ? 'Pagamento de fatura não é uma nova despesa' : 'Transferência não é uma nova despesa';
+    transaction.approved = false;
+    return;
+  }
+  if (!transaction.date || !transaction.merchant?.trim() || !transaction.category?.trim() || !transaction.paymentMethodId || !Number.isFinite(Number(transaction.amount)) || Number(transaction.amount) === 0) {
+    transaction.status = BankImport.STATUS.INVALID;
+    transaction.statusReason = 'Complete data, estabelecimento, categoria, método e valor';
+    transaction.approved = false;
+    return;
+  }
+  if (!transaction.protectedMatch && transaction.reviewKind !== BankImport.REVIEW_KIND.PROTECTED) {
+    transaction.allowImport = true;
+    if (!wasPossibleDuplicate) transaction.reviewKind = BankImport.REVIEW_KIND.USER_CONFIRMABLE;
+  }
+  if (transaction.status !== BankImport.STATUS.NEW) {
+    transaction.status = BankImport.STATUS.REVIEW;
+    transaction.statusReason = transaction.matchedReceipt ? 'Revise a possível correspondência antes de aprovar' : 'Dados corrigidos; confirme para importar';
+  }
+}
+
+function rememberEditedBankImportAlias(transaction) {
+  const alias = BankImport.buildMerchantAlias(transaction);
+  if (!alias) return;
+  bankImportState.aliases[alias.normalizedDescription] = { ...alias, recordType: 'alias' };
+  const aliasId = BankImport.hashString(alias.normalizedDescription);
+  bankImportAliasSaveQueue = bankImportAliasSaveQueue
+    .catch(() => {})
+    .then(() => FinanceAPI.saveBankImportAlias(aliasId, alias))
+    .catch((error) => {
+      console.error('Não foi possível memorizar a associação do estabelecimento:', error);
+      setBankImportMessage('A correção foi aplicada nesta prévia, mas não pôde ser memorizada para o próximo extrato.', 'error');
+    });
+}
+
+async function analyzeBankStatement() {
+  if (bankImportState.busy) return;
+  const file = bankImportUi.fileInput?.files?.[0];
+  const paymentMethodId = bankImportUi.payment?.value || '';
+  if (!file) return setBankImportMessage('Selecione um PDF para analisar.', 'error');
+  if (!paymentMethodId) return setBankImportMessage('Selecione o cartão ou a conta de origem.', 'error');
+  bankImportState.busy = true;
+  bankImportUi.analyze.disabled = true;
+  bankImportUi.analyze.textContent = 'Analisando...';
+  setBankImportMessage('Lendo o PDF localmente e comparando com os meses relacionados...');
+  try {
+    const pdf = await PdfStatementReader.readPdf(file);
+    bankImportState.fileName = pdf.fileName;
+    bankImportUi.fileName.textContent = `${pdf.fileName} • ${pdf.pageCount} página(s)`;
+    const selectedMethod = paymentMethods.find((method) => method.id === paymentMethodId);
+    const institutionHint = BankImport.detectInstitution(selectedMethod?.name || '');
+    const parsed = BankImport.parseStatementText(pdf.pages, {
+      dateOrder: 'AUTO',
+      paymentMethodId,
+      institution: institutionHint === 'generic' ? undefined : institutionHint,
+      source: 'pdf'
+    });
+    if (!parsed.transactions.length) throw new Error(parsed.warnings[0] || 'Nenhuma movimentação foi identificada com segurança neste layout.');
+    const prepared = parsed.transactions.map((transaction) => ({ ...transaction, owner: bankImportUi.owner.value, paymentMethodId }));
+    const months = BankImport.relevantMonths(prepared);
+    const [existingReceipts, plannedGroups, installmentPlansSnapshot, importState] = await Promise.all([
+      FinanceAPI.getReceiptsForMonths(months),
+      Promise.all(months.map((month) => FinanceAPI.getPlannedOnce(month))),
+      FinanceAPI.getInstallmentPlansOnce(),
+      FinanceAPI.getBankImportState()
+    ]);
+    const importedHistory = importState.records.map((record) => ({
+      id: record.receiptId || record.id,
+      month: record.month,
+      paymentMethodId: record.paymentMethodId,
+      bankTransactionId: record.bankTransactionId,
+      bankImportFingerprint: record.fingerprint,
+      bankImportDecision: record.decision || ''
+    }));
+    bankImportState.existingReceipts = [...existingReceipts, ...importedHistory];
+    bankImportState.plannedItems = plannedGroups.flat();
+    bankImportState.installmentPlans = installmentPlansSnapshot;
+    bankImportState.aliases = importState.aliases;
+    bankImportState.transactions = BankImport.reconcileTransactions(prepared, bankImportState.existingReceipts, {
+      paymentMethodId,
+      owner: bankImportUi.owner.value,
+      companyDirectory,
+      aliases: bankImportState.aliases,
+      plannedItems: bankImportState.plannedItems,
+      installmentPlans: bankImportState.installmentPlans
+    });
+    renderBankImportPreview();
+    const warning = parsed.warnings.length ? ` ${parsed.warnings.join(' ')}` : '';
+    const detectedYearLabel = parsed.statementYear ? ` Ano ${parsed.statementYear} identificado automaticamente.` : '';
+    const institutionLabel = parsed.institution === 'rbc' ? 'RBC identificado.' : parsed.institution === 'cibc' ? 'CIBC identificado.' : 'Layout bancário genérico.';
+    setBankImportMessage(`${institutionLabel} ${parsed.transactions.length} movimentação(ões) extraída(s).${detectedYearLabel} Revise antes de confirmar.${warning}`, 'success');
+  } catch (error) {
+    console.error('Falha ao analisar extrato (sem conteúdo bancário no log):', error?.code || error?.name || 'erro');
+    setBankImportMessage(error.message || 'Não foi possível analisar o PDF.', 'error');
+    bankImportUi.preview.hidden = true;
+  } finally {
+    if (bankImportUi.fileInput) bankImportUi.fileInput.value = '';
+    bankImportState.busy = false;
+    bankImportUi.analyze.disabled = false;
+    bankImportUi.analyze.textContent = 'Analisar PDF';
+  }
+}
+
+async function rebuildClosedStatementsForImports(importedReceipts) {
+  const affected = new Map();
+  importedReceipts.forEach((receipt) => {
+    const card = paymentMethods.find((method) => method.id === receipt.paymentMethodId && method.type === 'credito');
+    if (!card) return;
+    const dueMonth = CardStatements.getEntryDueMonth(receipt, card, creditCardStatements);
+    const statement = findCardStatement(card.id, dueMonth);
+    if (statement) affected.set(`${card.id}|${dueMonth}`, { card, dueMonth, statement });
+  });
+  for (const { card, dueMonth, statement } of affected.values()) {
+    const months = getCycleReceiptMonths(CardStatements.getCycle(card, dueMonth));
+    const cycleReceipts = await FinanceAPI.getReceiptsForMonths(months);
+    const calculatedAmount = cycleReceipts
+      .filter((receipt) => receipt.paymentMethodId === card.id && CardStatements.getEntryDueMonth(receipt, card, creditCardStatements) === dueMonth)
+      .reduce((sum, receipt) => sum + (Number(receipt.amount) || 0), 0);
+    await saveStatementMutation(statement, { calculatedAmount: CardStatements.roundMoney(calculatedAmount) });
+  }
+}
+
+async function revalidateBankImportTransaction(transaction, reservations = {}) {
+  const months = BankImport.relevantMonths([transaction]);
+  const [receipts, plannedGroups, installmentPlansSnapshot, importState] = await Promise.all([
+    FinanceAPI.getReceiptsForMonths(months),
+    Promise.all(months.map((month) => FinanceAPI.getPlannedOnce(month))),
+    FinanceAPI.getInstallmentPlansOnce(),
+    FinanceAPI.getBankImportState()
+  ]);
+  const importedHistory = importState.records.map((record) => ({
+    id: record.receiptId || record.id,
+    month: record.month,
+    paymentMethodId: record.paymentMethodId,
+    bankTransactionId: record.bankTransactionId,
+    bankImportFingerprint: record.fingerprint,
+    bankImportDecision: record.decision || ''
+  }));
+  const candidate = { ...transaction, approved: false };
+  [
+    'matchedReceipt',
+    'matchedInstallment',
+    'matchedPlannedFixed',
+    'matchedPlannedIsStatic',
+    'protectedMatch',
+    'allowImport',
+    'reviewKind',
+    'reviewMatchKey',
+    'duplicateDecision',
+    'installmentGuard',
+    'plannedGuard',
+    'linkedPlannedId',
+    'staticSyncId',
+    'installmentPlanId',
+    'installmentNumber',
+    'installmentCount',
+    'installmentMode',
+    'installmentStage',
+    'rentalNumber',
+    'rentalCount'
+  ].forEach((field) => delete candidate[field]);
+  const fresh = BankImport.reconcileTransactions(candidate ? [candidate] : [], [...receipts, ...importedHistory], {
+    paymentMethodId: candidate.paymentMethodId,
+    owner: candidate.owner,
+    companyDirectory,
+    aliases: importState.aliases,
+    plannedItems: plannedGroups.flat(),
+    installmentPlans: installmentPlansSnapshot,
+    reservedPlannedIds: reservations.plannedIds,
+    reservedInstallments: reservations.installments
+  })[0];
+  return BankImport.decideRevalidation(transaction, fresh);
+}
+
+async function confirmBankImport() {
+  if (bankImportState.busy) return;
+  const approved = bankImportState.transactions.filter((transaction) => transaction.approved && hasRequiredBankImportFields(transaction) && transaction.allowImport !== false && ![BankImport.STATUS.EXISTING, BankImport.STATUS.INVALID, BankImport.STATUS.IGNORED].includes(transaction.status));
+  if (!approved.length) return;
+  if (!(await showConfirm(`Importar ${approved.length} lançamento(s) aprovado(s)? Nenhum PDF será armazenado.`))) return;
+  bankImportState.busy = true;
+  bankImportUi.confirm.disabled = true;
+  bankImportUi.confirm.textContent = 'Importando...';
+  const saved = [];
+  const failures = [];
+  let repeated = 0;
+  let blocked = 0;
+  const reservations = { plannedIds: new Set(), installments: new Set() };
+  for (const transaction of approved) {
+    try {
+      const validation = await revalidateBankImportTransaction(transaction, reservations);
+      if (validation.action === 'existing') {
+        Object.assign(transaction, validation.transaction, { approved: false });
+        repeated += 1;
+        continue;
+      }
+      if (validation.action === 'blocked') {
+        Object.assign(transaction, validation.transaction, { approved: false });
+        blocked += 1;
+        continue;
+      }
+      const validatedTransaction = validation.transaction;
+      const receipt = BankImport.buildReceipt(validatedTransaction);
+      const month = receipt.date.slice(0, 7);
+      const result = await FinanceAPI.saveImportedReceiptAtomic(month, receipt, {
+        fingerprint: receipt.bankImportFingerprint,
+        source: receipt.bankImportSource || 'pdf',
+        installmentGuard: validatedTransaction.installmentGuard || null,
+        plannedGuard: validatedTransaction.plannedGuard || null
+      });
+      if (result.alreadyImported) repeated += 1;
+      else {
+        saved.push({ ...receipt, id: result.receiptId, month });
+        autoRegisterCompany(validatedTransaction.category, validatedTransaction.merchant).catch(() => {});
+      }
+      transaction.status = BankImport.STATUS.EXISTING;
+      transaction.statusReason = result.alreadyImported ? 'Já havia sido importado' : 'Importado com segurança';
+      transaction.approved = false;
+      const normalizedDescription = BankImport.normalizeMerchant(validatedTransaction.rawDescription);
+      if (normalizedDescription && validatedTransaction.merchant && validatedTransaction.category) {
+        FinanceAPI.saveBankImportAlias(BankImport.hashString(normalizedDescription), {
+          normalizedDescription,
+          merchant: validatedTransaction.merchant,
+          category: validatedTransaction.category
+        }).catch(() => {});
+      }
+    } catch (error) {
+      failures.push({ transaction, error });
+    }
+  }
+  let statementWarning = false;
+  if (saved.length) {
+    try {
+      await rebuildClosedStatementsForImports(saved);
+    } catch (error) {
+      statementWarning = true;
+      console.error('Não foi possível recalcular uma fatura após a importação:', error);
+    }
+    logActivity('Importou', `${saved.length} lançamento(s) de extrato bancário`);
+    syncData(getCurrentMonth());
+  }
+  bankImportState.busy = false;
+  bankImportUi.confirm.textContent = 'Confirmar importação';
+  renderBankImportPreview();
+  if (failures.length) {
+    setBankImportMessage(`${saved.length} salvo(s), ${blocked} bloqueado(s) pela revalidação e ${failures.length} não concluído(s). Os já gravados não serão duplicados.`, 'error');
+  } else {
+    const repeatText = repeated ? ` ${repeated} já estava(m) importado(s).` : '';
+    const blockedText = blocked ? ` ${blocked} foi/foram bloqueado(s) porque os vínculos mudaram ou estão protegidos; revise a lista.` : '';
+    const warningText = statementWarning ? ' Uma fatura fechada não pôde ser recalculada agora; recarregue quando a conexão voltar.' : '';
+    setBankImportMessage(`Importação concluída: ${saved.length} novo(s).${repeatText}${blockedText}${warningText}`, statementWarning || blocked ? 'error' : 'success');
+    showToast(blocked ? 'Importação concluída com itens para revisar.' : 'Importação concluída com segurança.', blocked ? 'error' : 'success');
+  }
+}
+
+bankImportUi.openButton?.addEventListener('click', openBankImport);
+bankImportUi.closeButton?.addEventListener('click', closeBankImport);
+bankImportUi.overlay?.addEventListener('click', (event) => {
+  if (event.target === bankImportUi.overlay) closeBankImport();
+});
+bankImportUi.fileInput?.addEventListener('change', () => {
+  const file = bankImportUi.fileInput.files?.[0];
+  bankImportUi.fileName.textContent = file ? `${file.name} • ${(file.size / 1024 / 1024).toFixed(1)} MB` : 'PDF com texto selecionável, até 20 MB';
+});
+bankImportUi.analyze?.addEventListener('click', analyzeBankStatement);
+bankImportUi.confirm?.addEventListener('click', confirmBankImport);
+bankImportUi.selectAll?.addEventListener('change', () => {
+  bankImportState.transactions.forEach((transaction) => {
+    if (transaction.status === BankImport.STATUS.NEW) transaction.approved = bankImportUi.selectAll.checked;
+  });
+  renderBankImportPreview();
+});
+bankImportUi.list?.addEventListener('click', async (event) => {
+  const actionButton = event.target.closest('[data-duplicate-action]');
+  if (!actionButton) return;
+  const row = actionButton.closest('.bank-import-row');
+  const transaction = row ? bankImportState.transactions[Number(row.dataset.index)] : null;
+  const isPossibleDuplicate = transaction?.reviewKind === BankImport.REVIEW_KIND.POSSIBLE_DUPLICATE;
+  const isProtectedDuplicate = transaction?.reviewKind === BankImport.REVIEW_KIND.PROTECTED && Boolean(transaction.matchedReceipt);
+  if (!transaction || ![BankImport.STATUS.NEW, BankImport.STATUS.REVIEW].includes(transaction.status)) return;
+  const action = actionButton.dataset.duplicateAction;
+  if (isProtectedDuplicate && action !== 'skip') return;
+  if (action === 'import' && !isPossibleDuplicate) return;
+  if (action === 'import' && !hasRequiredBankImportFields(transaction)) {
+    showToast('Selecione a categoria e informe o estabelecimento antes de importar.', 'error');
+    return;
+  }
+  if (action === 'skip') {
+    const wasApproved = transaction.approved;
+    transaction.approved = false;
+    actionButton.disabled = true;
+    updateBankImportApprovedSummary();
+    try {
+      await FinanceAPI.saveBankImportExistingDecision(transaction);
+    } catch (error) {
+      console.error('Não foi possível memorizar que o lançamento já está cadastrado:', error);
+      showToast('Não foi possível memorizar esta decisão. Tente novamente.', 'error');
+      transaction.approved = wasApproved;
+      actionButton.disabled = false;
+      updateBankImportApprovedSummary();
+      return;
+    }
+  }
+  transaction.duplicateDecision = action;
+  transaction.approved = action === 'import';
+  if (action === 'skip') {
+    transaction.status = BankImport.STATUS.EXISTING;
+    transaction.allowImport = false;
+    transaction.bankImportDecision = 'already-registered';
+  }
+  transaction.statusReason = action === 'import'
+    ? 'Confirmado como outra compra — será importado'
+    : 'Confirmado como já cadastrado — não será importado';
+  renderBankImportPreview();
+});
+bankImportUi.list?.addEventListener('change', (event) => {
+  const row = event.target.closest('.bank-import-row');
+  if (!row) return;
+  const transaction = bankImportState.transactions[Number(row.dataset.index)];
+  if (!transaction) return;
+  if (event.target.classList.contains('bank-import-approve')) {
+    transaction.approved = event.target.checked;
+    renderBankImportStats();
+    updateBankImportApprovedSummary();
+    return;
+  }
+  const field = event.target.dataset.field;
+  if (!field) return;
+  delete transaction.duplicateDecision;
+  transaction.approved = false;
+  if (field === 'amount') {
+    transaction.amount = BankImport.signedAmount(parseAmount(event.target.value), transaction.type);
+    transaction.multipleAmountColumns = false;
+    transaction.validationIssues = (transaction.validationIssues || []).filter((issue) => !/coluna/i.test(issue));
+  }
+  else transaction[field] = event.target.value;
+  validateEditedBankImportTransaction(transaction);
+  if (field === 'merchant' || field === 'category') rememberEditedBankImportAlias(transaction);
+  renderBankImportPreview();
+});
 
 function isReceiptEditLockedByBudget(receipt) {
   // Estático sempre nasce de um item também marcado como Fixo. Fixos comuns,
@@ -3648,6 +4252,7 @@ async function initAppUI() {
 
   const m = getCurrentMonthISO();
   monthInput.value = m;
+  updateReferenceMonthNumber();
 
   selectedPlannedType = getCategories()[0] || '';
   selectedReceiptType = getCategories()[0] || '';
@@ -6157,6 +6762,7 @@ let annualEvents = [];
 let installmentPlans = [];
 let editingAnnualId = null;
 let editingInstallmentPlanId = null;
+let annualListYear = new Date().getFullYear();
 
 const formAnnual = document.getElementById('form-annual');
 const annualNameInput = document.getElementById('annual-name');
@@ -6192,8 +6798,15 @@ const annualRentalAmount = document.getElementById('annual-rental-amount');
 const annualRentBuyAtEnd = document.getElementById('annual-rent-buy-at-end');
 const annualSubmitBtn = document.getElementById('annual-submit-btn');
 const annualItemsList = document.getElementById('annual-items-list');
+const annualYearNavigationLabel = document.getElementById('annual-year-navigation-label');
+const annualYearPrevButton = document.getElementById('annual-year-prev');
+const annualYearNextButton = document.getElementById('annual-year-next');
 const installmentPlansCard = document.getElementById('installment-plans-card');
 const installmentPlansList = document.getElementById('installment-plans-list');
+const activeInstallmentPlansTitle = document.getElementById('active-installment-plans-title');
+const completedInstallmentPlansSection = document.getElementById('completed-installment-plans-section');
+const completedInstallmentPlansSummary = document.getElementById('completed-installment-plans-summary');
+const completedInstallmentPlansList = document.getElementById('completed-installment-plans-list');
 
 function getAnnualInstallmentMode() {
   return annualInstallmentModeInputs.find((input) => input.checked)?.value || 'purchase';
@@ -6395,7 +7008,9 @@ function updateAnnualInstallmentBuilder() {
             : 'Valor (CAD)'
       : 'Valor (CAD)';
   }
-  if (annualDateLabel) annualDateLabel.textContent = enabled ? 'Data da primeira parcela' : 'Data (O ano será ignorado)';
+  if (annualDateLabel) {
+    annualDateLabel.textContent = enabled ? 'Data da primeira parcela' : annualOneOffCheckbox?.checked ? 'Data do evento único (ano obrigatório)' : 'Data anual (o ano será ignorado)';
+  }
   if (annualInstallmentAmountHint) {
     annualInstallmentAmountHint.classList.toggle('visible', enabled);
     annualInstallmentAmountHint.textContent = enabled
@@ -6491,6 +7106,7 @@ annualInterestTypeInputs.forEach((input) => input.addEventListener('change', upd
 annualPaymentFrequencyInputs.forEach((input) => input.addEventListener('change', updateAnnualInstallmentBuilder));
 [annualAmountInput, annualDateInput, annualInstallmentsCount, annualInstallmentsInterval, annualInterestRate, annualMortgageAmortization, annualRentalAmount].forEach((input) => input?.addEventListener('input', updateAnnualInstallmentBuilder));
 annualRentBuyAtEnd?.addEventListener('change', updateAnnualInstallmentBuilder);
+annualOneOffCheckbox?.addEventListener('change', updateAnnualInstallmentBuilder);
 
 let selectedAnnualType = '';
 const annualTypeChips = document.getElementById('annual-type-chips');
@@ -6745,13 +7361,19 @@ function getInstallmentStatusPresentation(status) {
 
 function renderInstallmentPlans() {
   if (!installmentPlansCard || !installmentPlansList) return;
-  const activePlans = installmentPlans.filter((plan) => (plan.installments || []).some((installment) => !['paid', 'cancelled'].includes(installment.status))).sort((a, b) => String(a.startDate || '').localeCompare(String(b.startDate || '')));
+  const partition = window.AnnualPlanning?.partitionInstallmentPlans(installmentPlans) || { active: [], completed: [] };
+  const activePlans = partition.active.sort((a, b) => String(a.startDate || '').localeCompare(String(b.startDate || '')));
+  const completedPlans = partition.completed.sort((a, b) => String(b.completedAt || b.updatedAt || '').localeCompare(String(a.completedAt || a.updatedAt || '')));
 
-  installmentPlansCard.hidden = activePlans.length === 0;
+  installmentPlansCard.hidden = activePlans.length === 0 && completedPlans.length === 0;
   installmentPlansList.innerHTML = '';
-  if (activePlans.length === 0) return;
+  if (completedInstallmentPlansList) completedInstallmentPlansList.innerHTML = '';
+  if (activeInstallmentPlansTitle) activeInstallmentPlansTitle.hidden = activePlans.length === 0;
+  if (completedInstallmentPlansSection) completedInstallmentPlansSection.hidden = completedPlans.length === 0;
+  if (completedInstallmentPlansSummary) completedInstallmentPlansSummary.textContent = `Concluídos (${completedPlans.length})`;
+  if (activePlans.length === 0 && completedPlans.length === 0) return;
 
-  activePlans.forEach((plan) => {
+  [...activePlans.map((plan) => ({ plan, isCompleted: false })), ...completedPlans.map((plan) => ({ plan, isCompleted: true }))].forEach(({ plan, isCompleted }) => {
     const installments = plan.installments || [];
     const paid = installments.filter((installment) => installment.status === 'paid');
     const paidAmount = paid.reduce((total, installment) => total + Math.abs(Number(installment.paidAmount ?? installment.amount) || 0), 0);
@@ -6806,18 +7428,44 @@ function renderInstallmentPlans() {
           .join('')}
       </div>
       <div class="installment-plan-actions">
-        <button type="button" class="action-btn${canFullyEdit ? '' : ' is-locked'}" onclick="startEditInstallmentPlan('${plan.id}', event)" title="${canFullyEdit ? 'Voltar este parcelamento ao formulário' : 'Há parcelas lançadas; o histórico está protegido'}">${canFullyEdit ? 'Editar cadastro' : '🔒 Editar cadastro'}</button>
-        ${plan.mode !== 'rent_to_own' || futureRentals.length > 0 ? `<button type="button" class="action-btn" onclick="adjustFutureInstallments('${plan.id}', event)">${plan.mode === 'rent_to_own' ? 'Ajustar aluguéis' : 'Ajustar futuras'}</button>` : ''}
         ${
-          canFullyEdit
-            ? `<button type="button" class="action-btn danger" onclick="deleteInstallmentPlanFully('${plan.id}', event)">Excluir parcelamento</button>`
-            : `<button type="button" class="action-btn danger" onclick="cancelFutureInstallments('${plan.id}', event)">Encerrar parcelamento</button>`
+          isCompleted
+            ? `<button type="button" class="action-btn" onclick="archiveCompletedInstallmentPlan('${plan.id}', event)">Remover da lista</button>`
+            : `<button type="button" class="action-btn${canFullyEdit ? '' : ' is-locked'}" onclick="startEditInstallmentPlan('${plan.id}', event)" title="${canFullyEdit ? 'Voltar este parcelamento ao formulário' : 'Há parcelas lançadas; o histórico está protegido'}">${canFullyEdit ? 'Editar cadastro' : '🔒 Editar cadastro'}</button>
+              ${plan.mode !== 'rent_to_own' || futureRentals.length > 0 ? `<button type="button" class="action-btn" onclick="adjustFutureInstallments('${plan.id}', event)">${plan.mode === 'rent_to_own' ? 'Ajustar aluguéis' : 'Ajustar futuras'}</button>` : ''}
+              ${canFullyEdit ? `<button type="button" class="action-btn danger" onclick="deleteInstallmentPlanFully('${plan.id}', event)">Excluir parcelamento</button>` : `<button type="button" class="action-btn danger" onclick="cancelFutureInstallments('${plan.id}', event)">Encerrar parcelamento</button>`}`
         }
       </div>
     `;
-    installmentPlansList.appendChild(details);
+    if (isCompleted && completedInstallmentPlansList) completedInstallmentPlansList.appendChild(details);
+    else installmentPlansList.appendChild(details);
   });
 }
+
+window.archiveCompletedInstallmentPlan = async function (planId, event) {
+  event?.preventDefault();
+  event?.stopPropagation();
+  const plan = getInstallmentPlan(planId);
+  const installments = plan?.installments || [];
+  const isCompleted = installments.length > 0 && installments.every((entry) => ['paid', 'cancelled'].includes(entry.status));
+  if (!plan || !isCompleted) return showToast('Este parcelamento ainda possui pagamentos pendentes.', 'info');
+
+  const confirmed = await showConfirm(`Remover "${plan.name}" da lista de concluídos?\n\nAs Notas, os itens do Orçamento e todos os vínculos pagos serão preservados.`);
+  if (!confirmed) return;
+
+  try {
+    await FinanceAPI.saveInstallmentPlan({
+      ...plan,
+      archivedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    logActivity('Arquivou', `Parcelamento concluído: ${plan.name}`);
+    showToast('Parcelamento removido da lista. O histórico financeiro foi preservado.', 'success');
+  } catch (error) {
+    console.error('Erro ao arquivar parcelamento concluído:', error);
+    showToast('Não foi possível remover o parcelamento da lista.', 'error');
+  }
+};
 
 window.startEditInstallmentPlan = function (planId, event) {
   event?.preventDefault();
@@ -7258,7 +7906,7 @@ if (formAnnual) {
       }
 
       const oldEvent = editingAnnualId ? annualEvents.find((event) => event.id === editingAnnualId) : null;
-      const itemData = {
+      let itemData = {
         ...(oldEvent || {}),
         name,
         category,
@@ -7272,7 +7920,7 @@ if (formAnnual) {
         isIncome,
       };
       if (editingAnnualId) itemData.id = editingAnnualId;
-      if (oldEvent?.installmentPlanId) itemData.targetYear = targetYear;
+      itemData = window.AnnualPlanning.prepareAnnualEventForSave(itemData, { isOneOff: oldEvent?.installmentPlanId ? true : isOneOff, targetYear });
       await FinanceAPI.saveAnnualEvent(itemData);
       if (oldEvent?.installmentPlanId) {
         await updateInstallmentPlanEntry(oldEvent.installmentPlanId, oldEvent.installmentNumber, {
@@ -7330,7 +7978,7 @@ function startEditAnnual(id) {
   annualNameInput.value = item.name;
   annualCategoryInput.value = item.category;
 
-  const dummyYear = item.targetYear || new Date().getFullYear();
+  const dummyYear = item.targetYear || annualListYear;
   const safeDay = item.dayTarget ? String(item.dayTarget).padStart(2, '0') : '01';
   annualDateInput.value = `${dummyYear}-${item.monthTarget}-${safeDay}`;
 
@@ -7529,17 +8177,17 @@ function enableAnnualItemDrag(handle, item, sourceElement) {
 function renderAnnualList() {
   if (!annualItemsList) return;
   annualItemsList.innerHTML = '';
+  const selectedYear = String(annualListYear);
+  if (annualYearNavigationLabel) annualYearNavigationLabel.textContent = `Ano ${selectedYear}`;
+  const visibleEvents = window.AnnualPlanning?.filterEventsForYear(annualEvents, selectedYear) || [];
 
-  if (annualEvents.length === 0) {
-    annualItemsList.innerHTML = '<p class="hint">Nenhum evento anual cadastrado.</p>';
+  if (visibleEvents.length === 0) {
+    annualItemsList.innerHTML = `<p class="hint">Nenhum evento previsto para ${selectedYear}.</p>`;
     return;
   }
 
   // 1. Ordena primeiro por mês e depois por dia para ficar na sequência perfeita
-  const sorted = [...annualEvents].sort((a, b) => {
-    const yearA = a.targetYear || '0000';
-    const yearB = b.targetYear || '0000';
-    if (yearA !== yearB) return yearA.localeCompare(yearB);
+  const sorted = [...visibleEvents].sort((a, b) => {
     if (a.monthTarget === b.monthTarget) {
       const dayA = a.dayTarget ? parseInt(a.dayTarget) : 1;
       const dayB = b.dayTarget ? parseInt(b.dayTarget) : 1;
@@ -7557,7 +8205,7 @@ function renderAnnualList() {
   });
 
   const currentViewMonthStr = getCurrentMonth();
-  const currentMonthIdx = currentViewMonthStr ? parseInt(currentViewMonthStr.split('-')[1]) - 1 : -1;
+  const currentMonthIdx = currentViewMonthStr && currentViewMonthStr.split('-')[0] === selectedYear ? parseInt(currentViewMonthStr.split('-')[1]) - 1 : -1;
 
   // 3. Renderiza os blocos divididos por mês
   Array.from({ length: 12 }, (_, index) => String(index)).forEach((monthIdx) => {
@@ -7609,6 +8257,7 @@ function renderAnnualList() {
       const installmentBadge = item.installmentPlanId ? ` <span class="annual-plan-badge">${item.installmentMode === 'repeat' ? 'Repetição' : 'Parcela'}</span>` : '';
       const biweeklyBadge = renderBiweeklyConversionBadge(item);
       const targetYearBadge = item.targetYear ? ` <span class="annual-plan-badge">${item.targetYear}</span>` : '';
+      const missingYearBadge = window.AnnualPlanning?.isLegacyOneOffWithoutYear(item) ? ' <span class="annual-missing-year-badge" title="Edite este evento uma vez para definir o ano">Ano não definido</span>' : '';
 
       const isIncome = item.amount < 0 || item.isIncome;
       const amountColor = isIncome ? '#62c462' : '#ff7b7b';
@@ -7618,7 +8267,7 @@ function renderAnnualList() {
       el.innerHTML = `
         <button type="button" class="annual-drag-handle" aria-label="Mover ${item.name}" title="Pressione e arraste para outro mês">⠿</button>
         <div class="receipt-main">
-          <div class="receipt-line">${item.name}${oneOffBadge}${installmentBadge}${biweeklyBadge}${targetYearBadge}${incomeBadge} <span style="color:#fddf7b; font-size: 0.75rem; margin-left: 4px;">[${diaText}]</span></div>
+          <div class="receipt-line">${item.name}${oneOffBadge}${installmentBadge}${biweeklyBadge}${targetYearBadge}${missingYearBadge}${incomeBadge} <span style="color:#fddf7b; font-size: 0.75rem; margin-left: 4px;">[${diaText}]</span></div>
           ${obsHtml}
           <div class="receipt-meta" style="margin-top:2px;">${item.category} • Resp: ${item.owner}${payStr}</div>
         </div>
@@ -7638,6 +8287,16 @@ function renderAnnualList() {
     annualItemsList.appendChild(itemsContainer);
   });
 }
+
+annualYearPrevButton?.addEventListener('click', () => {
+  annualListYear -= 1;
+  renderAnnualList();
+});
+
+annualYearNextButton?.addEventListener('click', () => {
+  annualListYear += 1;
+  renderAnnualList();
+});
 
 // === Sistema de Alerta na Aba de Orçamento ===
 function updateBudgetBadge() {
@@ -7683,7 +8342,7 @@ function checkAnnualAlerts() {
 
   const pendingEvents = annualEvents.filter((ev) => {
     if (ev.monthTarget !== currentMonthNum) return false;
-    if (ev.targetYear && ev.targetYear !== currentYear) return false;
+    if (ev.isOneOff && ev.targetYear && String(ev.targetYear) !== currentYear) return false;
 
     const alreadyPlanned = plannedItems.some((p) => {
       if (p.month !== currentMonthStr) return false;

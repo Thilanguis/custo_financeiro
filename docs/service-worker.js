@@ -1,6 +1,19 @@
 // docs/service-worker.js
-const CACHE_NAME = 'controle-financeiro-v74';
-const urlsToCache = ['./', './index.html', './style.css', './app.js', './firebase-api.js', './temporary-income.js', './manifest.json', './icons/icon-192.png', './icons/icon-512.png'];
+const CACHE_NAME = 'controle-financeiro-v91';
+const urlsToCache = [
+  './',
+  './index.html',
+  './style.css',
+  './app.js',
+  './firebase-api.js',
+  './temporary-income.js',
+  './annual-planning.js',
+  './bank-import.js',
+  './pdf-statement-reader.js',
+  './manifest.json',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

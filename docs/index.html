@@ -130,7 +130,10 @@
               <label>Mês de referência</label>
 
               <div class="month-navigation" style="display: flex; gap: 4px; align-items: center">
-                <input type="month" id="current-month" style="flex: 1" />
+                <div class="reference-month-control" style="flex: 1">
+                  <span id="current-month-number" class="reference-month-number" aria-hidden="true">-- —</span>
+                  <input type="month" id="current-month" aria-label="Mês de referência" />
+                </div>
                 <button type="button" id="btn-prev-month" class="action-btn" style="height: 38px; padding: 0 12px" title="Mês Anterior">▼</button>
                 <button type="button" id="btn-next-month" class="action-btn" style="height: 38px; padding: 0 12px" title="Próximo Mês">▲</button>
                 <button type="button" id="btn-home-month" class="action-btn" style="height: 38px; padding: 0 12px; font-size: 1.1rem" title="Mês Atual">🏠</button>
@@ -465,10 +468,13 @@
 
       <section id="view-receipts" class="view active">
         <div class="card">
-          <h3>
-            <span class="context-icon" aria-hidden="true">🧾</span>
-            Novo Lançamento (Real)
-          </h3>
+          <div class="list-header-row bank-import-heading">
+            <h3>
+              <span class="context-icon" aria-hidden="true">🧾</span>
+              Novo Lançamento (Real)
+            </h3>
+            <button type="button" class="action-btn" id="btn-open-bank-import">📄 Importar Extrato</button>
+          </div>
           <span class="hint small" style="display: block; margin-bottom: 4px">1. Selecione a Categoria:</span>
           <div class="chips-row" id="receipt-type-chips"></div>
 
@@ -556,6 +562,57 @@
           <div id="receipts-list" class="receipts-list"></div>
         </div>
       </section>
+
+      <div id="bank-import-overlay" class="bank-import-overlay" hidden>
+        <section class="bank-import-modal" role="dialog" aria-modal="true" aria-labelledby="bank-import-title">
+          <header class="bank-import-modal-header">
+            <div>
+              <span class="bank-import-eyebrow">PROCESSAMENTO LOCAL</span>
+              <h2 id="bank-import-title">📄 Importação de lançamentos</h2>
+              <p>O PDF é lido neste navegador e não é enviado nem armazenado.</p>
+            </div>
+            <button type="button" id="btn-close-bank-import" class="action-btn bank-import-close" aria-label="Fechar">✕</button>
+          </header>
+
+          <div class="bank-import-setup">
+            <label class="bank-import-file" for="bank-import-file">
+              <strong>Selecionar extrato bancário</strong>
+              <span id="bank-import-file-name">PDF com texto selecionável, até 20 MB</span>
+              <input id="bank-import-file" type="file" accept="application/pdf,.pdf" hidden />
+            </label>
+            <div class="bank-import-setup-grid">
+              <label>Cartão / conta
+                <select id="bank-import-payment" required></select>
+              </label>
+              <label>Responsável padrão
+                <select id="bank-import-owner">
+                  <option value="Gabriel">Gabriel</option>
+                  <option value="Luana">Luana</option>
+                  <option value="Ambos">Ambos</option>
+                </select>
+              </label>
+              <button type="button" id="btn-analyze-bank-import" class="btn-primary">Analisar PDF</button>
+            </div>
+            <p id="bank-import-message" class="bank-import-message" aria-live="polite">Selecione o método correto. O sistema não tentará adivinhar o cartão.</p>
+          </div>
+
+          <section id="bank-import-preview" class="bank-import-preview" hidden>
+            <div id="bank-import-stats" class="bank-import-stats"></div>
+            <div class="bank-import-preview-toolbar">
+              <div>
+                <strong>Prévia dos lançamentos extraídos</strong>
+                <small>Revise os itens amarelos. Pagamentos e transferências ficam ignorados.</small>
+              </div>
+              <label class="bank-import-select-all"><input type="checkbox" id="bank-import-select-all" /> Aprovar todos os novos</label>
+            </div>
+            <div id="bank-import-list" class="bank-import-list"></div>
+            <footer class="bank-import-footer">
+              <span id="bank-import-approved-summary">Nenhum lançamento aprovado.</span>
+              <button type="button" id="btn-confirm-bank-import" class="btn-primary" disabled>Confirmar importação</button>
+            </footer>
+          </section>
+        </section>
+      </div>
 
       <section id="view-charts" class="view">
         <div class="card">
@@ -850,20 +907,31 @@
             <div>
               <h3>
                 <span class="context-icon" aria-hidden="true">🧾</span>
-                Parcelas ativas
+                Parcelamentos
               </h3>
-              <p class="hint installment-plans-subtitle">Acompanhamento de compras, aluguéis e repetições até o último pagamento.</p>
+              <p class="hint installment-plans-subtitle">Acompanhe os pagamentos ativos e consulte os que já foram concluídos.</p>
             </div>
           </div>
+          <h4 class="installment-plans-group-title" id="active-installment-plans-title">Parcelas ativas</h4>
           <div id="installment-plans-list" class="installment-plans-list"></div>
+          <details class="completed-installment-plans" id="completed-installment-plans-section" hidden>
+            <summary id="completed-installment-plans-summary">Concluídos</summary>
+            <p class="hint">O histórico pago é preservado. “Remover da lista” apenas arquiva este controle.</p>
+            <div id="completed-installment-plans-list" class="installment-plans-list"></div>
+          </details>
         </div>
 
         <div class="card">
-          <div class="list-header-row">
+          <div class="list-header-row annual-list-header">
             <h3>
               <span class="context-icon" aria-hidden="true">🔔</span>
               Lista de Planejamento Anual
             </h3>
+            <div class="annual-year-navigation" aria-label="Navegar pelos anos do planejamento">
+              <button type="button" class="action-btn" id="annual-year-prev" aria-label="Ano anterior">←</button>
+              <strong id="annual-year-navigation-label"></strong>
+              <button type="button" class="action-btn" id="annual-year-next" aria-label="Próximo ano">→</button>
+            </div>
           </div>
           <div id="annual-items-list" class="receipts-list" style="max-height: none"></div>
         </div>
@@ -905,6 +973,9 @@
     <script src="firebase-api.js"></script>
     <script src="card-statements.js"></script>
     <script src="temporary-income.js"></script>
+    <script src="annual-planning.js"></script>
+    <script src="bank-import.js"></script>
+    <script src="pdf-statement-reader.js"></script>
     <script src="app.js"></script>
     <script src="compras/photo-storage.js"></script>
     <script src="compras/firebase-compras.js"></script>

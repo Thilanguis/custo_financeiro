@@ -35,6 +35,11 @@
     return prepared;
   }
 
+  function getListYearAfterSave(currentYear, event) {
+    const targetYear = normalizeYear(event?.targetYear);
+    return event?.isOneOff && targetYear ? Number(targetYear) : Number(currentYear);
+  }
+
   function partitionInstallmentPlans(plans) {
     const active = [];
     const completed = [];
@@ -50,6 +55,7 @@
 
   return {
     filterEventsForYear,
+    getListYearAfterSave,
     isLegacyOneOffWithoutYear,
     normalizeYear,
     partitionInstallmentPlans,

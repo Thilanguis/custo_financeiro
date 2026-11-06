@@ -16,6 +16,18 @@ test('evento único preserva o ano e aparece somente nele', () => {
   assert.equal(saved.targetYear, '2027');
   assert.deepEqual(AnnualPlanning.filterEventsForYear([saved], 2026), []);
   assert.deepEqual(AnnualPlanning.filterEventsForYear([saved], 2027), [saved]);
+  assert.equal(AnnualPlanning.getListYearAfterSave(2026, saved), 2027);
+});
+
+test('salvar evento recorrente não troca o ano que está sendo consultado', () => {
+  assert.equal(AnnualPlanning.getListYearAfterSave(2026, { name: 'IPTU', isOneOff: false }), 2026);
+});
+
+test('atalho da casinha retorna a lista de planejamento ao ano atual', () => {
+  const html = fs.readFileSync(path.join(__dirname, '../docs/index.html'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '../docs/app.js'), 'utf8');
+  assert.match(html, /id="annual-year-home"/);
+  assert.match(source, /annualYearHomeButton\?\.addEventListener\('click'[\s\S]*annualListYear = new Date\(\)\.getFullYear\(\)/);
 });
 
 test('evento recorrente remove um ano antigo ao salvar', () => {

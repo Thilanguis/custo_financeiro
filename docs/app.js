@@ -6791,6 +6791,7 @@ const annualRentBuyAtEnd = document.getElementById('annual-rent-buy-at-end');
 const annualSubmitBtn = document.getElementById('annual-submit-btn');
 const annualItemsList = document.getElementById('annual-items-list');
 const annualYearNavigationLabel = document.getElementById('annual-year-navigation-label');
+const annualYearHomeButton = document.getElementById('annual-year-home');
 const annualYearPrevButton = document.getElementById('annual-year-prev');
 const annualYearNextButton = document.getElementById('annual-year-next');
 const installmentPlansCard = document.getElementById('installment-plans-card');
@@ -7914,6 +7915,8 @@ if (formAnnual) {
       if (editingAnnualId) itemData.id = editingAnnualId;
       itemData = window.AnnualPlanning.prepareAnnualEventForSave(itemData, { isOneOff: oldEvent?.installmentPlanId ? true : isOneOff, targetYear });
       await FinanceAPI.saveAnnualEvent(itemData);
+      annualListYear = window.AnnualPlanning.getListYearAfterSave(annualListYear, itemData);
+      renderAnnualList();
       if (oldEvent?.installmentPlanId) {
         await updateInstallmentPlanEntry(oldEvent.installmentPlanId, oldEvent.installmentNumber, {
           amount,
@@ -8282,6 +8285,11 @@ function renderAnnualList() {
 
 annualYearPrevButton?.addEventListener('click', () => {
   annualListYear -= 1;
+  renderAnnualList();
+});
+
+annualYearHomeButton?.addEventListener('click', () => {
+  annualListYear = new Date().getFullYear();
   renderAnnualList();
 });
 

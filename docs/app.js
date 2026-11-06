@@ -4051,7 +4051,7 @@ function formatShortDate(date) {
   return date.split('-').reverse().slice(0, 2).join('/');
 }
 
-function renderFreeProjectionDetails(month, pendingItems, projection, incomeResolution) {
+function renderFreeProjectionDetails(month, pendingItems, projectedBalance) {
   const details = document.getElementById('summary-fixed-details');
   const freeCard = document.querySelector('.dash-item-free');
   const arrow = document.getElementById('summary-free-projection-arrow');
@@ -4062,14 +4062,14 @@ function renderFreeProjectionDetails(month, pendingItems, projection, incomeReso
   const pendingCardInvoices = cardInvoices.filter((invoice) => invoice.payment.remaining > 0.005);
   const paidCardInvoices = cardInvoices.filter((invoice) => invoice.payment.remaining <= 0.005);
   const hasCreditCards = cardInvoices.length > 0;
-  const hasDetails = Boolean(projection);
+  const hasDetails = hasPendingItems || hasCreditCards;
   const cardsRemainingTotal = Math.round(pendingCardInvoices.reduce((sum, invoice) => sum + invoice.payment.remaining, 0) * 100) / 100;
 
   if (!summaryFreeProjectionToggle || !details || !freeCard || !arrow) return;
 
   if (oldCardsDue) {
-    oldCardsDue.textContent = hasCreditCards ? `Faturas pendentes (separadas): ${formatCurrency(cardsRemainingTotal)}` : '';
-    oldCardsDue.classList.toggle('visible', hasCreditCards);
+    oldCardsDue.textContent = '';
+    oldCardsDue.classList.remove('visible');
   }
 
   if (!hasDetails) isFreeProjectionExpanded = false;
@@ -4077,11 +4077,11 @@ function renderFreeProjectionDetails(month, pendingItems, projection, incomeReso
   summaryFreeProjectionToggle.classList.toggle('is-available', hasDetails);
   summaryFreeProjectionToggle.setAttribute('aria-disabled', String(!hasDetails));
   summaryFreeProjectionToggle.setAttribute('aria-expanded', String(hasDetails && isFreeProjectionExpanded));
-  summaryFreeProjectionToggle.title = hasDetails ? 'Ver composição do Saldo Livre, fixos e faturas' : 'Projeção indisponível';
+  summaryFreeProjectionToggle.title = hasDetails ? 'Ver fixos pendentes e faturas de cartões' : 'Nenhum compromisso pendente';
   arrow.textContent = isFreeProjectionExpanded ? '▼' : '▶';
 
   if (afterFixed) {
-    afterFixed.textContent = projection?.incomeAvailable ? `Após fixos pendentes: ${formatCurrency(projection.afterPendingFixed)}` : 'Saldo indisponível: renda não carregada';
+    afterFixed.textContent = hasDetails ? `Após fixos: ${formatCurrency(projectedBalance)}` : '';
     afterFixed.classList.toggle('visible', hasDetails);
   }
 
@@ -4100,9 +4100,9 @@ function renderFreeProjectionDetails(month, pendingItems, projection, incomeReso
       const visualPercent = Math.min(percent, 100);
       const roundedPercent = Math.round(percent * 100) / 100;
       const progressClass = roundedPercent < 100 ? 'progress-safe' : roundedPercent === 100 ? 'progress-warning' : 'progress-danger';
-      const differenceAmount = item.remainingAmount;
+      const differenceAmount = Math.round((item.amount - item.actualAmount) * 100) / 100;
       const differenceClass = differenceAmount > 0 ? 'positive' : differenceAmount === 0 ? 'neutral' : 'negative';
-      const actualDisplay = formatCurrency(item.actualAmount);
+      const actualDisplay = item.actualAmount === 0 ? formatCurrency(0) : `- ${formatCurrency(item.actualAmount)}`;
 
       return `
         <tr>
@@ -4137,30 +4137,16 @@ function renderFreeProjectionDetails(month, pendingItems, projection, incomeReso
   const paidCardRows = renderCardRows(paidCardInvoices);
   const cardTableHead = '<thead><tr><th>Cartão</th><th>Fatura</th><th>Pago</th><th>Restante</th><th>Situação</th></tr></thead>';
 
-  const incomeSource = incomeResolution?.status === 'previous' ? `Base herdada de ${incomeResolution.sourceMonth}` : incomeResolution?.status === 'exact' ? 'Renda do mês selecionado' : incomeResolution?.status === 'loading' ? 'Histórico de rendas ainda carregando' : incomeResolution?.status === 'error' ? 'Falha ao carregar o histórico de rendas' : 'Nenhuma renda cadastrada neste mês ou antes dele';
-  const breakdownRows = projection.incomeAvailable
-    ? `<tr><td>Renda base <small>${incomeSource}</small></td><td>${formatCurrency(projection.baseIncome)}</td></tr>
-       <tr><td>Entradas extras reais</td><td>+ ${formatCurrency(projection.extraIncome)}</td></tr>
-       <tr><td>Despesas nas Notas Reais <small>inclui compras de cartão</small></td><td>- ${formatCurrency(projection.actualExpenses)}</td></tr>
-       <tr><td>Reembolsos</td><td>+ ${formatCurrency(projection.reimbursements)}</td></tr>
-       <tr class="is-total"><td>Saldo Livre Real</td><td>${formatCurrency(projection.freeReal)}</td></tr>
-       <tr><td>Fixos não estáticos pendentes</td><td>- ${formatCurrency(projection.pendingFixedTotal)}</td></tr>
-       <tr class="is-total"><td>Saldo estimado após esses fixos</td><td>${formatCurrency(projection.afterPendingFixed)}</td></tr>
-       <tr class="is-separated"><td>Faturas pendentes <small>obrigação separada; compras já descontadas acima</small></td><td>${formatCurrency(cardsRemainingTotal)}</td></tr>`
-    : `<tr class="is-warning"><td>Projeção indisponível <small>${incomeSource}. O sistema não assume renda zero.</small></td><td>—</td></tr>`;
-
   details.innerHTML = `
-    <div class="dash-free-details-title">Composição do Saldo Livre</div>
-    <table class="dash-projection-breakdown"><tbody>${breakdownRows}</tbody></table>
     ${
       hasPendingItems
-        ? `<div class="dash-free-details-title">Fixos não estáticos pendentes até ${formatShortDate(projectionEnd)}</div>
-           <table class="dash-fixed-table"><thead><tr><th>Fixo</th><th>Previsto</th><th>Conciliado</th><th>Pendente</th></tr></thead><tbody>${fixedRows}</tbody></table>`
-        : '<div class="dash-card-empty">Nenhum fixo não estático pendente.</div>'
+        ? `<div class="dash-free-details-title">Fixos pendentes até ${formatShortDate(projectionEnd)}</div>
+           <table class="dash-fixed-table"><thead><tr><th>Fixo</th><th>Prev.</th><th>Real</th><th>Diferença</th></tr></thead><tbody>${fixedRows}</tbody></table>`
+        : ''
     }
     ${
       hasCreditCards
-        ? `<div class="dash-free-details-title dash-card-invoices-title">Faturas e saldos transportados <small>Exibidos como obrigação de pagamento; não são subtraídos novamente do Livre.</small></div>
+        ? `<div class="dash-free-details-title dash-card-invoices-title">Cartões do mês <small>Faturas são acompanhadas separadamente e não reduzem novamente o Livre.</small></div>
            <div class="dash-card-group-title is-pending"><span>Pendentes</span><strong>${formatCurrency(cardsRemainingTotal)}</strong></div>
            ${pendingCardRows ? `<div class="dash-card-table-scroll"><table class="dash-fixed-table dash-card-invoices-table">${cardTableHead}<tbody>${pendingCardRows}</tbody></table></div>` : '<div class="dash-card-empty">Nenhuma fatura pendente.</div>'}
            <div class="dash-card-group-title is-paid"><span>Pagos / sem pendência</span><strong>${paidCardInvoices.length}</strong></div>
@@ -4210,30 +4196,19 @@ function updateGlobalSummaries() {
 
   // Gasto Líquido (Abate apenas os Reembolsos)
   const netPlannedExpense = pExp;
-  const pendingFixedItems = getPendingFixedExpenses(month);
-  const cardInvoices = getCreditCardInvoicesForMonth(month);
-  const projection = FreeProjection.calculateProjection({
-    baseIncome,
-    extraIncome: rExtraInc,
-    actualExpenses: rExp,
-    reimbursements: rReimb,
-    pendingFixedItems,
-    pendingCardInvoices: cardInvoices.filter((invoice) => invoice.payment.remaining > 0.005),
-  });
-  const totalIncomePlanned = incomeResolution.available ? baseIncome + pExtraInc : null;
+  const netActualExpense = rExp - rReimb;
+
+  // Renda Total (Salário Base + Entradas de Eventos/Avulsas)
+  const totalIncomePlanned = baseIncome === null ? null : baseIncome + pExtraInc;
+  const totalIncomeReal = baseIncome === null ? null : baseIncome + rExtraInc;
+
   const saldoPrevisto = totalIncomePlanned === null ? null : totalIncomePlanned - netPlannedExpense;
+  const saldoReal = totalIncomeReal === null ? null : totalIncomeReal - netActualExpense;
+  const pendingFixedItems = getPendingFixedExpenses(month);
+  const { estimatedFreeBalance: saldoAfterPendingFixed } = FreeProjection.calculateEstimatedFreeBalance(saldoReal, pendingFixedItems);
 
   /// UI - Renda (Mostra a Renda Total real) - Identificado como true para o modo seletivo
-  document.getElementById('summary-income-inline').textContent = projection.incomeAvailable ? formatCurrency(projection.totalIncomeReal, true) : '—';
-  document.getElementById('summary-income-inline').title = projection.incomeAvailable
-    ? incomeResolution.status === 'previous'
-      ? `Renda base carregada de ${incomeResolution.sourceMonth}`
-      : 'Renda do mês selecionado'
-    : incomeResolution.status === 'loading'
-      ? 'Carregando histórico de rendas'
-      : incomeResolution.status === 'error'
-        ? 'Falha ao carregar o histórico de rendas'
-        : 'Nenhuma renda cadastrada neste mês ou em mês anterior';
+  document.getElementById('summary-income-inline').textContent = totalIncomeReal === null ? '—' : formatCurrency(totalIncomeReal, true);
   if (summaryIncomeContext) {
     const activePeople = getTemporaryIncomePeopleForMonth(month).map((person) => getTemporaryIncomePersonData(person).title);
     summaryIncomeContext.hidden = activePeople.length === 0;
@@ -4242,18 +4217,18 @@ function updateGlobalSummaries() {
 
   // UI - Gasto (Gasto Líquido: Gastos - Reembolsos)
   const elExpense = document.getElementById('summary-expense-inline');
-  elExpense.textContent = formatCurrency(projection.netActualExpense);
+  elExpense.textContent = formatCurrency(netActualExpense);
   document.getElementById('summary-planned-expense').textContent = formatCurrency(netPlannedExpense).replace('CAD ', '');
-  elExpense.className = !projection.incomeAvailable ? 'status-warning' : projection.netActualExpense > projection.totalIncomeReal ? 'status-danger' : projection.netActualExpense > netPlannedExpense ? 'status-warning' : 'status-success';
+  elExpense.className = totalIncomeReal === null ? 'status-warning' : netActualExpense > totalIncomeReal ? 'status-danger' : netActualExpense > netPlannedExpense ? 'status-warning' : 'status-success';
 
   // UI - Livre: mantém Real e Previsto; os fixos pendentes aparecem no detalhe expansível.
   const elLivre = document.getElementById('summary-saldo-livre');
-  elLivre.textContent = projection.incomeAvailable ? formatCurrency(projection.freeReal) : '—';
+  elLivre.textContent = saldoReal === null ? '—' : formatCurrency(saldoReal);
   const plannedBalanceEl = document.getElementById('summary-saldo-previsto');
   if (plannedBalanceEl) plannedBalanceEl.textContent = saldoPrevisto === null ? '—' : formatCurrency(saldoPrevisto).replace('CAD ', '');
-  elLivre.className = !projection.incomeAvailable ? 'status-warning' : projection.freeReal < 0 ? 'status-danger' : projection.freeReal < saldoPrevisto ? 'status-warning' : 'status-success';
+  elLivre.className = saldoReal === null ? 'status-warning' : saldoReal < 0 ? 'status-danger' : saldoReal < saldoPrevisto ? 'status-warning' : 'status-success';
 
-  renderFreeProjectionDetails(month, pendingFixedItems, projection, incomeResolution);
+  renderFreeProjectionDetails(month, pendingFixedItems, saldoAfterPendingFixed);
 
   renderPlannedItemsList(month);
 }
@@ -4419,9 +4394,12 @@ function updateDashboardView() {
       const cardInvoicesForIncome = getCreditCardInvoicesForMonth(month);
       const pendingCardsExpense = Math.round(cardInvoicesForIncome.reduce((total, invoice) => total + Math.max(Number(invoice.payment?.remaining) || 0, 0), 0) * 100) / 100;
       const freeAfterFixed = freeReal - pendingFixedExpense;
+      const freeAfterFixedAndCards = freeAfterFixed - pendingCardsExpense;
       const visibleFreeTotal = Math.max(freeReal, 0);
       const visiblePendingFixed = Math.min(pendingFixedExpense, visibleFreeTotal);
       const visibleFreeAfterFixed = Math.max(freeAfterFixed, 0);
+      const visiblePendingCards = Math.min(pendingCardsExpense, visibleFreeAfterFixed);
+      const visibleFreeAfterFixedAndCards = Math.max(freeAfterFixedAndCards, 0);
       const gabrielPercentOfIncome = baseBarWidth > 0 ? (Math.max(gabTotal, 0) / baseBarWidth) * 100 : 0;
       const luanaPercentOfIncome = baseBarWidth > 0 ? (Math.max(luaTotal, 0) / baseBarWidth) * 100 : 0;
       const bothPercentOfIncome = baseBarWidth > 0 ? (Math.max(ambTotal, 0) / baseBarWidth) * 100 : 0;
@@ -4429,7 +4407,8 @@ function updateDashboardView() {
       const luanaShareOfExpense = totalReal > 0 ? Math.max((luaTotal / totalReal) * 100, 0) : 0;
       const bothShareOfExpense = totalReal > 0 ? Math.max((ambTotal / totalReal) * 100, 0) : 0;
       const pendingFixedPercentOfIncome = baseBarWidth > 0 ? (visiblePendingFixed / baseBarWidth) * 100 : 0;
-      const afterFixedPercentOfIncome = baseBarWidth > 0 ? (visibleFreeAfterFixed / baseBarWidth) * 100 : 0;
+      const pendingCardsPercentOfIncome = baseBarWidth > 0 ? (visiblePendingCards / baseBarWidth) * 100 : 0;
+      const afterFixedAndCardsPercentOfIncome = baseBarWidth > 0 ? (visibleFreeAfterFixedAndCards / baseBarWidth) * 100 : 0;
       const getOwnerComposition = (essential, leisure) => {
         const positiveEssential = Math.max(essential, 0);
         const positiveLeisure = Math.max(leisure, 0);
@@ -4480,19 +4459,21 @@ function updateDashboardView() {
                   : ''
               }
               ${pendingFixedPercentOfIncome > 0 ? `<div class="overview-pending" style="width: ${pendingFixedPercentOfIncome}%;" title="Fixos pendentes: ${formatCurrency(pendingFixedExpense)}"></div>` : ''}
+              ${pendingCardsPercentOfIncome > 0 ? `<div class="overview-cards" style="width: ${pendingCardsPercentOfIncome}%;" title="Cartões a pagar: ${formatCurrency(pendingCardsExpense)}"></div>` : ''}
             </div>
 
             <div style="display: flex; width: 100%;">
               <div style="width: ${pGastoTotal}%; border-top: 2px dashed #ff7b7b;"></div>
               ${pendingFixedPercentOfIncome > 0 ? `<div style="width: ${pendingFixedPercentOfIncome}%; border-top: 2px dashed var(--orange-soft);"></div>` : ''}
-              ${afterFixedPercentOfIncome > 0 ? `<div style="width: ${afterFixedPercentOfIncome}%; border-top: 2px solid #62c462;"></div>` : ''}
+              ${pendingCardsPercentOfIncome > 0 ? `<div style="width: ${pendingCardsPercentOfIncome}%; border-top: 2px dashed var(--purple);"></div>` : ''}
+              ${afterFixedAndCardsPercentOfIncome > 0 ? `<div style="width: ${afterFixedAndCardsPercentOfIncome}%; border-top: 2px solid #62c462;"></div>` : ''}
             </div>
             <div style="display: flex; justify-content: space-between; width: 100%; margin-bottom: 8px; font-size: 0.8rem; padding-top: 4px; gap: 8px;">
               <span style="color: #ff7b7b; font-weight: 600; white-space: nowrap;">Gasto: ${formatCurrency(totalReal)}</span>
               ${
-                freeAfterFixed >= 0
-                  ? `<span style="color: #62c462; font-weight: 600; white-space: nowrap; text-align: right;">Após fixos: ${formatCurrency(freeAfterFixed)}</span>`
-                  : `<span style="color: #ff7b7b; font-weight: 600; white-space: nowrap; text-align: right;">Estouro após fixos: ${formatCurrency(freeAfterFixed)}</span>`
+                freeAfterFixedAndCards >= 0
+                  ? `<span style="color: #62c462; font-weight: 600; white-space: nowrap; text-align: right;">Após fixos e cartões: ${formatCurrency(freeAfterFixedAndCards)}</span>`
+                  : `<span style="color: #ff7b7b; font-weight: 600; white-space: nowrap; text-align: right;">Estouro após compromissos: ${formatCurrency(freeAfterFixedAndCards)}</span>`
               }
             </div>
 
@@ -4500,7 +4481,7 @@ function updateDashboardView() {
               ${totEss > 0 ? `<span><strong style="color: #f7c84a;">■</strong> Essenciais: <span style="color:#f5f5f5">${formatCurrency(totEss)}</span> <span style="opacity:0.6; font-size:0.65rem">(${tEss}%)</span></span>` : ''}
               ${totLaz > 0 ? `<span><strong style="color: #ff7b7b;">■</strong> Lazer: <span style="color:#f5f5f5">${formatCurrency(totLaz)}</span> <span style="opacity:0.6; font-size:0.65rem">(${tLaz}%)</span></span>` : ''}
               ${pendingFixedExpense > 0 ? `<span><strong class="overview-pending-key" aria-hidden="true"></strong> Fixos: <span class="overview-pending-value">${formatCurrency(pendingFixedExpense)}</span></span>` : ''}
-              ${pendingCardsExpense > 0 ? `<span><strong class="overview-cards-key" aria-hidden="true"></strong> Faturas (separadas): <span class="overview-cards-value">${formatCurrency(pendingCardsExpense)}</span></span>` : ''}
+              ${pendingCardsExpense > 0 ? `<span><strong class="overview-cards-key" aria-hidden="true"></strong> Cartões: <span class="overview-cards-value">${formatCurrency(pendingCardsExpense)}</span></span>` : ''}
             </div>
             ${
               !isDetailsOpen
@@ -4526,21 +4507,24 @@ function updateDashboardView() {
                 ${luanaPercentOfIncome > 0 ? `<span class="income-owner-segment" style="width: ${luanaPercentOfIncome}%" title="Luana: ${formatCurrency(luaTotal)}"><i class="is-essential" style="width: ${luanaComposition.essential}%"></i><i class="is-leisure" style="width: ${luanaComposition.leisure}%"></i></span>` : ''}
                 ${bothPercentOfIncome > 0 ? `<span class="income-owner-segment" style="width: ${bothPercentOfIncome}%" title="Ambos: ${formatCurrency(ambTotal)}"><i class="is-essential" style="width: ${bothComposition.essential}%"></i><i class="is-leisure" style="width: ${bothComposition.leisure}%"></i></span>` : ''}
                 ${pendingFixedPercentOfIncome > 0 ? `<span class="is-pending" style="width: ${pendingFixedPercentOfIncome}%" title="Fixos pendentes: ${formatCurrency(pendingFixedExpense)}"></span>` : ''}
-                ${afterFixedPercentOfIncome > 0 ? `<span class="is-available" style="width: ${afterFixedPercentOfIncome}%" title="Após fixos: ${formatCurrency(freeAfterFixed)}"></span>` : ''}
+                ${pendingCardsPercentOfIncome > 0 ? `<span class="is-cards" style="width: ${pendingCardsPercentOfIncome}%" title="Cartões a pagar: ${formatCurrency(pendingCardsExpense)}"></span>` : ''}
+                ${afterFixedAndCardsPercentOfIncome > 0 ? `<span class="is-available" style="width: ${afterFixedAndCardsPercentOfIncome}%" title="Após fixos e cartões: ${formatCurrency(freeAfterFixedAndCards)}"></span>` : ''}
               </div>
               <div class="income-breakdown-segment-labels">
                 ${gabrielPercentOfIncome > 0 ? `<span style="width: ${gabrielPercentOfIncome}%"><b>Gabriel</b><abbr>G</abbr></span>` : ''}
                 ${luanaPercentOfIncome > 0 ? `<span style="width: ${luanaPercentOfIncome}%"><b>Luana</b><abbr>L</abbr></span>` : ''}
                 ${bothPercentOfIncome > 0 ? `<span style="width: ${bothPercentOfIncome}%"><b>Ambos</b><abbr>A</abbr></span>` : ''}
                 ${pendingFixedPercentOfIncome > 0 ? `<span class="is-pending" style="width: ${pendingFixedPercentOfIncome}%"><b>Fixos</b><abbr>F</abbr><small>${formatCurrency(pendingFixedExpense)}</small></span>` : ''}
-                ${afterFixedPercentOfIncome > 0 ? `<span class="is-available ${freeAfterFixed < 0 ? 'is-negative' : ''}" style="width: ${afterFixedPercentOfIncome}%"><b>Após fixos</b><abbr>AF</abbr><small>${formatCurrency(freeAfterFixed)}</small></span>` : ''}
+                ${pendingCardsPercentOfIncome > 0 ? `<span class="is-cards" style="width: ${pendingCardsPercentOfIncome}%"><b>Cartões</b><abbr>C</abbr><small>${formatCurrency(pendingCardsExpense)}</small></span>` : ''}
+                ${afterFixedAndCardsPercentOfIncome > 0 ? `<span class="is-available ${freeAfterFixedAndCards < 0 ? 'is-negative' : ''}" style="width: ${afterFixedAndCardsPercentOfIncome}%"><b>Após fixos e cartões</b><abbr>AFC</abbr><small>${formatCurrency(freeAfterFixedAndCards)}</small></span>` : ''}
               </div>
               <div class="income-breakdown-mobile-legend">
                 ${gabrielPercentOfIncome > 0 ? '<span><b>G</b> Gabriel</span>' : ''}
                 ${luanaPercentOfIncome > 0 ? '<span><b>L</b> Luana</span>' : ''}
                 ${bothPercentOfIncome > 0 ? '<span><b>A</b> Ambos</span>' : ''}
                 ${pendingFixedPercentOfIncome > 0 ? '<span class="is-pending"><b>F</b> Fixos</span>' : ''}
-                ${afterFixedPercentOfIncome > 0 ? '<span class="is-available"><b>AF</b> Após fixos</span>' : ''}
+                ${pendingCardsPercentOfIncome > 0 ? '<span class="is-cards"><b>C</b> Cartões</span>' : ''}
+                ${afterFixedAndCardsPercentOfIncome > 0 ? '<span class="is-available"><b>AFC</b> Após fixos e cartões</span>' : ''}
               </div>
       `;
 

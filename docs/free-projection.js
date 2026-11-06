@@ -90,61 +90,20 @@
     return reconciled.filter((item) => item.remainingAmount > 0.005);
   }
 
-  function calculateProjection({ baseIncome, extraIncome = 0, actualExpenses = 0, reimbursements = 0, pendingFixedItems = [], pendingCardInvoices = [] }) {
-    const incomeAvailable = Number.isFinite(baseIncome);
+  function calculateEstimatedFreeBalance(freeReal, pendingFixedItems = []) {
     const pendingFixedTotal = roundMoney(
       (Array.isArray(pendingFixedItems) ? pendingFixedItems : []).reduce((total, item) => total + Math.max(Number(item.remainingAmount) || 0, 0), 0),
     );
-    const pendingCardsTotal = roundMoney(
-      (Array.isArray(pendingCardInvoices) ? pendingCardInvoices : []).reduce(
-        (total, invoice) => total + Math.max(Number(invoice.payment?.remaining ?? invoice.remaining) || 0, 0),
-        0,
-      ),
-    );
-    const normalizedExtraIncome = roundMoney(extraIncome);
-    const normalizedExpenses = roundMoney(actualExpenses);
-    const normalizedReimbursements = roundMoney(reimbursements);
-    const netActualExpense = roundMoney(normalizedExpenses - normalizedReimbursements);
-
-    if (!incomeAvailable) {
-      return {
-        incomeAvailable: false,
-        baseIncome: null,
-        extraIncome: normalizedExtraIncome,
-        totalIncomeReal: null,
-        actualExpenses: normalizedExpenses,
-        reimbursements: normalizedReimbursements,
-        netActualExpense,
-        freeReal: null,
-        pendingFixedTotal,
-        afterPendingFixed: null,
-        pendingCardsTotal,
-      };
-    }
-
-    const normalizedBaseIncome = roundMoney(baseIncome);
-    const totalIncomeReal = roundMoney(normalizedBaseIncome + normalizedExtraIncome);
-    const freeReal = roundMoney(totalIncomeReal - netActualExpense);
     return {
-      incomeAvailable: true,
-      baseIncome: normalizedBaseIncome,
-      extraIncome: normalizedExtraIncome,
-      totalIncomeReal,
-      actualExpenses: normalizedExpenses,
-      reimbursements: normalizedReimbursements,
-      netActualExpense,
-      freeReal,
       pendingFixedTotal,
-      afterPendingFixed: roundMoney(freeReal - pendingFixedTotal),
-      // Faturas são obrigações de caixa. As compras que as formam já estão em
-      // actualExpenses, então este total é informativo e nunca é subtraído de novo.
-      pendingCardsTotal,
+      // Faturas não entram aqui: as compras que as formam já compõem freeReal.
+      estimatedFreeBalance: Number.isFinite(freeReal) ? roundMoney(freeReal - pendingFixedTotal) : null,
     };
   }
 
   return {
     resolveIncomeForMonth,
     reconcilePendingFixedExpenses,
-    calculateProjection,
+    calculateEstimatedFreeBalance,
   };
 });

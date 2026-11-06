@@ -86,29 +86,17 @@ test('uma mesma Nota Real não pode quitar dois itens previstos', () => {
 });
 
 test('compra no cartão entra uma vez no Livre e a fatura fica separada', () => {
-  const projection = FreeProjection.calculateProjection({
-    baseIncome: 5000,
-    actualExpenses: 1000,
-    pendingFixedItems: [],
-    pendingCardInvoices: [{ payment: { remaining: 1000 } }],
-  });
+  // A compra de 1.000 já compõe o Saldo Livre Real (5.000 - 1.000).
+  // A função recebe esse saldo e somente os fixos pendentes; não recebe fatura.
+  const projection = FreeProjection.calculateEstimatedFreeBalance(4000, []);
 
-  assert.equal(projection.freeReal, 4000);
-  assert.equal(projection.afterPendingFixed, 4000);
-  assert.equal(projection.pendingCardsTotal, 1000);
+  assert.equal(projection.estimatedFreeBalance, 4000);
 });
 
 test('fatura transportada de mês anterior permanece obrigação separada', () => {
-  const projection = FreeProjection.calculateProjection({
-    baseIncome: 5000,
-    actualExpenses: 500,
-    pendingFixedItems: [{ remainingAmount: 200 }],
-    pendingCardInvoices: [{ sourceMonth: '2026-10', payment: { remaining: 750 } }],
-  });
+  const projection = FreeProjection.calculateEstimatedFreeBalance(4500, [{ remainingAmount: 200 }]);
 
-  assert.equal(projection.freeReal, 4500);
-  assert.equal(projection.afterPendingFixed, 4300);
-  assert.equal(projection.pendingCardsTotal, 750);
+  assert.equal(projection.estimatedFreeBalance, 4300);
 });
 
 test('renda do mês é priorizada e mês sem cadastro herda a última renda anterior', () => {
@@ -128,11 +116,9 @@ test('renda do mês é priorizada e mês sem cadastro herda a última renda ante
 test('ausência de renda não é convertida silenciosamente em renda zero', () => {
   const loading = FreeProjection.resolveIncomeForMonth([], '2026-11', { historyLoaded: false });
   const missing = FreeProjection.resolveIncomeForMonth([], '2026-11', { historyLoaded: true });
-  const projection = FreeProjection.calculateProjection({ baseIncome: null, actualExpenses: 6000 });
+  const projection = FreeProjection.calculateEstimatedFreeBalance(null, []);
 
   assert.equal(loading.status, 'loading');
   assert.equal(missing.status, 'missing');
-  assert.equal(projection.incomeAvailable, false);
-  assert.equal(projection.freeReal, null);
-  assert.equal(projection.afterPendingFixed, null);
+  assert.equal(projection.estimatedFreeBalance, null);
 });

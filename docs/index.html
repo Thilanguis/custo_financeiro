@@ -569,7 +569,7 @@
             <div>
               <span class="bank-import-eyebrow">PROCESSAMENTO LOCAL</span>
               <h2 id="bank-import-title">📄 Importação de lançamentos</h2>
-              <p>O PDF é lido neste navegador e não é enviado nem armazenado.</p>
+              <p>PDFs e imagens são lidos neste navegador e não são enviados nem armazenados.</p>
             </div>
             <button type="button" id="btn-close-bank-import" class="action-btn bank-import-close" aria-label="Fechar">✕</button>
           </header>
@@ -577,8 +577,8 @@
           <div class="bank-import-setup">
             <label class="bank-import-file" for="bank-import-file">
               <strong>Selecionar extrato bancário</strong>
-              <span id="bank-import-file-name">PDF com texto selecionável, até 20 MB</span>
-              <input id="bank-import-file" type="file" accept="application/pdf,.pdf" hidden />
+              <span id="bank-import-file-name">PDF ou imagens JPG/PNG/WebP</span>
+              <input id="bank-import-file" type="file" accept="application/pdf,.pdf,image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" multiple hidden />
             </label>
             <div class="bank-import-setup-grid">
               <label>Cartão / conta
@@ -591,7 +591,7 @@
                   <option value="Ambos">Ambos</option>
                 </select>
               </label>
-              <button type="button" id="btn-analyze-bank-import" class="btn-primary">Analisar PDF</button>
+              <button type="button" id="btn-analyze-bank-import" class="btn-primary">Analisar arquivo</button>
             </div>
             <p id="bank-import-message" class="bank-import-message" aria-live="polite">Selecione o método correto. O sistema não tentará adivinhar o cartão.</p>
           </div>
@@ -978,6 +978,8 @@
     <script src="annual-planning.js"></script>
     <script src="bank-import.js"></script>
     <script src="pdf-statement-reader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <script src="image-statement-reader.js"></script>
     <script src="app.js"></script>
     <script src="compras/photo-storage.js"></script>
     <script src="compras/firebase-compras.js"></script>

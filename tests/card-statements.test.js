@@ -55,6 +55,16 @@ test('15. pagamento antigo é migrado sem duplicar', () => {
   const statement = makeClosed(); const legacy = cards.normalizeLegacyPayment(card.id, statement, { date: '2026-09-05', amount: 100 });
   const once = cards.addOrReplaceById([], legacy); const twice = cards.addOrReplaceById(once, legacy);
   assert.equal(twice.length, 1); assert.equal(twice[0].statementId, statement.id);
+  assert.equal(cards.isLegacyPayment(twice[0]), true);
+});
+test('15b. pagamento antigo migrado é identificado sem ser confundido com manual', () => {
+  const statement = makeClosed();
+  const legacy = cards.normalizeLegacyPayment(card.id, statement, { date: '2026-09-05', amount: 100 });
+  const manual = { id: 'manual', statementId: statement.id, date: '2026-09-06', amount: 80, source: 'manual' };
+  const payments = cards.addOrReplaceById([legacy], manual);
+  assert.equal(payments.length, 2);
+  assert.equal(cards.isLegacyPayment(payments[0]), true);
+  assert.equal(cards.isLegacyPayment(payments[1]), false);
 });
 test('16. backup preserva faturas, pagamentos e ajustes', () => {
   const statement = makeClosed(); statement.payments = [{ id: 'p1', amount: 50 }]; statement.adjustments = [{ id: 'a1', amount: -1 }];
@@ -130,12 +140,14 @@ test('23. fatura salva com cálculo antigo é atualizada pelas Notas sem perder 
   assert.equal(state.closedTotals.remaining, 75);
 });
 
-test('24. interface mostra o restante como Fatura a pagar', () => {
+test('24. interface preserva o valor fechado e separa o restante a pagar', () => {
   const appSource = fs.readFileSync(path.join(__dirname, '../docs/app.js'), 'utf8');
-  const payableRemainingMatches = appSource.match(/Fatura a pagar<\/small><b>\$\{formatCurrency\(overview\.closed\.remaining\)\}/g) || [];
-  assert.equal(payableRemainingMatches.length, 1);
-  assert.match(appSource, /Fatura fechada a pagar[\s\S]*?<b>\$\{formatCurrency\(overview\.closed\.remaining\)\}<\/b>/);
-  assert.doesNotMatch(appSource, /Fatura a pagar<\/small><b>\$\{formatCurrency\(overview\.closed\.amount\)\}/);
+  assert.match(appSource, /Fatura do ciclo<\/small><b>\$\{formatCurrency\(closedAmount\)\}/);
+  assert.match(appSource, /Total em aberto<\/small><b>\$\{formatCurrency\(overview\.closed\.remaining\)\}/);
+  assert.match(appSource, /Fechou em \$\{formatCardDate\(effectiveClosingDate\)\} · vence em \$\{formatCardDate\(effectiveDueDate\)\}/);
+  assert.match(appSource, /Fatura deste ciclo/);
+  assert.match(appSource, /Saldo anterior em aberto/);
+  assert.match(appSource, /Total ainda a pagar/);
 });
 
 test('25. compras em formação reduzem o disponível mesmo com crédito reservado', () => {
@@ -172,4 +184,23 @@ test('28. interface mantém somente resumo e controle do limite mensal', () => {
   assert.doesNotMatch(appSource, /cardBalanceCopy|reservedCreditCopy/);
   assert.doesNotMatch(appSource, /Controle pessoal; não altera o Livre\./);
   assert.match(appSource, /Limite mensal de segurança: <b class="credit-card-control-value">/);
+});
+
+test('29. ferramentas avançadas explicam conciliação e ajustes sem dominar a fatura', () => {
+  const appSource = fs.readFileSync(path.join(__dirname, '../docs/app.js'), 'utf8');
+  const styleSource = fs.readFileSync(path.join(__dirname, '../docs/style.css'), 'utf8');
+  assert.match(appSource, /Conferência e correções opcionais/);
+  assert.match(appSource, /Juros, tarifas ou correções ausentes nas Notas/);
+  assert.match(appSource, /Crédito confirmado após esta fatura/);
+  assert.match(appSource, /Excesso não transformado em crédito/);
+  assert.match(styleSource, /\.simple-card-panel \+ \.simple-card-panel::before/);
+  assert.match(styleSource, /\.simple-card-balance-flow/);
+});
+
+test('30. pagamento manual substitui a suposição automática e bloqueia nova migração antiga', () => {
+  const appSource = fs.readFileSync(path.join(__dirname, '../docs/app.js'), 'utf8');
+  assert.match(appSource, /Sem valor manual, o sistema considera a quitação integral no vencimento/);
+  assert.match(appSource, /eles substituem essa suposição automática/);
+  assert.match(appSource, /source: 'manual'/);
+  assert.match(appSource, /legacyPaymentSuppressedAt/);
 });

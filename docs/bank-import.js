@@ -224,9 +224,25 @@
     const amountMatches = [...remainder.matchAll(MONEY_RE)].filter((item) => /[.,]\d{2}|\b(?:CR|DR)\b/i.test(item[0]));
     if (!amountMatches.length) return null;
     const amountMatch = amountMatches[amountMatches.length - 1];
-    const rawDescription = remainder.slice(0, amountMatches[0].index).trim();
+    let descriptionEnd = amountMatches[0].index;
+    let rawAmount = amountMatch[0].trim();
+    let amountRecoveredFromSplit = false;
+    // OCR de telas pode separar a dezena do restante do valor, por exemplo
+    // "$1 0.96". O prefixo continua visível e deve formar 10.96, não virar
+    // parte do estabelecimento enquanto somente 0.96 é importado.
+    if (amountMatches.length === 1) {
+      const beforeAmount = remainder.slice(0, amountMatch.index);
+      const splitPrefix = beforeAmount.match(/(?:CA\$|CAD|CAN|\$)\s*(\d{1,3})\s*$/i);
+      const amountWithoutCurrency = rawAmount.replace(/(?:CA\$|CAD|CAN|\$)/gi, '').trim();
+      if (splitPrefix && /^\d[,.]\d{2}$/.test(amountWithoutCurrency)) {
+        rawAmount = `${splitPrefix[1]}${amountWithoutCurrency}`;
+        descriptionEnd = beforeAmount.length - splitPrefix[0].length;
+        amountRecoveredFromSplit = true;
+      }
+    }
+    const rawDescription = remainder.slice(0, descriptionEnd).trim();
     if (!rawDescription) return null;
-    const parsedAmount = parseMoney(amountMatch[0]);
+    const parsedAmount = parseMoney(rawAmount);
     if (parsedAmount === null) return null;
     const type = classifyType(rawDescription, parsedAmount);
     const bankIdMatch = rawDescription.match(/\b(?:ref(?:erence)?|auth(?:orization)?|autorisation|id)\s*[:#-]?\s*([a-z0-9-]{5,})\b/i);
@@ -242,8 +258,9 @@
       rawDescription,
       normalizedMerchant: normalizeMerchant(rawDescription),
       merchant: rawDescription.replace(/\s+/g, ' ').trim(),
-      rawAmount: amountMatch[0].trim(),
+      rawAmount,
       amount: signedAmount(parsedAmount, type),
+      amountRecoveredFromSplit,
       type,
       bankTransactionId: bankIdMatch ? bankIdMatch[1] : '',
       multipleAmountColumns: amountMatches.length > 1,
@@ -255,7 +272,10 @@
     const method = transaction.paymentMethodId || context.paymentMethodId || '';
     if (transaction.bankTransactionId) return `${method}|bank:${normalizeText(transaction.bankTransactionId)}`;
     const cents = Math.round(Number(transaction.amount) * 100);
-    return [method, transaction.date || '', transaction.postedDate || '', cents, transaction.type || '', normalizeMerchant(transaction.merchant || transaction.rawDescription), transaction.occurrence || 1].join('|');
+    // A identidade bancária precisa permanecer estável mesmo quando o usuário
+    // corrige o nome exibido (por exemplo, "PHARMACIE GA..." -> "JEAN COUTU").
+    // O texto original do extrato é imutável e, por isso, deve ter prioridade.
+    return [method, transaction.date || '', transaction.postedDate || '', cents, transaction.type || '', normalizeMerchant(transaction.rawDescription || transaction.merchant), transaction.occurrence || 1].join('|');
   }
 
   function fingerprint(transaction, context = {}) {
@@ -298,6 +318,175 @@
     return { adapter: 'generic-ca', pageCount: pages.length, transactions: parsed, warnings, statementYear: defaultYear || null, numericDateOrder: detectedDateOrder.order, numericDateOrderSource: detectedDateOrder.source };
   }
 
+  const IMAGE_DATE_HEADER_RE = new RegExp(`(?:^|\\s)(${MONTH_TOKEN_SOURCE}\\s+\\d{1,2}(?:,?\\s+20\\d{2})?|\\d{1,2}\\s+${MONTH_TOKEN_SOURCE}(?:\\s+20\\d{2})?)(?:\\s|$)`, 'i');
+  const IMAGE_NOISE_RE = /^(?:summary|transactions?|transaction glossary|search transactions?|check installment eligibility|pending|credit|cibc mastercard|rbc|royal bank|banque royale)$/i;
+
+  function nextIsoDay(value) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return '';
+    const date = new Date(`${value}T00:00:00Z`);
+    date.setUTCDate(date.getUTCDate() + 1);
+    return date.toISOString().slice(0, 10);
+  }
+
+  function imageDateHeader(line, defaultYear) {
+    const normalizedLine = String(line || '')
+      .replace(/(\d{1,2})\.\s*(20\d{2})\b/g, '$1, $2')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const match = normalizedLine.match(IMAGE_DATE_HEADER_RE);
+    if (!match) return '';
+    return parseDate(match[1].replace(',', ''), { defaultYear }).value;
+  }
+
+  function isImageNoise(line) {
+    const compact = String(line || '').replace(/\s+/g, ' ').trim();
+    if (!compact) return true;
+    if (IMAGE_NOISE_RE.test(compact)) return true;
+    // O modo sparse-text do OCR preserva valores isolados, mas também captura
+    // texto da barra de navegação, números mascarados e banners do CIBC.
+    if (/\b(?:transaction glossary|search transactions?|check installment eligibility|cibc mastercard)\b/i.test(compact)) return true;
+    if (/\b(?:summary|transactions?)\b/i.test(compact) && compact.length < 30) return true;
+    if (/\b(?:USD|EUR|GBP)\b.*@/i.test(compact)) return true; // Cotação de moeda estrangeira, não outra compra.
+    if (/^.{0,9}\b(?:ull|full)\b.{0,12}$/i.test(compact)) return true; // Ícones/status do telefone via OCR.
+    if (/^[a-z]{1,2}$/i.test(compact)) return true; // Ícones isolados reconhecidos como letras.
+    if (/^(?:[\d]+(?:[.,]\d+)?|\d{1,2}:\d{2}|\d+%|[<>›]+)$/.test(compact)) return true;
+    if (/^\d{1,2}:\d{2}\s+.{0,30}$/.test(compact)) return true; // Barra de status com hora do celular.
+    if (/^.{0,10}(?:F[l1]\s+ED|[xX]9\s+Fl\s+ED)$/.test(compact)) return true;
+    if (/^\d{4}\*{4,}\d{3,4}$/.test(compact.replace(/\s/g, ''))) return true;
+    if (/(?:^52[2-3B][A-Z0-9*#\s]{4,}|^.{0,8}[A-Z0-9*#]{6,}\s*3[8B][0O]\b|5223|5380|5\s*3\s*[8B]\s*[0O]|5[3B][8B][0O])/i.test(compact) && /^[\w*#\s$?+©.,-]+$/.test(compact)) return true;
+    if (/^[\W\dA-Z]*\b(?:FULL|WIFI)\b/i.test(compact) && compact.length < 24) return true;
+    return false;
+  }
+
+  function prepareImageStatementText(input, options = {}) {
+    const pages = Array.isArray(input) ? input : [String(input || '')];
+    const statementYear = options.defaultYear || extractStatementYear(pages.join('\n')) || new Date().getFullYear();
+    const extractedPages = [];
+    const seenAcrossImages = new Set();
+    const warnings = [];
+    let pendingCount = 0;
+    let inferredDates = 0;
+    let unreadableValues = 0;
+
+    pages.forEach((page) => {
+      const entries = [];
+      const beforeFirstDate = [];
+      let currentDate = '';
+      let pendingDescription = [];
+      let lastEntry = null;
+      let immediatelyAfterAmount = false;
+      const lines = String(page || '').split(/\r?\n/).map((line) => line.replace(/\s+/g, ' ').trim()).filter(Boolean);
+
+      const flushAmountLine = (line) => {
+        // OCR pode inserir um espaço entre dígitos do preço: '$1 0.96'.
+        // Recupere somente um dígito isolado antes de N,NN, sem supor preços
+        // quando parte do valor estiver coberta ou fora da imagem.
+        line = String(line).replace(/(\$)\s*(\d{1,2})\s+(\d[,.]\d{2})\b/g, (_, symbol, high, low) => `${symbol}${high}${low}`);
+        // Imagens CIBC possuem sinal de moeda. Números sem '$' podem ser câmbio
+        // (ex.: 23.00 USD @ 1.434782) ou parte de uma referência do cartão.
+        const amountMatches = [...line.matchAll(MONEY_RE)].filter((item) => /[.,]\d{2}/.test(item[0]) && /(?:CA\$|CAD|\$)/i.test(item[0]));
+        if (!amountMatches.length) return false;
+        const amountMatch = amountMatches[amountMatches.length - 1];
+        const prefix = line.slice(0, amountMatches[0].index);
+        const hasLeadingCreditSign = /[-\u2212]\s*$/.test(prefix);
+        const inlineDescription = prefix.replace(/[-\u2212]\s*$/, '').replace(/[>›]+$/g, '').trim();
+        const description = [...pendingDescription, inlineDescription]
+          .filter((part) => part && !isImageNoise(part))
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        pendingDescription = [];
+        if (!description) return true;
+        let amountText = amountMatch[0].trim();
+        if ((hasLeadingCreditSign || /\bcredit\b/i.test(line)) && !/^[-(]/.test(amountText)) amountText = `-${amountText}`;
+        const entry = {
+          date: currentDate, description, amountText,
+          pending: /\bpending\b/i.test(line),
+          credit: /\bcredit\b/i.test(line)
+        };
+        if (currentDate) entries.push(entry);
+        else beforeFirstDate.push(entry);
+        lastEntry = entry;
+        immediatelyAfterAmount = true;
+        return true;
+      };
+
+      lines.forEach((line) => {
+        const headerDate = imageDateHeader(line, statementYear);
+        if (headerDate) {
+          if (!currentDate && beforeFirstDate.length) {
+            const inferredDate = nextIsoDay(headerDate);
+            beforeFirstDate.forEach((entry) => {
+              entries.push({ ...entry, date: inferredDate, dateInferred: true });
+            });
+            beforeFirstDate.length = 0;
+          }
+          currentDate = headerDate;
+          pendingDescription = [];
+          lastEntry = null;
+          immediatelyAfterAmount = false;
+          return;
+        }
+        // O status costuma vir depois de número do cartão, em outra linha.
+        if (/^(?:[^A-Za-z]{0,6})?(?:pending|credit)\W*$/i.test(line) || (line.length < 22 && /\b(?:pending|credit)\b/i.test(line) && !/\b(?:card|store|thank you)\b/i.test(line))) {
+          if (lastEntry) {
+            if (/pending/i.test(line)) lastEntry.pending = true;
+            if (/credit/i.test(line)) lastEntry.credit = true;
+          }
+          return;
+        }
+        if (isImageNoise(line)) {
+          // A próxima linha após o número mascarado já pode ser outra compra.
+          if (/(?:5223|5380|5\s*3\s*[8B]\s*[0O]|5[3B][8B][0O]|\b380\b)/i.test(line)) immediatelyAfterAmount = false;
+          return;
+        }
+        if (immediatelyAfterAmount && lastEntry && /^(?:[\p{L} .'-]{2,40},\s*(?:QC|ON|NS|BC|AB|MB|NB|SK|NL|PE|CA)|QC|ON|NS)$/iu.test(line)) {
+          lastEntry.description += ` ${line}`;
+          immediatelyAfterAmount = false;
+          return;
+        }
+        if (flushAmountLine(line)) return;
+        immediatelyAfterAmount = false;
+        if (/^[$S]\s*\d{1,4}\s*[>›]?$/i.test(line) && pendingDescription.length) unreadableValues += 1;
+        if (!/^\d+(?:[,.]\d+)?$/.test(line)) pendingDescription.push(line);
+        if (pendingDescription.length > 3) pendingDescription.shift();
+      });
+
+      if (beforeFirstDate.length) warnings.push('Algumas compras no topo de uma imagem ficaram sem cabeçalho de data e não foram incluídas.');
+      const canonicalLines = [];
+      const seenOnPage = new Set();
+      entries.forEach((entry) => {
+        if (entry.pending) {
+          pendingCount += 1;
+          return; // Compras pendentes podem mudar de valor e ainda não possuem data confirmada.
+        }
+        const parsedAmount = parseMoney(entry.amountText);
+        if (!entry.date || parsedAmount === null) return;
+        const type = classifyType(entry.description, entry.credit ? -Math.abs(parsedAmount) : parsedAmount);
+        const signed = signedAmount(entry.credit ? -Math.abs(parsedAmount) : parsedAmount, type);
+        const key = [entry.date, normalizeMerchant(entry.description), Math.round(signed * 100), type].join('|');
+        // Mantém duas compras reais iguais na mesma captura, mas elimina
+        // movimentações repetidas entre imagens consecutivas sobrepostas.
+        if (seenAcrossImages.has(key) && !seenOnPage.has(key)) return;
+        seenAcrossImages.add(key);
+        seenOnPage.add(key);
+        if (entry.dateInferred) inferredDates += 1;
+        // Delimita o valor positivo com CAD, impedindo que o último dígito
+        // de um código Amazon (ex.: *ABC123) se una ao valor 111.25.
+        // Para créditos, deixa o sinal antes do número, como o parser exige.
+        const canonicalAmount = signed < 0 ? `${signed.toFixed(2)} CAD` : `CAD ${signed.toFixed(2)}`;
+        canonicalLines.push(`${entry.date} ${entry.description} ${canonicalAmount}`);
+      });
+      extractedPages.push(canonicalLines.join('\n'));
+    });
+
+    if (pendingCount) warnings.push(`${pendingCount} compra(s) pendente(s) não incluída(s); aguarde a confirmação do banco.`);
+    if (inferredDates) warnings.push(`A data de ${inferredDates} movimentação(ões) acima do primeiro cabeçalho foi inferida. Confira antes de importar.`);
+    if (unreadableValues) warnings.push(`${unreadableValues} valor(es) ficaram ilegíveis ou cortados na captura; envie outra imagem mostrando o valor completo.`);
+    if (!extractedPages.some((page) => page.trim())) warnings.push('Nenhuma movimentação com data e valor foi reconhecida nas imagens.');
+    return { pages: extractedPages, warnings, statementYear };
+  }
+
   function detectInstitution(input) {
     const text = normalizeText(Array.isArray(input) ? input.join('\n') : input);
     if (/\b(?:rbc|royal bank|banque royale)\b/.test(text)) return 'rbc';
@@ -313,7 +502,7 @@
       transactions: result.transactions.map((transaction) => ({
         ...transaction,
         institution,
-        source: institution === 'generic' ? transaction.source : `pdf-${institution}`
+        source: institution === 'generic' ? transaction.source : `${transaction.source === 'image' ? 'image' : 'pdf'}-${institution}`
       }))
     };
     adapted.transactions.forEach((transaction) => {
@@ -563,7 +752,22 @@
       // Notas criadas por esta importação têm identidade própria. Uma segunda
       // ocorrência legítima, embora visualmente idêntica, não pode ser absorvida
       // pela primeira apenas por método/valor/data/estabelecimento.
-      if (receipt.bankImportFingerprint && transaction.fingerprint && receipt.bankImportFingerprint !== transaction.fingerprint) continue;
+      if (receipt.bankImportFingerprint && transaction.fingerprint && receipt.bankImportFingerprint !== transaction.fingerprint) {
+        // Importações antigas podiam recalcular a impressão depois de o nome do
+        // estabelecimento ser corrigido. Nesses casos, permita a conciliação
+        // visual somente quando a ocorrência também for a mesma. Isso mantém a
+        // compatibilidade sem voltar a absorver uma segunda compra legítima e
+        // idêntica do mesmo extrato.
+        const receiptOccurrence = Number(receipt.bankImportOccurrence);
+        const transactionOccurrence = Number(transaction.occurrence);
+        const sameKnownOccurrence =
+          Number.isInteger(receiptOccurrence) &&
+          receiptOccurrence > 0 &&
+          Number.isInteger(transactionOccurrence) &&
+          transactionOccurrence > 0 &&
+          receiptOccurrence === transactionOccurrence;
+        if (!sameKnownOccurrence) continue;
+      }
       if (!sameAmount) continue;
       if (distance === 0 && similarity >= 0.75) return { status: STATUS.EXISTING, receipt, reason: 'Mesmo método, valor, estabelecimento e data da compra ou processamento', confidence: 0.96 };
       if (distance === 0 && sameOwner && sameCategory) {
@@ -879,7 +1083,7 @@
         return {
           ...transaction,
           status: STATUS.REVIEW,
-          statusReason: 'Nenhum lançamento correspondente encontrado; o valor foi lido do PDF. Confirme estabelecimento e categoria',
+          statusReason: 'Nenhum lançamento correspondente encontrado; o valor foi lido do extrato. Confirme estabelecimento e categoria',
           reviewKind: REVIEW_KIND.MISSING_FIELDS,
           allowImport: false,
           approved: false
@@ -1014,6 +1218,7 @@
     parseTransactionLine,
     detectInstitution,
     parseStatementText,
+    prepareImageStatementText,
     fingerprint,
     identityKey,
     merchantSimilarity,

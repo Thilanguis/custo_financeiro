@@ -3237,7 +3237,7 @@ function resetBankImport() {
   bankImportState.installmentPlans = [];
   bankImportState.aliases = {};
   if (bankImportUi.fileInput) bankImportUi.fileInput.value = '';
-  if (bankImportUi.fileName) bankImportUi.fileName.textContent = 'PDF com texto selecionável, até 20 MB';
+  if (bankImportUi.fileName) bankImportUi.fileName.textContent = 'PDF ou imagens JPG/PNG/WebP';
   if (bankImportUi.preview) bankImportUi.preview.hidden = true;
   if (bankImportUi.list) bankImportUi.list.innerHTML = '';
   if (bankImportUi.selectAll) bankImportUi.selectAll.checked = false;
@@ -3245,7 +3245,7 @@ function resetBankImport() {
 }
 
 function openBankImport() {
-  if (!window.BankImport || !window.PdfStatementReader) {
+  if (!window.BankImport || !window.PdfStatementReader || !window.ImageStatementReader) {
     showToast('O módulo de importação não foi carregado. Atualize a página.', 'error');
     return;
   }
@@ -3388,7 +3388,7 @@ function renderBankImportStats() {
     <div class="bank-import-stat is-existing"><small>Já cadastrados</small><strong>${counts.existing}</strong></div>
     <div class="bank-import-stat is-review"><small>Revisar / inválidos</small><strong>${counts.review + counts.invalid}</strong></div>
     <div class="bank-import-stat"><small>Ignorados</small><strong>${counts.ignored}</strong></div>
-    <div class="bank-import-stat"><small>Despesas encontradas no PDF</small><strong>${formatCurrency(totals.foundExpenses)}</strong></div>
+    <div class="bank-import-stat"><small>Despesas encontradas no extrato</small><strong>${formatCurrency(totals.foundExpenses)}</strong></div>
     <div class="bank-import-stat is-selected"><small>Despesas selecionadas para importar</small><strong>${formatCurrency(totals.selectedExpenses)}</strong></div>
     <div class="bank-import-stat"><small>Créditos / estornos encontrados</small><strong>${formatCurrency(totals.foundCredits)}</strong></div>`;
 }
@@ -3454,26 +3454,41 @@ function rememberEditedBankImportAlias(transaction) {
 
 async function analyzeBankStatement() {
   if (bankImportState.busy) return;
-  const file = bankImportUi.fileInput?.files?.[0];
+  const files = Array.from(bankImportUi.fileInput?.files || []);
+  const file = files[0];
   const paymentMethodId = bankImportUi.payment?.value || '';
-  if (!file) return setBankImportMessage('Selecione um PDF para analisar.', 'error');
+  if (!file) return setBankImportMessage('Selecione um PDF ou uma ou mais imagens para analisar.', 'error');
   if (!paymentMethodId) return setBankImportMessage('Selecione o cartão ou a conta de origem.', 'error');
+  const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+  if (isPdf && files.length !== 1) return setBankImportMessage('Selecione um único PDF ou somente imagens.', 'error');
+  if (!isPdf && files.some((selected) => !ImageStatementReader.isSupportedImage(selected))) {
+    return setBankImportMessage('Não misture PDF e imagens. Use JPG, PNG ou WebP.', 'error');
+  }
   bankImportState.busy = true;
   bankImportUi.analyze.disabled = true;
   bankImportUi.analyze.textContent = 'Analisando...';
-  setBankImportMessage('Lendo o PDF localmente e comparando com os meses relacionados...');
+  setBankImportMessage(isPdf ? 'Lendo o PDF localmente e comparando com os meses relacionados...' : `Reconhecendo 1 de ${files.length} imagem(ns) localmente...`);
   try {
-    const pdf = await PdfStatementReader.readPdf(file);
-    bankImportState.fileName = pdf.fileName;
-    bankImportUi.fileName.textContent = `${pdf.fileName} • ${pdf.pageCount} página(s)`;
+    const documentResult = isPdf
+      ? await PdfStatementReader.readPdf(file)
+      : await ImageStatementReader.readImages(files, {
+          onProgress({ fileIndex, fileCount, progress }) {
+            const current = Math.min(fileCount, Math.max(1, fileIndex + (progress < 1 ? 1 : 0)));
+            setBankImportMessage(`Reconhecendo ${current} de ${fileCount} imagem(ns) localmente... ${Math.round(progress * 100)}%`);
+          }
+        });
+    bankImportState.fileName = documentResult.fileName;
+    bankImportUi.fileName.textContent = `${documentResult.fileName} • ${documentResult.pageCount} ${isPdf ? 'página(s)' : 'imagem(ns)'}`;
     const selectedMethod = paymentMethods.find((method) => method.id === paymentMethodId);
     const institutionHint = BankImport.detectInstitution(selectedMethod?.name || '');
-    const parsed = BankImport.parseStatementText(pdf.pages, {
+    const imagePreparation = isPdf ? null : BankImport.prepareImageStatementText(documentResult.pages);
+    const parsed = BankImport.parseStatementText(imagePreparation?.pages || documentResult.pages, {
       dateOrder: 'AUTO',
       paymentMethodId,
       institution: institutionHint === 'generic' ? undefined : institutionHint,
-      source: 'pdf'
+      source: isPdf ? 'pdf' : 'image'
     });
+    if (imagePreparation?.warnings?.length) parsed.warnings.push(...imagePreparation.warnings);
     if (!parsed.transactions.length) throw new Error(parsed.warnings[0] || 'Nenhuma movimentação foi identificada com segurança neste layout.');
     const prepared = parsed.transactions.map((transaction) => ({ ...transaction, owner: bankImportUi.owner.value, paymentMethodId }));
     const months = BankImport.relevantMonths(prepared);
@@ -3510,13 +3525,13 @@ async function analyzeBankStatement() {
     setBankImportMessage(`${institutionLabel} ${parsed.transactions.length} movimentação(ões) extraída(s).${detectedYearLabel} Revise antes de confirmar.${warning}`, 'success');
   } catch (error) {
     console.error('Falha ao analisar extrato (sem conteúdo bancário no log):', error?.code || error?.name || 'erro');
-    setBankImportMessage(error.message || 'Não foi possível analisar o PDF.', 'error');
+    setBankImportMessage(error.message || 'Não foi possível analisar o arquivo.', 'error');
     bankImportUi.preview.hidden = true;
   } finally {
     if (bankImportUi.fileInput) bankImportUi.fileInput.value = '';
     bankImportState.busy = false;
     bankImportUi.analyze.disabled = false;
-    bankImportUi.analyze.textContent = 'Analisar PDF';
+    bankImportUi.analyze.textContent = 'Analisar arquivo';
   }
 }
 
@@ -3595,7 +3610,7 @@ async function confirmBankImport() {
   if (bankImportState.busy) return;
   const approved = bankImportState.transactions.filter((transaction) => transaction.approved && hasRequiredBankImportFields(transaction) && transaction.allowImport !== false && ![BankImport.STATUS.EXISTING, BankImport.STATUS.INVALID, BankImport.STATUS.IGNORED].includes(transaction.status));
   if (!approved.length) return;
-  if (!(await showConfirm(`Importar ${approved.length} lançamento(s) aprovado(s)? Nenhum PDF será armazenado.`))) return;
+  if (!(await showConfirm(`Importar ${approved.length} lançamento(s) aprovado(s)? O arquivo original não será armazenado.`))) return;
   bankImportState.busy = true;
   bankImportUi.confirm.disabled = true;
   bankImportUi.confirm.textContent = 'Importando...';
@@ -3677,8 +3692,11 @@ bankImportUi.overlay?.addEventListener('click', (event) => {
   if (event.target === bankImportUi.overlay) closeBankImport();
 });
 bankImportUi.fileInput?.addEventListener('change', () => {
-  const file = bankImportUi.fileInput.files?.[0];
-  bankImportUi.fileName.textContent = file ? `${file.name} • ${(file.size / 1024 / 1024).toFixed(1)} MB` : 'PDF com texto selecionável, até 20 MB';
+  const files = Array.from(bankImportUi.fileInput.files || []);
+  const file = files[0];
+  bankImportUi.fileName.textContent = files.length > 1
+    ? `${files.length} imagens • ${(files.reduce((sum, item) => sum + item.size, 0) / 1024 / 1024).toFixed(1)} MB`
+    : file ? `${file.name} • ${(file.size / 1024 / 1024).toFixed(1)} MB` : 'PDF ou imagens JPG/PNG/WebP';
 });
 bankImportUi.analyze?.addEventListener('click', analyzeBankStatement);
 bankImportUi.confirm?.addEventListener('click', confirmBankImport);
@@ -5540,7 +5558,7 @@ function getCreditCardPaymentInfo(snapshot, paymentRecords = creditCardPayments)
     statusClass = 'is-paid';
   }
 
-  return { record, statement, dueDate, billedAmount, paidAmount, remaining, creditAmount, status, statusClass };
+  return { record, statement, dueDate, billedAmount, paidAmount, remaining, creditAmount, assumedPaid: Number(totals.assumedPaid) > 0.005, status, statusClass };
 }
 
 function getSuggestedCreditCardLimit(card, month) {
@@ -6030,14 +6048,23 @@ async function saveStatementMutation(statement, changes) {
 async function migrateLegacyCardPayments(referenceMonth, paymentRecords = creditCardPayments) {
   for (const statement of creditCardStatements.filter((item) => String(item.dueDate || '').startsWith(referenceMonth))) {
     const legacy = CardStatements.normalizeLegacyPayment(statement.cardId, statement, paymentRecords[statement.cardId]);
-    if (!legacy || statement.payments?.some((payment) => payment.id === legacy.id)) continue;
-    await saveStatementMutation(statement, { payments: CardStatements.addOrReplaceById(statement.payments, legacy) });
+    if (!legacy || statement.legacyPaymentSuppressedAt) continue;
+    const existingLegacy = statement.payments?.some((payment) => CardStatements.isLegacyPayment(payment));
+    const hasManualPayment = statement.payments?.some((payment) => !CardStatements.isLegacyPayment(payment));
+    if (existingLegacy) {
+      if (!statement.legacyPaymentMigratedAt) await saveStatementMutation(statement, { legacyPaymentMigratedAt: new Date().toISOString() });
+      continue;
+    }
+    if (hasManualPayment) {
+      if (!statement.legacyPaymentSuppressedAt) await saveStatementMutation(statement, { legacyPaymentSuppressedAt: new Date().toISOString() });
+      continue;
+    }
+    if (statement.legacyPaymentMigratedAt) continue;
+    await saveStatementMutation(statement, {
+      payments: CardStatements.addOrReplaceById(statement.payments, legacy),
+      legacyPaymentMigratedAt: new Date().toISOString(),
+    });
   }
-}
-
-function getCardStatementStatusLabel(statement) {
-  const status = statement ? CardStatements.getStatus(statement) : 'open';
-  return { paid: 'Paga', partial: 'Paga parcialmente', credit: 'Crédito', closed: 'Fechada', open: 'Em aberto' }[status] || 'Em aberto';
 }
 
 function orderSimpleCardEntries(entries, sourcePool = entries) {
@@ -6133,10 +6160,35 @@ function updateCreditCardsDashboard() {
       const payments = payableStatement?.payments || [];
       const adjustments = payableStatement?.adjustments || [];
       const reconciliation = CardStatements.getStatementTotals(payableStatement || closed);
+      const closedAmount = CardStatements.roundMoney(overview.closed.amount);
+      const openingApplied = CardStatements.roundMoney(overview.closed.openingApplied);
+      const endingBalance = CardStatements.roundMoney(overview.closed.endingBalance);
+      const effectiveClosingDate = CardStatements.getEffectiveClosingDate(closed);
+      const effectiveDueDate = closed.actualDueDate || closed.dueDate;
+      const formatCardDate = (date) => (date ? date.split('-').reverse().join('/') : 'data não informada');
+      const endingBalanceText =
+        endingBalance < -0.005
+          ? `Crédito ${formatCurrency(Math.abs(endingBalance))}`
+          : endingBalance > 0.005
+            ? `A pagar ${formatCurrency(endingBalance)}`
+            : 'Quitada';
+      const closedBalanceItems = [
+        `<span><small>Fatura deste ciclo</small><b>${formatCurrency(closedAmount)}</b></span>`,
+        openingApplied > 0.005 ? `<span><small>Saldo anterior em aberto</small><b>+ ${formatCurrency(openingApplied)}</b></span>` : '',
+        openingApplied < -0.005 ? `<span class="is-credit"><small>Crédito anterior</small><b>- ${formatCurrency(Math.abs(openingApplied))}</b></span>` : '',
+        overview.closed.assumedPaid > 0.005
+          ? `<span class="is-credit"><small>Quitação automática considerada</small><b>- ${formatCurrency(overview.closed.assumedPaid)}</b></span>`
+          : overview.closed.recordedPaid > 0.005
+            ? `<span class="is-credit"><small>Pagamentos informados</small><b>- ${formatCurrency(overview.closed.recordedPaid)}</b></span>`
+            : '',
+        `<span class="${endingBalance < -0.005 ? 'is-credit' : endingBalance > 0.005 ? 'is-due' : 'is-settled'}"><small>${endingBalance < -0.005 ? 'Crédito confirmado' : endingBalance > 0.005 ? 'Total ainda a pagar' : 'Situação'}</small><b>${endingBalanceText}</b></span>`,
+      ]
+        .filter(Boolean)
+        .join('');
       const paymentRows = payments
         .map(
           (payment) =>
-            `<div class="simple-card-control-row"><span>${payment.date.split('-').reverse().join('/')} · ${escapeCardDetail(payment.observation || 'Pagamento')}</span><b>${formatCurrency(payment.amount)}</b><button class="action-btn card-payment-edit" data-statement-id="${payableStatement.id}" data-item-id="${payment.id}">Editar</button><button class="action-btn danger card-payment-delete" data-statement-id="${payableStatement.id}" data-item-id="${payment.id}">Excluir</button></div>`,
+            `<div class="simple-card-control-row"><span>${payment.date.split('-').reverse().join('/')} · ${escapeCardDetail(payment.observation || 'Pagamento')}<small>${CardStatements.isLegacyPayment(payment) ? 'Registro antigo migrado' : 'Informado manualmente'}</small></span><b>${formatCurrency(payment.amount)}</b><button class="action-btn card-payment-edit" data-statement-id="${payableStatement.id}" data-item-id="${payment.id}">Editar</button><button class="action-btn danger card-payment-delete" data-statement-id="${payableStatement.id}" data-item-id="${payment.id}">Excluir</button></div>`,
         )
         .join('');
       const adjustmentRows = adjustments
@@ -6146,7 +6198,7 @@ function updateCreditCardsDashboard() {
         )
         .join('');
       return `<article class="credit-card-card simple-card-panel ${isExpanded ? 'is-expanded' : ''}">
-      <button type="button" class="credit-card-summary simple-card-summary" data-credit-card-id="${card.id}" aria-expanded="${isExpanded}"><span class="toggle-icon">${isExpanded ? '▼' : '▶'}</span><span class="credit-card-brand-icon">💳</span><span class="simple-card-name"><strong>${escapeCardDetail(card.name)}</strong><small>Fecha dia ${card.closing || '?'} · Vence dia ${card.due || '?'}</small></span><span class="simple-card-metrics"><span><small>Em formação</small><b>${formatCurrency(overview.openAmount)}</b></span><span class="is-payable"><small>Fatura a pagar</small><b>${formatCurrency(overview.closed.remaining)}</b></span><span><small>Disponível</small><b>${formatCurrency(overview.availableLimit)}</b></span></span></button>
+      <button type="button" class="credit-card-summary simple-card-summary" data-credit-card-id="${card.id}" aria-expanded="${isExpanded}"><span class="toggle-icon">${isExpanded ? '▼' : '▶'}</span><span class="credit-card-brand-icon">💳</span><span class="simple-card-name"><strong>${escapeCardDetail(card.name)}</strong><small>Fecha dia ${card.closing || '?'} · Vence dia ${card.due || '?'}</small></span><span class="simple-card-metrics"><span><small>Em formação</small><b>${formatCurrency(overview.openAmount)}</b></span><span class="is-closed"><small>Fatura do ciclo</small><b>${formatCurrency(closedAmount)}</b></span><span class="is-payable"><small>Total em aberto</small><b>${formatCurrency(overview.closed.remaining)}</b></span><span><small>Disponível</small><b>${formatCurrency(overview.availableLimit)}</b></span></span></button>
       <div class="credit-card-limit-block ${safetyState.className}">
   <div class="credit-card-limit-copy">
     <span>
@@ -6176,7 +6228,7 @@ function updateCreditCardsDashboard() {
                 .map((entry) => renderSimpleCardEntry(entry, { showTimingStatus: true, sourcePool: openEntries }))
                 .join('') || '<p class="hint">Nenhum lançamento encontrado na fatura em formação.</p>'
             }</div></section>
-      <section class="simple-card-cycle is-payable"><div class="simple-card-section-heading"><div><strong>Fatura fechada a pagar</strong><small>${closed.dueDate.split('-').reverse().join('/')} · ${getCardStatementStatusLabel(payableStatement)} · Pago ${formatCurrency(overview.closed.paid)} · Restante ${formatCurrency(overview.closed.remaining)}</small></div><b>${formatCurrency(overview.closed.remaining)}</b></div>${storedPayableStatement && payableStatement ? `<details class="simple-card-admin"><summary><span>Gerenciar pagamentos da fatura</span><small>${payments.length ? `${payments.length} pagamento(s) registrado(s)` : 'Informar ou corrigir pagamento'}</small></summary><div class="simple-card-controls"><h4>Pagamentos da fatura</h4>${overview.closed.credit > 0 ? `<p class="simple-card-credit-notice">Crédito no cartão: <strong>${formatCurrency(overview.closed.credit)}</strong></p>` : ''}${paymentRows || '<p class="hint">Nenhum pagamento registrado.</p>'}<form class="simple-card-payment-form" data-statement-id="${payableStatement.id}"><input type="date" name="date" value="${getTodayISO()}" required><input type="number" step="0.01" min="0.01" name="amount" placeholder="Valor" required><input name="observation" placeholder="Observação"><button class="action-btn" type="submit">Adicionar pagamento</button></form><h4>Conciliação manual</h4><div class="simple-card-reconciliation-summary"><span>Calculado pelas Notas: <b>${formatCurrency(reconciliation.calculated)}</b></span><span>Valor real no banco: <b>${reconciliation.bankAmount === null ? 'Não informado' : formatCurrency(reconciliation.bankAmount)}</b></span><span>Diferença: <b>${reconciliation.difference === null ? '—' : formatCurrency(reconciliation.difference)}</b></span></div><form class="simple-card-reconcile-form" data-statement-id="${payableStatement.id}"><label>Valor real no banco<input type="number" step="0.01" min="0" name="bankAmount" value="${reconciliation.bankAmount ?? ''}" required></label><label>Fechamento real<input type="date" name="actualClosingDate" value="${payableStatement.actualClosingDate || payableStatement.closingDate}" required></label><label>Vencimento real (opcional)<input type="date" name="actualDueDate" value="${payableStatement.actualDueDate || ''}"></label><button class="action-btn" type="submit">Salvar conciliação</button></form><p class="hint">A conciliação ajusta somente a fatura; não modifica as Notas nem o Livre.</p><h4>Ajustes simples</h4>${adjustmentRows}<form class="simple-card-adjustment-form" data-statement-id="${payableStatement.id}"><input type="date" name="date" value="${getTodayISO()}" required><input name="description" placeholder="Descrição" required><input type="number" step="0.01" name="amount" placeholder="Valor + ou -" required><button class="action-btn" type="submit">Adicionar ajuste</button></form></div></details>` : '<p class="simple-card-closing-note">Nenhuma fatura fechada para pagar neste período.</p>'}<div class="simple-card-entry-list">${
+      <section class="simple-card-cycle is-payable"><div class="simple-card-section-heading"><div><strong>Fatura fechada</strong><small>Fechou em ${formatCardDate(effectiveClosingDate)} · vence em ${formatCardDate(effectiveDueDate)}</small></div><b>${endingBalance > 0.005 ? `Ainda a pagar ${formatCurrency(endingBalance)}` : endingBalanceText}</b></div><div class="simple-card-balance-flow">${closedBalanceItems}</div>${storedPayableStatement && payableStatement ? `<details class="simple-card-admin"><summary><span>Pagamentos</span><small>${payments.length ? `${payments.length} informado(s)` : overview.closed.assumedPaid > 0.005 ? 'Quitação automática considerada' : 'Nenhum informado'}</small></summary><div class="simple-card-controls"><h4>Pagamentos registrados</h4><p class="hint">Sem valor manual, o sistema considera a quitação integral no vencimento. Ao informar um ou mais pagamentos, eles substituem essa suposição automática.</p>${overview.closed.credit > 0 ? `<p class="simple-card-credit-notice">Crédito confirmado após esta fatura: <strong>${formatCurrency(overview.closed.credit)}</strong><small>Esse crédito parte de um valor oficial informado e pode ser transportado com segurança.</small></p>` : ''}${overview.closed.unverifiedExcess > 0 ? `<p class="simple-card-credit-notice is-unverified">Excesso não transformado em crédito: <strong>${formatCurrency(overview.closed.unverifiedExcess)}</strong><small>Como o histórico de compras pode estar incompleto, confirme o valor oficial da fatura abaixo antes de transportar esse saldo.</small></p>` : ''}${paymentRows || '<p class="hint">Nenhum pagamento manual registrado.</p>'}<form class="simple-card-payment-form" data-statement-id="${payableStatement.id}"><input type="date" name="date" value="${getTodayISO()}" required><input type="number" step="0.01" min="0.01" name="amount" placeholder="Valor" required><input name="observation" placeholder="Observação"><button class="action-btn" type="submit">Adicionar pagamento</button></form><details class="simple-card-advanced"><summary><span>Conferência e correções opcionais</span><small>Use somente quando a fatura do banco divergir das Notas</small></summary><div class="simple-card-advanced-body"><h4>Conferir valor fechado com o banco</h4><p class="hint">Informe o total oficial mostrado pelo banco. Ele substitui somente o valor desta fatura, não altera as Notas nem o Livre e reinicia o saldo transportado a partir deste mês.</p><div class="simple-card-reconciliation-summary"><span>Calculado pelas Notas: <b>${formatCurrency(reconciliation.calculated)}</b></span><span>Valor oficial do banco: <b>${reconciliation.bankAmount === null ? 'Não informado' : formatCurrency(reconciliation.bankAmount)}</b></span><span>Diferença: <b>${reconciliation.difference === null ? '—' : formatCurrency(reconciliation.difference)}</b></span></div><form class="simple-card-reconcile-form" data-statement-id="${payableStatement.id}"><label>Valor oficial da fatura<input type="number" step="0.01" min="0" name="bankAmount" value="${reconciliation.bankAmount ?? ''}" required></label><label>Fechamento real<input type="date" name="actualClosingDate" value="${payableStatement.actualClosingDate || payableStatement.closingDate}" required></label><label>Vencimento real (opcional)<input type="date" name="actualDueDate" value="${payableStatement.actualDueDate || ''}"></label><button class="action-btn" type="submit">Salvar conferência</button></form><h4>Juros, tarifas ou correções ausentes nas Notas</h4><p class="hint">Use ajustes apenas para valores presentes na fatura bancária que não possuem uma Nota correspondente.</p>${adjustmentRows}<form class="simple-card-adjustment-form" data-statement-id="${payableStatement.id}"><input type="date" name="date" value="${getTodayISO()}" required><input name="description" placeholder="Descrição" required><input type="number" step="0.01" name="amount" placeholder="Valor + ou -" required><button class="action-btn" type="submit">Adicionar ajuste</button></form></div></details></div></details>` : '<p class="simple-card-closing-note">Nenhuma fatura fechada para pagar neste período.</p>'}<div class="simple-card-entry-list">${
         orderSimpleCardEntries(filteredClosedEntries, closedEntries)
           .map((entry) => renderSimpleCardEntry(entry, { sourcePool: closedEntries }))
           .join('') || '<p class="hint">Nenhum lançamento encontrado nesta fatura.</p>'
@@ -6267,8 +6319,11 @@ function updateCreditCardsDashboard() {
       const statement = creditCardStatements.find((item) => item.id === form.dataset.statementId);
       const amount = Number(form.elements.amount.value);
       if (!statement || !form.elements.date.value || !(amount > 0)) return showToast('Informe data e valor válidos.', 'error');
-      const payment = { id: `payment_${Date.now()}`, cardId: statement.cardId, statementId: statement.id, date: form.elements.date.value, amount: CardStatements.roundMoney(amount), observation: form.elements.observation.value.trim() };
-      await saveStatementMutation(statement, { payments: CardStatements.addOrReplaceById(statement.payments, payment) });
+      const payment = { id: `payment_${Date.now()}`, cardId: statement.cardId, statementId: statement.id, date: form.elements.date.value, amount: CardStatements.roundMoney(amount), observation: form.elements.observation.value.trim(), source: 'manual' };
+      await saveStatementMutation(statement, {
+        payments: CardStatements.addOrReplaceById(statement.payments, payment),
+        legacyPaymentSuppressedAt: new Date().toISOString(),
+      });
       showToast('Pagamento registrado somente na fatura.', 'success');
     }),
   );
@@ -6286,7 +6341,18 @@ function updateCreditCardsDashboard() {
       if (!(amount > 0)) return showToast('Informe um valor válido.', 'error');
       const observation = await showPrompt('Nova observação:', payment.observation || '');
       if (observation === null) return;
-      await saveStatementMutation(statement, { payments: CardStatements.addOrReplaceById(statement.payments, { ...payment, date, amount: CardStatements.roundMoney(amount), observation: observation.trim() }) });
+      const editedPayment = {
+        ...payment,
+        id: CardStatements.isLegacyPayment(payment) ? `payment_${Date.now()}` : payment.id,
+        date,
+        amount: CardStatements.roundMoney(amount),
+        observation: observation.trim(),
+        source: 'manual',
+      };
+      await saveStatementMutation(statement, {
+        payments: CardStatements.addOrReplaceById(CardStatements.removeById(statement.payments, payment.id), editedPayment),
+        ...(CardStatements.isLegacyPayment(payment) ? { legacyPaymentSuppressedAt: new Date().toISOString() } : {}),
+      });
       showToast('Pagamento atualizado.', 'success');
     }),
   );
@@ -6294,7 +6360,11 @@ function updateCreditCardsDashboard() {
     button.addEventListener('click', async () => {
       const statement = creditCardStatements.find((item) => item.id === button.dataset.statementId);
       if (!statement || !(await showConfirm('Excluir este pagamento?', true))) return;
-      await saveStatementMutation(statement, { payments: CardStatements.removeById(statement.payments, button.dataset.itemId) });
+      const removedPayment = statement.payments?.find((payment) => payment.id === button.dataset.itemId);
+      await saveStatementMutation(statement, {
+        payments: CardStatements.removeById(statement.payments, button.dataset.itemId),
+        ...(CardStatements.isLegacyPayment(removedPayment) ? { legacyPaymentSuppressedAt: new Date().toISOString() } : {}),
+      });
     }),
   );
   container.querySelectorAll('.simple-card-reconcile-form').forEach((form) =>

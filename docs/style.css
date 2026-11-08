@@ -4999,9 +4999,40 @@ body.annual-drag-active .annual-empty-month-drop-zone {
 }
 
 .simple-card-panel {
+  position: relative;
   overflow: hidden;
   gap: 7px;
   padding: 11px;
+  border: 1px solid rgba(247, 200, 74, .2);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .2), inset 0 1px 0 rgba(255, 255, 255, .025);
+}
+
+#credit-cards-dashboard-list {
+  gap: 20px !important;
+  padding: 3px 0;
+}
+
+.simple-card-panel + .simple-card-panel {
+  margin-top: 6px;
+}
+
+.simple-card-panel + .simple-card-panel::before {
+  content: '';
+  position: absolute;
+  top: -14px;
+  left: 5%;
+  right: 5%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(247, 200, 74, .48), transparent);
+}
+
+.simple-card-panel:nth-child(even) {
+  border-color: rgba(124, 107, 226, .28);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .2), inset 3px 0 0 rgba(124, 107, 226, .34);
+}
+
+.simple-card-panel:nth-child(odd) {
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .2), inset 3px 0 0 rgba(247, 200, 74, .3);
 }
 
 .simple-card-panel > .credit-card-limit-block {
@@ -5045,7 +5076,7 @@ body.annual-drag-active .annual-empty-month-drop-zone {
 
 .simple-card-metrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  grid-template-columns: repeat(4, minmax(108px, 1fr));
   gap: 0;
   flex: 1;
   overflow: hidden;
@@ -5067,6 +5098,10 @@ body.annual-drag-active .annual-empty-month-drop-zone {
 
 .simple-card-metrics > span.is-payable b {
   color: #7cda78;
+}
+
+.simple-card-metrics > span.is-closed b {
+  color: #f7c84a;
 }
 
 .simple-card-metrics small { color: #aaaac4; font-size: .68rem; }
@@ -5114,6 +5149,28 @@ body.annual-drag-active .annual-empty-month-drop-zone {
 
 .simple-card-section-heading > div { display: grid; gap: 2px; }
 .simple-card-section-heading small { color: #aaaac4; }
+.simple-card-section-heading > b { white-space: nowrap; }
+
+.simple-card-balance-flow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+  gap: 7px;
+}
+
+.simple-card-balance-flow > span {
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 9px;
+  background: rgba(8,8,20,.28);
+}
+
+.simple-card-balance-flow small { color: #9b9bb5; font-size: .65rem; }
+.simple-card-balance-flow b { font-size: .82rem; font-variant-numeric: tabular-nums; }
+.simple-card-balance-flow .is-credit b,
+.simple-card-balance-flow .is-settled b { color: #76db76; }
+.simple-card-balance-flow .is-due b { color: #f7c84a; }
 
 .simple-card-section-toolbar {
   display: grid;
@@ -5262,9 +5319,44 @@ body.annual-drag-active .annual-empty-month-drop-zone {
 
 .simple-card-controls h4 { margin: 7px 0; color: #f7c84a; }
 .simple-card-credit-notice {
-  margin: 6px 0;
+  display: grid;
+  gap: 3px;
+  margin: 6px 0 10px;
+  padding: 9px 10px;
+  border: 1px solid rgba(98,196,98,.22);
+  border-radius: 8px;
+  background: rgba(98,196,98,.055);
   color: #76db76;
 }
+.simple-card-credit-notice small { color: #a8cba8; font-size: .66rem; }
+.simple-card-credit-notice.is-unverified {
+  border-color: rgba(247,200,74,.28);
+  background: rgba(247,200,74,.07);
+  color: #f7c84a;
+}
+.simple-card-credit-notice.is-unverified small { color: #c9bd94; }
+
+.simple-card-advanced {
+  margin-top: 10px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 9px;
+  background: rgba(8,8,20,.22);
+  overflow: hidden;
+}
+
+.simple-card-advanced > summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 11px;
+  cursor: pointer;
+  color: #d8d2f4;
+  font-weight: 700;
+}
+
+.simple-card-advanced > summary small { color: #9292aa; font-size: .62rem; font-weight: 500; }
+.simple-card-advanced[open] > summary { border-bottom: 1px solid rgba(255,255,255,.07); }
+.simple-card-advanced-body { padding: 4px 11px 11px; }
 .simple-card-control-row {
   display: grid;
   grid-template-columns: minmax(0,1fr) auto auto auto;
@@ -5273,6 +5365,8 @@ body.annual-drag-active .annual-empty-month-drop-zone {
   padding: 7px 0;
   border-bottom: 1px solid rgba(255,255,255,.07);
 }
+.simple-card-control-row > span { display: grid; gap: 2px; }
+.simple-card-control-row > span small { color: #9292aa; font-size: .62rem; }
 
 .simple-card-payment-form,
 .simple-card-adjustment-form,
@@ -5323,7 +5417,7 @@ body.annual-drag-active .annual-empty-month-drop-zone {
   .simple-card-name { min-width: 0; }
   .simple-card-metrics {
     grid-column: 1 / -1;
-    grid-template-columns: repeat(3, minmax(0,1fr));
+    grid-template-columns: repeat(2, minmax(0,1fr));
     width: 100%;
     margin-top: 4px;
   }
@@ -5340,7 +5434,9 @@ body.annual-drag-active .annual-empty-month-drop-zone {
   .simple-card-section-toolbar .credit-card-filter-actions { justify-content: stretch; }
   .simple-card-section-toolbar .credit-card-search { flex: 1; min-width: 0; }
   .simple-card-timing-summary { grid-template-columns: 1fr; }
+  .simple-card-balance-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .simple-card-admin > summary { align-items: flex-start; flex-direction: column; }
+  .simple-card-advanced > summary { align-items: flex-start; flex-direction: column; }
 }
 
 

@@ -6,6 +6,7 @@ const vm = require('node:vm');
 
 const BankImport = require('../docs/bank-import');
 const PdfStatementReader = require('../docs/pdf-statement-reader');
+const ImageStatementReader = require('../docs/image-statement-reader');
 
 function loadFinanceApiWithFakeFirestore(initialDocuments = {}) {
   const documents = new Map(Object.entries(initialDocuments));
@@ -406,6 +407,83 @@ test('mesmo extrato repetido ou extratos sobrepostos usam a mesma impressão dig
   assert.match(result.statusReason, /importado/i);
 });
 
+test('correção do nome não altera a impressão digital do texto bancário original', () => {
+  const original = transaction({
+    date: '2026-10-06',
+    postedDate: '2026-10-07',
+    rawDescription: 'PHARMACIE GA BOUCHERVI BOUCHERVILLE QC',
+    merchant: 'PHARMACIE GA BOUCHERVI BOUCHERVILLE QC',
+    amount: 34.45,
+    paymentMethodId: 'cibc-luana',
+    owner: 'Luana'
+  });
+  const corrected = { ...original, merchant: 'JEAN COUTU' };
+  assert.equal(BankImport.fingerprint(original), BankImport.fingerprint(corrected));
+});
+
+test('reimportação reconhece Nota antiga cujo nome corrigido mudou a impressão', () => {
+  const item = transaction({
+    date: '2026-10-06',
+    postedDate: '2026-10-07',
+    rawDescription: 'PHARMACIE GA BOUCHERVI BOUCHERVILLE QC',
+    merchant: 'PHARMACIE GA BOUCHERVI BOUCHERVILLE QC',
+    category: '',
+    amount: 34.45,
+    paymentMethodId: 'cibc-luana',
+    owner: 'Luana',
+    occurrence: 1
+  });
+  const existing = [{
+    id: 'jean-coutu-importado',
+    month: '2026-10',
+    date: '2026-10-06',
+    postedDate: '2026-10-07',
+    merchant: 'JEAN COUTU',
+    category: 'Saúde',
+    amount: 34.45,
+    owner: 'Luana',
+    paymentMethodId: 'cibc-luana',
+    bankImportFingerprint: 'impressao-legada-diferente',
+    bankImportOccurrence: 1
+  }];
+  const aliasKey = BankImport.normalizeMerchant(item.rawDescription);
+  const [result] = BankImport.reconcileTransactions([item], existing, {
+    aliases: { [aliasKey]: { merchant: 'JEAN COUTU', category: 'Saúde' } }
+  });
+  assert.equal(result.status, BankImport.STATUS.EXISTING);
+  assert.equal(result.matchedReceipt.id, 'jean-coutu-importado');
+  assert.equal(result.merchant, 'JEAN COUTU');
+});
+
+test('ocorrência diferente não é absorvida por Nota importada visualmente igual', () => {
+  const second = transaction({
+    date: '2026-10-06',
+    postedDate: '2026-10-07',
+    rawDescription: 'PHARMACIE GA BOUCHERVI BOUCHERVILLE QC',
+    merchant: 'JEAN COUTU',
+    category: 'Saúde',
+    amount: 34.45,
+    paymentMethodId: 'cibc-luana',
+    owner: 'Luana',
+    occurrence: 2
+  });
+  const existing = [{
+    id: 'primeira-compra',
+    month: '2026-10',
+    date: '2026-10-06',
+    postedDate: '2026-10-07',
+    merchant: 'JEAN COUTU',
+    category: 'Saúde',
+    amount: 34.45,
+    owner: 'Luana',
+    paymentMethodId: 'cibc-luana',
+    bankImportFingerprint: 'impressao-da-primeira-compra',
+    bankImportOccurrence: 1
+  }];
+  const [result] = BankImport.reconcileTransactions([second], existing);
+  assert.notEqual(result.status, BankImport.STATUS.EXISTING);
+});
+
 test('decisão manual de já cadastrado é persistida e reconhecida na reimportação', async () => {
   const item = transaction({ rawDescription: 'MANUAL MATCH BANK TEXT', merchant: 'Nome diferente', category: 'Lojas' });
   const { api, documents } = loadFinanceApiWithFakeFirestore();
@@ -574,7 +652,7 @@ test('categoria desconhecida exige revisão e associação confirmada é reutili
   const unknown = transaction({ category: '', merchant: 'RAW UNKNOWN SHOP', rawDescription: 'RAW UNKNOWN SHOP 9283' });
   const [review] = BankImport.reconcileTransactions([unknown], []);
   assert.equal(review.status, BankImport.STATUS.REVIEW);
-  assert.match(review.statusReason, /valor foi lido do PDF/i);
+  assert.match(review.statusReason, /valor foi lido do extrato/i);
   assert.equal(review.matchedReceipt, undefined);
   const normalized = BankImport.normalizeMerchant(unknown.rawDescription);
   const [known] = BankImport.reconcileTransactions([unknown], [], {
@@ -1028,6 +1106,170 @@ test('leitor local aceita versões do PDF.js sem document.destroy e descarta os 
   delete globalThis.pdfjsLib;
 });
 
+test('capturas do app CIBC herdam o cabeçalho de data e removem sobreposição entre imagens', () => {
+  const prepared = BankImport.prepareImageStatementText([
+    `CIBC Mastercard
+Oct 27, 2026
+DESJARDINS SECURITE FI MONTREAL, QC $25.00
+5223********5380
+SUSHI SHOP - 2324 MONTREAL, QC $20.17
+PAYMENT THANK YOU/PAIEMENT MERCI - $3,384.00
+Oct 26, 2026
+COSTCO WHOLESALE W1359 SAINT-BRUNO, QC $447.04`,
+    `Oct 27, 2026
+SUSHI SHOP - 2324 MONTREAL, QC $20.17
+DESJARDINS SECURITE FI MONTREAL, QC $25.00`
+  ]);
+  const parsed = BankImport.parseStatementText(prepared.pages, { institution: 'cibc', source: 'image' });
+  assert.deepEqual(parsed.transactions.map((item) => [item.date, item.amount, item.type]), [
+    ['2026-10-27', 25, BankImport.TYPE.EXPENSE],
+    ['2026-10-27', 20.17, BankImport.TYPE.EXPENSE],
+    ['2026-10-27', 3384, BankImport.TYPE.PAYMENT],
+    ['2026-10-26', 447.04, BankImport.TYPE.EXPENSE]
+  ]);
+  assert.equal(parsed.transactions.every((item) => item.source === 'image-cibc'), true);
+});
+
+test('captura infere a data do item acima do primeiro cabeçalho e reconhece crédito', () => {
+  const prepared = BankImport.prepareImageStatementText([`AMZN Mktp CA TORONTO, ON - $24.82 Credit
+Oct 20, 2026
+SUSHI SHOP MONTREAL, QC $24.95`]);
+  const parsed = BankImport.parseStatementText(prepared.pages, { institution: 'cibc', source: 'image' });
+  assert.equal(parsed.transactions[0].date, '2026-10-21');
+  assert.equal(parsed.transactions[0].amount, -24.82);
+  assert.equal(parsed.transactions[0].type, BankImport.TYPE.CREDIT);
+  assert.equal(parsed.transactions[1].date, '2026-10-20');
+});
+
+test('OCR recompõe a dezena isolada em $1 0.96 sem contaminar o estabelecimento', () => {
+  const prepared = BankImport.prepareImageStatementText([`Oct 22, 2026
+UBER CANADA/UBERTRIP TORONTO, ON $1 0.96`]);
+  const parsed = BankImport.parseStatementText(prepared.pages, { institution: 'cibc', source: 'image' });
+  assert.equal(parsed.transactions.length, 1);
+  assert.equal(parsed.transactions[0].amount, 10.96);
+  assert.equal(parsed.transactions[0].rawAmount, 'CAD 10.96');
+  assert.equal(parsed.transactions[0].amountRecoveredFromSplit, false);
+  assert.doesNotMatch(parsed.transactions[0].rawDescription, /\$1/);
+});
+
+test('OCR CIBC em modo sparse recupera compras em linhas separadas e estorno', () => {
+  const prepared = BankImport.prepareImageStatementText([`Oct 23, 2026
+HP *INSTANT INK CA HALIFAX, NS
+$9.19 >
+5223********5380
+Oct 22, 2026
+UBER CANADA/UBERTRIP
+$10.96 >
+TORONTO, ON
+5223********5380
+Oct 21, 2026
+AMZN Mktp CA TORONTO, ON
+- $24.82 >
+5223********5380
+Credit
+Oct 20, 2026
+SUSHI SHOP - 2324 MONTREAL,
+S24`]);
+  const parsed = BankImport.parseStatementText(prepared.pages, { institution: 'cibc', source: 'image' });
+  assert.deepEqual(parsed.transactions.map(({ date, amount, type }) => [date, amount, type]), [
+    ['2026-10-23', 9.19, BankImport.TYPE.EXPENSE],
+    ['2026-10-22', 10.96, BankImport.TYPE.EXPENSE],
+    ['2026-10-21', -24.82, BankImport.TYPE.CREDIT]
+  ]);
+  assert.match(prepared.warnings.join(' '), /ilegíveis|cortados/);
+});
+
+test('OCR não confunde código do pedido com milhares, nem câmbio USD com despesa', () => {
+  const prepared = BankImport.prepareImageStatementText([`Nov 4, 2026
+AMZN Mktp CA*DB2NK3PZ3
+$111.25 >
+5223********5380
+Nov 2, 2026
+OPENAI *CHATGPT SUBSCR SAN
+$33.00 >
+FRANCISCO, CA 23.00 USD @
+1.434782
+5223********5380`]);
+  const parsed = BankImport.parseStatementText(prepared.pages, { institution: 'cibc', source: 'image' });
+  assert.equal(parsed.transactions.length, 2);
+  assert.deepEqual(parsed.transactions.map((item) => item.amount), [111.25, 33]);
+  assert.match(parsed.transactions[0].rawDescription, /DB2NK3PZ3/);
+});
+
+test('OCR não transforma status de crédito da compra anterior em estorno da próxima compra', () => {
+  const prepared = BankImport.prepareImageStatementText([`Nov 4, 2026
+SP META STORE - NA MENLO
+- $631.35 >
+PARK, CA
+f=? Credit
+5223********5380
+CHECK INSTALLMENT ELIGIBILITY
+COSTCO WHOLESALE W532
+BOUCHERVILLE, QC
+$155.80 >`]);
+  const parsed = BankImport.parseStatementText(prepared.pages, { institution: 'cibc', source: 'image' });
+  assert.deepEqual(parsed.transactions.map(({ amount, type }) => [amount, type]), [
+    [-631.35, BankImport.TYPE.CREDIT],
+    [155.8, BankImport.TYPE.EXPENSE]
+  ]);
+});
+
+test('OCR CIBC ignora pendentes não contabilizados e pagamento de fatura', () => {
+  const prepared = BankImport.prepareImageStatementText([`Amazon.ca TORONTO, ON
+$11.83 >
+5223********5380
+Pending
+AMZN Mktp CA TORONTO, ON
+$68.97 >
+5223********5380
+Pending
+Nov 5, 2026
+AMZN Mktp CA TORONTO, ON
+$29.94 >
+Oct 27, 2026
+PAYMENT THANK YOU/
+PAIEMEN T MERCI
+- $3,384.00 >
+5223********5380
+Credit`]);
+  const parsed = BankImport.parseStatementText(prepared.pages, { institution: 'cibc', source: 'image' });
+  assert.equal(parsed.transactions.length, 2);
+  assert.equal(parsed.transactions[0].amount, 29.94);
+  assert.equal(parsed.transactions[1].type, BankImport.TYPE.PAYMENT);
+  assert.equal(parsed.transactions[1].importable, false);
+  assert.match(prepared.warnings.join(' '), /2 compra\(s\) pendente/);
+});
+
+test('leitor de imagens reutiliza um único OCR local e encerra o worker', async () => {
+  let created = 0;
+  let terminated = 0;
+  let parameters = null;
+  const recognized = [];
+  const files = [
+    { name: 'parte-1.jpg', type: 'image/jpeg', size: 10 },
+    { name: 'parte-2.png', type: 'image/png', size: 20 }
+  ];
+  const result = await ImageStatementReader.readImages(files, {
+    async createWorker() {
+      created += 1;
+      return {
+        async setParameters(next) { parameters = next; },
+        async recognize(file) {
+          recognized.push(file.name);
+          return { data: { text: `texto de ${file.name}` } };
+        },
+        async terminate() { terminated += 1; }
+      };
+    }
+  });
+  assert.equal(created, 1);
+  assert.equal(terminated, 1);
+  assert.deepEqual(parameters, { tessedit_pageseg_mode: '11' });
+  assert.deepEqual(recognized, ['parte-1.jpg', 'parte-2.png']);
+  assert.deepEqual(result.pages, ['texto de parte-1.jpg', 'texto de parte-2.png']);
+  assert.equal(result.fileName, '2 imagens');
+});
+
 test('interface integra PDF, prévia e confirmação sem formulário de upload remoto', () => {
   const html = fs.readFileSync(path.join(__dirname, '../docs/index.html'), 'utf8');
   const css = fs.readFileSync(path.join(__dirname, '../docs/style.css'), 'utf8');
@@ -1035,8 +1277,10 @@ test('interface integra PDF, prévia e confirmação sem formulário de upload r
   const appSource = fs.readFileSync(path.join(__dirname, '../docs/app.js'), 'utf8');
   const apiSource = fs.readFileSync(path.join(__dirname, '../docs/firebase-api.js'), 'utf8');
   assert.match(html, /id="btn-open-bank-import"[^>]*>📄 Importar Extrato/);
-  assert.match(html, /id="bank-import-file"[^>]*accept="application\/pdf,.pdf"/);
-  assert.match(html, /O PDF é lido neste navegador e não é enviado nem armazenado/);
+  assert.match(html, /id="bank-import-file"[^>]*accept="application\/pdf,.pdf,image\/jpeg,image\/png,image\/webp/);
+  assert.match(html, /PDFs e imagens são lidos neste navegador e não são enviados nem armazenados/);
+  assert.match(html, /tesseract\.js@5/);
+  assert.match(html, /image-statement-reader\.js/);
   assert.match(html, /id="btn-confirm-bank-import"/);
   assert.doesNotMatch(html, /<form[^>]+action=["'][^"']+["'][^>]*bank-import/i);
   assert.doesNotMatch(readerSource, /fileHash|sha256/i);
@@ -1064,7 +1308,7 @@ test('interface integra PDF, prévia e confirmação sem formulário de upload r
   assert.match(css, /\.bank-import-row-meta\.has-match \{ grid-template-columns:/);
   assert.match(css, /\.bank-import-review-message, \.bank-import-match-card, \.bank-import-original-card/);
   assert.match(css, /border-radius: 9px; outline: none; background: #10101b/);
-  assert.match(importUiSource, /Despesas encontradas no PDF/);
+  assert.match(importUiSource, /Despesas encontradas no extrato/);
   assert.match(importUiSource, /Despesas selecionadas para importar/);
   assert.match(importUiSource, /hasRequiredBankImportFields\(transaction\)/);
 });

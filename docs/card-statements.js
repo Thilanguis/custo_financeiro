@@ -112,7 +112,7 @@
     return { calculated, bankAmount, difference, adjustments, amount, paid, remaining, credit };
   }
 
-  function getEffectiveStatementTotals(statement, openingBalance = 0) {
+  function getEffectiveStatementTotals(statement, openingBalance = 0, options = {}) {
     const totals = getStatementTotals(statement || {});
     const normalizedOpeningBalance = roundMoney(openingBalance);
 
@@ -120,24 +120,44 @@
     // fatura, incluindo qualquer saldo ou crédito anterior. Nesse caso ele
     // reinicia a cadeia e evita descontar o crédito duas vezes.
     const openingApplied = totals.bankAmount === null ? normalizedOpeningBalance : 0;
-    const endingBalance = roundMoney(openingApplied + totals.amount - totals.paid);
+    const recordedPaid = totals.paid;
+    const assumedPaid = options.assumeFullPayment && recordedPaid <= 0.005 ? roundMoney(Math.max(0, openingApplied + totals.amount)) : 0;
+    const effectivePaid = roundMoney(recordedPaid + assumedPaid);
+    const rawEndingBalance = roundMoney(openingApplied + totals.amount - effectivePaid);
+
+    // Um pagamento maior que as compras conhecidas não prova que o cartão ficou
+    // com crédito: o histórico local pode começar no meio de uma fatura. Crédito
+    // novo só é transportado quando o total oficial do banco foi informado. Um
+    // crédito oficial anterior ainda pode ser consumido normalmente pelas compras.
+    const trustedOpeningCredit = Math.max(0, -openingApplied);
+    const trustedCreditAfterCharges = Math.max(0, trustedOpeningCredit - Math.max(0, totals.amount));
+    const rawCredit = Math.max(0, -rawEndingBalance);
+    const effectiveCredit = totals.bankAmount === null ? Math.min(rawCredit, trustedCreditAfterCharges) : rawCredit;
+    const unverifiedExcess = roundMoney(Math.max(0, rawCredit - effectiveCredit));
+    const endingBalance = roundMoney(rawEndingBalance < 0 ? -effectiveCredit : rawEndingBalance);
 
     return {
       ...totals,
+      paid: effectivePaid,
+      recordedPaid,
+      assumedPaid,
+      paymentMode: assumedPaid > 0 ? 'automatic' : recordedPaid > 0 ? 'manual' : 'pending',
       openingBalance: normalizedOpeningBalance,
       openingApplied,
       carriedDebt: roundMoney(Math.max(0, openingApplied)),
       carriedCredit: roundMoney(Math.max(0, -openingApplied)),
       ownRemaining: totals.remaining,
-      ownCredit: totals.credit,
+      ownCredit: totals.bankAmount === null ? 0 : totals.credit,
       remaining: roundMoney(Math.max(0, endingBalance)),
       credit: roundMoney(Math.max(0, -endingBalance)),
       endingBalance,
+      rawEndingBalance,
+      unverifiedExcess,
       bankAmountIncludesCarryover: totals.bankAmount !== null,
     };
   }
 
-  function getCardOpeningBalance(card, referenceMonth, statements = []) {
+  function getCardOpeningBalance(card, referenceMonth, statements = [], todayISO = '') {
     if (!card?.id || !/^\d{4}-\d{2}$/.test(String(referenceMonth || ''))) return 0;
 
     // Mantém apenas a versão mais recente de cada mês de vencimento para evitar
@@ -165,7 +185,9 @@
     [...byDueMonth.entries()]
       .sort(([monthA], [monthB]) => monthA.localeCompare(monthB))
       .forEach(([, statement]) => {
-        balance = getEffectiveStatementTotals(statement, balance).endingBalance;
+        const dueDate = String(statement?.actualDueDate || statement?.dueDate || '');
+        const assumeFullPayment = Boolean(todayISO && dueDate && dueDate <= todayISO);
+        balance = getEffectiveStatementTotals(statement, balance, { assumeFullPayment }).endingBalance;
       });
 
     return roundMoney(balance);
@@ -199,6 +221,8 @@
     if (base.bankAmount !== undefined && base.bankAmount !== null && base.bankAmount !== '') statement.bankAmount = roundMoney(base.bankAmount);
     if (base.actualClosingDate) statement.actualClosingDate = base.actualClosingDate;
     if (base.actualDueDate) statement.actualDueDate = base.actualDueDate;
+    if (base.legacyPaymentMigratedAt) statement.legacyPaymentMigratedAt = base.legacyPaymentMigratedAt;
+    if (base.legacyPaymentSuppressedAt) statement.legacyPaymentSuppressedAt = base.legacyPaymentSuppressedAt;
     statement.status = getStatus(statement);
     return statement;
   }
@@ -224,8 +248,8 @@
     const payableStatement = isClosed
       ? refreshStatementCalculation(card, referenceMonth, payableEntries, exactStatement, new Date().toISOString())
       : null;
-    const openingBalance = getCardOpeningBalance(card, referenceMonth, statements);
-    const overview = getCardOverview(payableStatement, openEntries, realLimit, openingBalance);
+    const openingBalance = getCardOpeningBalance(card, referenceMonth, statements, todayISO);
+    const overview = getCardOverview(payableStatement, openEntries, realLimit, openingBalance, todayISO);
     const closedTotals = overview.closed;
 
     // Campos apenas de apresentação. Eles não são persistidos automaticamente,
@@ -263,8 +287,14 @@
 
   const removeById = (items, id) => (items || []).filter((item) => item.id !== id);
 
-  function getCardOverview(closedStatement, openEntries, realLimit, openingBalance = 0) {
-    const closed = getEffectiveStatementTotals(closedStatement || {}, openingBalance);
+  function isLegacyPayment(payment) {
+    return payment?.source === 'legacy-month-record' || String(payment?.id || '').startsWith('legacy_');
+  }
+
+  function getCardOverview(closedStatement, openEntries, realLimit, openingBalance = 0, todayISO = '') {
+    const dueDate = String(closedStatement?.actualDueDate || closedStatement?.dueDate || '');
+    const assumeFullPayment = Boolean(todayISO && dueDate && dueDate <= todayISO);
+    const closed = getEffectiveStatementTotals(closedStatement || {}, openingBalance, { assumeFullPayment });
     const openAmount = sumEntries(openEntries);
 
     // O crédito excedente fica reservado para abater a próxima fatura quando ela
@@ -292,7 +322,8 @@
       statementId: statement.id,
       date: record.date,
       amount: roundMoney(record.amount),
-      observation: 'Pagamento migrado do formato anterior',
+      observation: 'Migrado do controle anterior',
+      source: 'legacy-month-record',
     };
   }
 
@@ -321,6 +352,7 @@
     getCardMonthState,
     addOrReplaceById,
     removeById,
+    isLegacyPayment,
     getCardOverview,
     normalizeLegacyPayment,
     cloneForBackup,

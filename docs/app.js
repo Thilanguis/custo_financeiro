@@ -4625,6 +4625,10 @@ function updateDashboardView() {
     }
   }
 
+  // Apenas no Comparativo Orçamento x Real, agrega pela empresa dentro da
+  // categoria; cada lançamento continua guardando seu próprio responsável.
+  const comparativoCompanyKey = (category, company) =>
+    (category || '').trim().toLowerCase() + '||' + (company || '').trim().toLowerCase();
   const mapCat = {};
 
   plannedForMonth.forEach((p) => {
@@ -4632,7 +4636,7 @@ function updateDashboardView() {
     mapCat[p.category].planned += p.amount;
     if (p.installmentPlanId) mapCat[p.category].hasInstallment = true;
 
-    const key = makeKey(p.category, p.description, p.owner);
+    const key = comparativoCompanyKey(p.category, p.description);
     if (!mapCat[p.category].items.has(key)) {
       mapCat[p.category].items.set(key, {
         name: p.description,
@@ -4689,7 +4693,7 @@ function updateDashboardView() {
     if (r.isReimbursement) mapCat[r.category].hasReimbursement = true;
     if (r.amount < 0 && !r.isReimbursement) mapCat[r.category].hasActualIncome = true;
 
-    const key = makeKey(r.category, r.merchant, r.owner);
+    const key = comparativoCompanyKey(r.category, r.merchant);
     if (!mapCat[r.category].items.has(key)) {
       mapCat[r.category].items.set(key, {
         name: r.merchant,

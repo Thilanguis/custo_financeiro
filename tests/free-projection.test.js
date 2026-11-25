@@ -99,6 +99,24 @@ test('fatura transportada de mês anterior permanece obrigação separada', () =
   assert.equal(projection.estimatedFreeBalance, 4300);
 });
 
+test('mês passado não projeta pendência, mas preserva previsto x realizado no relatório', () => {
+  const options = {
+    month: '2026-10',
+    currentMonth: '2026-11',
+    plannedItems: [fixed({ month: '2026-10', amount: 100 })],
+    receipts: [receipt({ date: '2026-10-10', amount: 120 })],
+  };
+
+  const pending = FreeProjection.reconcilePendingFixedExpenses(options);
+  const comparison = FreeProjection.reconcileFixedExpenseComparison(options);
+
+  assert.deepEqual(pending, []);
+  assert.equal(comparison.length, 1);
+  assert.equal(comparison[0].amount, 100);
+  assert.equal(comparison[0].actualAmount, 120);
+  assert.equal(comparison[0].remainingAmount, 0);
+});
+
 test('renda do mês é priorizada e mês sem cadastro herda a última renda anterior', () => {
   const incomes = [
     { month: '2026-09', gabriel: 1000, luana: 2000 },

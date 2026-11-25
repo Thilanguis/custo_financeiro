@@ -27,8 +27,8 @@
     };
   }
 
-  function reconcilePendingFixedExpenses({ month, currentMonth, plannedItems, receipts }) {
-    if (!month || (currentMonth && month < currentMonth)) return [];
+  function reconcilePendingFixedExpenses({ month, currentMonth, plannedItems, receipts, includePast = false, includeSettled = false }) {
+    if (!month || (!includePast && currentMonth && month < currentMonth)) return [];
 
     const plans = (Array.isArray(plannedItems) ? plannedItems : []).filter(
       (item) => item.month === month && item.fixed && !item.isStatic && Number(item.amount) > 0,
@@ -87,7 +87,14 @@
       if (candidate) consume(item, candidate);
     });
 
-    return reconciled.filter((item) => item.remainingAmount > 0.005);
+    return includeSettled ? reconciled : reconciled.filter((item) => item.remainingAmount > 0.005);
+  }
+
+  // Relatório histórico: usa a mesma conciliação segura da projeção, mas mantém
+  // também os itens quitados ou ultrapassados. Ele é apenas informativo e nunca
+  // volta a descontar valores do Saldo Livre.
+  function reconcileFixedExpenseComparison(options) {
+    return reconcilePendingFixedExpenses({ ...options, includePast: true, includeSettled: true });
   }
 
   function calculateEstimatedFreeBalance(freeReal, pendingFixedItems = []) {
@@ -104,6 +111,7 @@
   return {
     resolveIncomeForMonth,
     reconcilePendingFixedExpenses,
+    reconcileFixedExpenseComparison,
     calculateEstimatedFreeBalance,
   };
 });

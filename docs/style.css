@@ -2546,6 +2546,7 @@ button:focus-visible,
 }
 
 .credit-card-status.is-partial,
+.credit-card-status.is-assumed,
 .credit-card-status.is-pending {
   border-color: rgba(247, 200, 74, 0.38);
   background: rgba(247, 200, 74, 0.11);
@@ -5012,6 +5013,32 @@ body.annual-drag-active .annual-empty-month-drop-zone {
   padding: 3px 0;
 }
 
+.credit-card-payment-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #aaaac4;
+  font-size: .76rem;
+}
+
+.credit-card-payment-progress b {
+  color: #7cda78;
+  font-size: .84rem;
+}
+
+.credit-card-payment-progress.has-action b,
+.credit-card-progress-action {
+  color: #ffd35c;
+}
+
+.credit-card-progress-action {
+  padding: 4px 7px;
+  border: 1px solid rgba(255, 211, 92, .28);
+  border-radius: 999px;
+  background: rgba(255, 211, 92, .08);
+  font-weight: 700;
+}
+
 .simple-card-panel + .simple-card-panel {
   margin-top: 6px;
 }
@@ -5074,6 +5101,41 @@ body.annual-drag-active .annual-empty-month-drop-zone {
   font-weight: 400;
 }
 
+.simple-card-payment-badge {
+  justify-self: start;
+  margin-top: 5px;
+  padding: 3px 7px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 999px;
+  color: #aaaac4;
+  background: rgba(255, 255, 255, .035);
+  font-size: .64rem;
+  line-height: 1.2;
+}
+
+.simple-card-payment-badge b {
+  font-variant-numeric: tabular-nums;
+}
+
+.simple-card-payment-badge.is-complete {
+  color: #83dd82;
+  border-color: rgba(118, 219, 118, .25);
+  background: rgba(118, 219, 118, .07);
+}
+
+.simple-card-payment-badge.is-action,
+.simple-card-payment-badge.is-assumed {
+  color: #ffd35c;
+  border-color: rgba(255, 211, 92, .3);
+  background: rgba(255, 211, 92, .08);
+}
+
+.simple-card-payment-badge.is-waiting {
+  color: #b9acef;
+  border-color: rgba(141, 120, 237, .25);
+  background: rgba(141, 120, 237, .07);
+}
+
 .simple-card-metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(108px, 1fr));
@@ -5130,6 +5192,44 @@ body.annual-drag-active .annual-empty-month-drop-zone {
 .simple-card-cycle.is-payable {
   border-color: rgba(247,200,74,.2);
 }
+
+.simple-card-payment-notice {
+  display: grid;
+  gap: 3px;
+  padding: 9px 11px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 9px;
+  color: #aaaac4;
+  background: rgba(8, 8, 20, .24);
+  font-size: .75rem;
+}
+
+.simple-card-payment-notice b {
+  color: #dedbea;
+}
+
+.simple-card-payment-notice.is-complete {
+  border-color: rgba(118, 219, 118, .25);
+  background: rgba(118, 219, 118, .06);
+}
+
+.simple-card-payment-notice.is-complete b { color: #83dd82; }
+
+.simple-card-payment-notice.is-action,
+.simple-card-payment-notice.is-assumed {
+  border-color: rgba(255, 211, 92, .32);
+  background: rgba(255, 211, 92, .08);
+}
+
+.simple-card-payment-notice.is-action b,
+.simple-card-payment-notice.is-assumed b { color: #ffd35c; }
+
+.simple-card-payment-notice.is-waiting {
+  border-color: rgba(141, 120, 237, .25);
+  background: rgba(141, 120, 237, .06);
+}
+
+.simple-card-payment-notice.is-waiting b { color: #b9acef; }
 
 .simple-card-section-heading {
   display: flex;
@@ -5411,6 +5511,11 @@ body.annual-drag-active .annual-empty-month-drop-zone {
 }
 
 @media (max-width: 760px) {
+  #card-credit-cards > .list-header-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .credit-card-payment-progress { flex-wrap: wrap; }
   .simple-card-summary {
     grid-template-columns: auto auto minmax(0, 1fr);
   }

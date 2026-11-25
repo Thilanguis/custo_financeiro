@@ -4051,6 +4051,15 @@ function getPendingFixedExpenses(month) {
   });
 }
 
+function getFixedExpenseComparison(month) {
+  return FreeProjection.reconcileFixedExpenseComparison({
+    month,
+    currentMonth: getCurrentMonthISO(),
+    plannedItems,
+    receipts,
+  });
+}
+
 function getPendingFixedProjectionEnd(month, pendingItems) {
   const datedItems = pendingItems.map((item) => item.date).filter((date) => date && date.startsWith(month));
 
@@ -4069,18 +4078,19 @@ function formatShortDate(date) {
   return date.split('-').reverse().slice(0, 2).join('/');
 }
 
-function renderFreeProjectionDetails(month, pendingItems, projectedBalance) {
+function renderFreeProjectionDetails(month, pendingItems, projectedBalance, fixedComparisonItems = []) {
   const details = document.getElementById('summary-fixed-details');
   const freeCard = document.querySelector('.dash-item-free');
   const arrow = document.getElementById('summary-free-projection-arrow');
   const afterFixed = document.getElementById('summary-free-after-fixed');
   const oldCardsDue = document.getElementById('summary-credit-cards-due');
   const hasPendingItems = pendingItems.length > 0;
+  const hasFixedComparison = fixedComparisonItems.length > 0;
   const cardInvoices = getCreditCardInvoicesForMonth(month);
   const pendingCardInvoices = cardInvoices.filter((invoice) => invoice.payment.remaining > 0.005);
   const paidCardInvoices = cardInvoices.filter((invoice) => invoice.payment.remaining <= 0.005);
   const hasCreditCards = cardInvoices.length > 0;
-  const hasDetails = hasPendingItems || hasCreditCards;
+  const hasDetails = hasFixedComparison || hasCreditCards;
   const cardsRemainingTotal = Math.round(pendingCardInvoices.reduce((sum, invoice) => sum + invoice.payment.remaining, 0) * 100) / 100;
 
   if (!summaryFreeProjectionToggle || !details || !freeCard || !arrow) return;
@@ -4095,12 +4105,12 @@ function renderFreeProjectionDetails(month, pendingItems, projectedBalance) {
   summaryFreeProjectionToggle.classList.toggle('is-available', hasDetails);
   summaryFreeProjectionToggle.setAttribute('aria-disabled', String(!hasDetails));
   summaryFreeProjectionToggle.setAttribute('aria-expanded', String(hasDetails && isFreeProjectionExpanded));
-  summaryFreeProjectionToggle.title = hasDetails ? 'Ver fixos pendentes e faturas de cartões' : 'Nenhum compromisso pendente';
+  summaryFreeProjectionToggle.title = hasDetails ? 'Ver previsto x realizado e faturas de cartões' : 'Nenhum detalhe disponível';
   arrow.textContent = isFreeProjectionExpanded ? '▼' : '▶';
 
   if (afterFixed) {
-    afterFixed.textContent = hasDetails ? `Após fixos: ${formatCurrency(projectedBalance)}` : '';
-    afterFixed.classList.toggle('visible', hasDetails);
+    afterFixed.textContent = hasPendingItems ? `Após fixos pendentes: ${formatCurrency(projectedBalance)}` : '';
+    afterFixed.classList.toggle('visible', hasPendingItems);
   }
 
   if (!hasDetails || !isFreeProjectionExpanded) {
@@ -4110,8 +4120,7 @@ function renderFreeProjectionDetails(month, pendingItems, projectedBalance) {
     return;
   }
 
-  const projectionEnd = hasPendingItems ? getPendingFixedProjectionEnd(month, pendingItems) : '';
-  const fixedRows = [...pendingItems]
+  const fixedRows = [...fixedComparisonItems]
     .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
     .map((item) => {
       const percent = (item.actualAmount / item.amount) * 100;
@@ -4140,13 +4149,22 @@ function renderFreeProjectionDetails(month, pendingItems, projectedBalance) {
       .map((invoice) => {
         const payment = invoice.payment;
         const dueLabel = payment.dueDate ? payment.dueDate.split('-').reverse().join('/') : '—';
+        const assumedSettlement = payment.assumedPaid && payment.remaining <= 0.005;
+        const paymentStatus = assumedSettlement
+          ? 'Quitação automática presumida'
+          : payment.paidAmount > 0.005
+            ? payment.remaining <= 0.005
+              ? 'Pagamento informado'
+              : 'Parcial · informado'
+            : payment.status;
+        const paymentStatusClass = assumedSettlement ? 'is-assumed' : payment.statusClass;
 
         return `<tr>
           <td class="dash-fixed-name"><span>${escapeCardDetail(invoice.card.name)}</span><small>Vence em ${dueLabel}</small></td>
           <td>${formatCurrency(payment.billedAmount)}</td>
           <td>${formatCurrency(payment.paidAmount)}</td>
           <td>${formatCurrency(payment.remaining)}</td>
-          <td><span class="credit-card-status ${payment.statusClass}">${payment.status}</span></td>
+          <td><span class="credit-card-status ${paymentStatusClass}">${paymentStatus}</span></td>
         </tr>`;
       })
       .join('');
@@ -4157,8 +4175,8 @@ function renderFreeProjectionDetails(month, pendingItems, projectedBalance) {
 
   details.innerHTML = `
     ${
-      hasPendingItems
-        ? `<div class="dash-free-details-title">Fixos pendentes até ${formatShortDate(projectionEnd)}</div>
+      hasFixedComparison
+        ? `<div class="dash-free-details-title">Fixos não estáticos <small>Previsto × realizado; a diferença é informativa e não desconta novamente o Livre.</small></div>
            <table class="dash-fixed-table"><thead><tr><th>Fixo</th><th>Prev.</th><th>Real</th><th>Diferença</th></tr></thead><tbody>${fixedRows}</tbody></table>`
         : ''
     }
@@ -4223,6 +4241,7 @@ function updateGlobalSummaries() {
   const saldoPrevisto = totalIncomePlanned === null ? null : totalIncomePlanned - netPlannedExpense;
   const saldoReal = totalIncomeReal === null ? null : totalIncomeReal - netActualExpense;
   const pendingFixedItems = getPendingFixedExpenses(month);
+  const fixedComparisonItems = getFixedExpenseComparison(month);
   const { estimatedFreeBalance: saldoAfterPendingFixed } = FreeProjection.calculateEstimatedFreeBalance(saldoReal, pendingFixedItems);
 
   /// UI - Renda (Mostra a Renda Total real) - Identificado como true para o modo seletivo
@@ -4246,7 +4265,7 @@ function updateGlobalSummaries() {
   if (plannedBalanceEl) plannedBalanceEl.textContent = saldoPrevisto === null ? '—' : formatCurrency(saldoPrevisto).replace('CAD ', '');
   elLivre.className = saldoReal === null ? 'status-warning' : saldoReal < 0 ? 'status-danger' : saldoReal < saldoPrevisto ? 'status-warning' : 'status-success';
 
-  renderFreeProjectionDetails(month, pendingFixedItems, saldoAfterPendingFixed);
+  renderFreeProjectionDetails(month, pendingFixedItems, saldoAfterPendingFixed, fixedComparisonItems);
 
   renderPlannedItemsList(month);
 }
@@ -6118,12 +6137,17 @@ function updateCreditCardsDashboard() {
   const referenceMonth = getCurrentMonth();
   const container = document.getElementById('credit-cards-dashboard-list');
   const wrapper = document.getElementById('card-credit-cards');
+  const paymentProgress = document.getElementById('credit-card-payment-progress');
   if (!container || !wrapper || !referenceMonth) return;
   const cards = paymentMethods.filter((method) => method.type === 'credito');
   wrapper.style.display = cards.length ? 'block' : 'none';
-  if (!cards.length) return;
+  if (!cards.length) {
+    if (paymentProgress) paymentProgress.innerHTML = '';
+    return;
+  }
   persistClosedCardStatements(referenceMonth);
   persistClosedCardStatements(shiftReferenceMonth(referenceMonth, -1));
+  const paymentTrackingItems = [];
 
   container.innerHTML = cards
     .map((card) => {
@@ -6169,6 +6193,25 @@ function updateCreditCardsDashboard() {
       const endingBalance = CardStatements.roundMoney(overview.closed.endingBalance);
       const effectiveClosingDate = CardStatements.getEffectiveClosingDate(closed);
       const effectiveDueDate = closed.actualDueDate || closed.dueDate;
+      const paymentTracking = CardStatements.getPaymentTrackingStatus(overview.closed, {
+        hasStatement: Boolean(state.isClosed && payableStatement),
+        dueDate: effectiveDueDate,
+        todayISO: getTodayISO(),
+      });
+      paymentTrackingItems.push({ cardId: card.id, ...paymentTracking });
+      const paymentTrackingNotice = paymentTracking.counted
+        ? paymentTracking.mode === 'automatic'
+          ? 'O sistema considerou a fatura quitada automaticamente no vencimento. Nenhuma ação é necessária; informe um pagamento somente se o banco mostrar algo diferente.'
+          : paymentTracking.mode === 'manual'
+            ? 'A quitação foi informada manualmente e substituiu a suposição automática.'
+            : paymentTracking.mode === 'manual-partial'
+              ? `Ainda restam ${formatCurrency(overview.closed.remaining)}. Complete ou corrija os pagamentos informados.`
+              : paymentTracking.needsAction
+                ? `Ainda restam ${formatCurrency(overview.closed.remaining)}. Informe ou corrija o pagamento desta fatura.`
+                : paymentTracking.mode === 'pending'
+                  ? 'A fatura ainda não venceu. Sem valor manual, o sistema considerará a quitação integral no vencimento.'
+                  : 'Esta fatura não possui valor pendente.'
+        : '';
       const formatCardDate = (date) => (date ? date.split('-').reverse().join('/') : 'data não informada');
       const endingBalanceText =
         endingBalance < -0.005
@@ -6202,7 +6245,7 @@ function updateCreditCardsDashboard() {
         )
         .join('');
       return `<article class="credit-card-card simple-card-panel ${isExpanded ? 'is-expanded' : ''}">
-      <button type="button" class="credit-card-summary simple-card-summary" data-credit-card-id="${card.id}" aria-expanded="${isExpanded}"><span class="toggle-icon">${isExpanded ? '▼' : '▶'}</span><span class="credit-card-brand-icon">💳</span><span class="simple-card-name"><strong>${escapeCardDetail(card.name)}</strong><small>Fecha dia ${card.closing || '?'} · Vence dia ${card.due || '?'}</small></span><span class="simple-card-metrics"><span><small>Em formação</small><b>${formatCurrency(overview.openAmount)}</b></span><span class="is-closed"><small>Fatura do ciclo</small><b>${formatCurrency(closedAmount)}</b></span><span class="is-payable"><small>Total em aberto</small><b>${formatCurrency(overview.closed.remaining)}</b></span><span><small>Disponível</small><b>${formatCurrency(overview.availableLimit)}</b></span></span></button>
+      <button type="button" class="credit-card-summary simple-card-summary" data-credit-card-id="${card.id}" aria-expanded="${isExpanded}"><span class="toggle-icon">${isExpanded ? '▼' : '▶'}</span><span class="credit-card-brand-icon">💳</span><span class="simple-card-name"><strong>${escapeCardDetail(card.name)}</strong><small>Fecha dia ${card.closing || '?'} · Vence dia ${card.due || '?'}</small>${paymentTracking.counted ? `<span class="simple-card-payment-badge ${paymentTracking.className}"><b>${paymentTracking.progressDone}/${paymentTracking.progressTotal}</b> ${paymentTracking.label}</span>` : '<span class="simple-card-payment-badge is-empty">— Sem fatura fechada</span>'}</span><span class="simple-card-metrics"><span><small>Em formação</small><b>${formatCurrency(overview.openAmount)}</b></span><span class="is-closed"><small>Fatura do ciclo</small><b>${formatCurrency(closedAmount)}</b></span><span class="is-payable"><small>Total em aberto</small><b>${formatCurrency(overview.closed.remaining)}</b></span><span><small>Disponível</small><b>${formatCurrency(overview.availableLimit)}</b></span></span></button>
       <div class="credit-card-limit-block ${safetyState.className}">
   <div class="credit-card-limit-copy">
     <span>
@@ -6232,7 +6275,7 @@ function updateCreditCardsDashboard() {
                 .map((entry) => renderSimpleCardEntry(entry, { showTimingStatus: true, sourcePool: openEntries }))
                 .join('') || '<p class="hint">Nenhum lançamento encontrado na fatura em formação.</p>'
             }</div></section>
-      <section class="simple-card-cycle is-payable"><div class="simple-card-section-heading"><div><strong>Fatura fechada</strong><small>Fechou em ${formatCardDate(effectiveClosingDate)} · vence em ${formatCardDate(effectiveDueDate)}</small></div><b>${endingBalance > 0.005 ? `Ainda a pagar ${formatCurrency(endingBalance)}` : endingBalanceText}</b></div><div class="simple-card-balance-flow">${closedBalanceItems}</div>${storedPayableStatement && payableStatement ? `<details class="simple-card-admin"><summary><span>Pagamentos</span><small>${payments.length ? `${payments.length} informado(s)` : overview.closed.assumedPaid > 0.005 ? 'Quitação automática considerada' : 'Nenhum informado'}</small></summary><div class="simple-card-controls"><h4>Pagamentos registrados</h4><p class="hint">Sem valor manual, o sistema considera a quitação integral no vencimento. Ao informar um ou mais pagamentos, eles substituem essa suposição automática.</p>${overview.closed.credit > 0 ? `<p class="simple-card-credit-notice">Crédito confirmado após esta fatura: <strong>${formatCurrency(overview.closed.credit)}</strong><small>Esse crédito parte de um valor oficial informado e pode ser transportado com segurança.</small></p>` : ''}${overview.closed.unverifiedExcess > 0 ? `<p class="simple-card-credit-notice is-unverified">Excesso não transformado em crédito: <strong>${formatCurrency(overview.closed.unverifiedExcess)}</strong><small>Como o histórico de compras pode estar incompleto, confirme o valor oficial da fatura abaixo antes de transportar esse saldo.</small></p>` : ''}${paymentRows || '<p class="hint">Nenhum pagamento manual registrado.</p>'}<form class="simple-card-payment-form" data-statement-id="${payableStatement.id}"><input type="date" name="date" value="${getTodayISO()}" required><input type="number" step="0.01" min="0.01" name="amount" placeholder="Valor" required><input name="observation" placeholder="Observação"><button class="action-btn" type="submit">Adicionar pagamento</button></form><details class="simple-card-advanced"><summary><span>Conferência e correções opcionais</span><small>Use somente quando a fatura do banco divergir das Notas</small></summary><div class="simple-card-advanced-body"><h4>Conferir valor fechado com o banco</h4><p class="hint">Informe o total oficial mostrado pelo banco. Ele substitui somente o valor desta fatura, não altera as Notas nem o Livre e reinicia o saldo transportado a partir deste mês.</p><div class="simple-card-reconciliation-summary"><span>Calculado pelas Notas: <b>${formatCurrency(reconciliation.calculated)}</b></span><span>Valor oficial do banco: <b>${reconciliation.bankAmount === null ? 'Não informado' : formatCurrency(reconciliation.bankAmount)}</b></span><span>Diferença: <b>${reconciliation.difference === null ? '—' : formatCurrency(reconciliation.difference)}</b></span></div><form class="simple-card-reconcile-form" data-statement-id="${payableStatement.id}"><label>Valor oficial da fatura<input type="number" step="0.01" min="0" name="bankAmount" value="${reconciliation.bankAmount ?? ''}" required></label><label>Fechamento real<input type="date" name="actualClosingDate" value="${payableStatement.actualClosingDate || payableStatement.closingDate}" required></label><label>Vencimento real (opcional)<input type="date" name="actualDueDate" value="${payableStatement.actualDueDate || ''}"></label><button class="action-btn" type="submit">Salvar conferência</button></form><h4>Juros, tarifas ou correções ausentes nas Notas</h4><p class="hint">Use ajustes apenas para valores presentes na fatura bancária que não possuem uma Nota correspondente.</p>${adjustmentRows}<form class="simple-card-adjustment-form" data-statement-id="${payableStatement.id}"><input type="date" name="date" value="${getTodayISO()}" required><input name="description" placeholder="Descrição" required><input type="number" step="0.01" name="amount" placeholder="Valor + ou -" required><button class="action-btn" type="submit">Adicionar ajuste</button></form></div></details></div></details>` : '<p class="simple-card-closing-note">Nenhuma fatura fechada para pagar neste período.</p>'}<div class="simple-card-entry-list">${
+      <section class="simple-card-cycle is-payable">${paymentTracking.counted ? `<div class="simple-card-payment-notice ${paymentTracking.className}"><b>${paymentTracking.progressDone}/${paymentTracking.progressTotal} · ${paymentTracking.label}</b><span>${paymentTrackingNotice}</span></div>` : ''}<div class="simple-card-section-heading"><div><strong>Fatura fechada</strong><small>Fechou em ${formatCardDate(effectiveClosingDate)} · vence em ${formatCardDate(effectiveDueDate)}</small></div><b>${endingBalance > 0.005 ? `Ainda a pagar ${formatCurrency(endingBalance)}` : endingBalanceText}</b></div><div class="simple-card-balance-flow">${closedBalanceItems}</div>${storedPayableStatement && payableStatement ? `<details class="simple-card-admin"><summary><span>Pagamentos</span><small>${payments.length ? `${payments.length} informado(s)` : overview.closed.assumedPaid > 0.005 ? 'Quitação automática considerada' : 'Nenhum informado'}</small></summary><div class="simple-card-controls"><h4>Pagamentos registrados</h4><p class="hint">Sem valor manual, o sistema considera a quitação integral no vencimento. Ao informar um ou mais pagamentos, eles substituem essa suposição automática.</p>${overview.closed.credit > 0 ? `<p class="simple-card-credit-notice">Crédito confirmado após esta fatura: <strong>${formatCurrency(overview.closed.credit)}</strong><small>Esse crédito parte de um valor oficial informado e pode ser transportado com segurança.</small></p>` : ''}${overview.closed.unverifiedExcess > 0 ? `<p class="simple-card-credit-notice is-unverified">Excesso não transformado em crédito: <strong>${formatCurrency(overview.closed.unverifiedExcess)}</strong><small>Como o histórico de compras pode estar incompleto, confirme o valor oficial da fatura abaixo antes de transportar esse saldo.</small></p>` : ''}${paymentRows || '<p class="hint">Nenhum pagamento manual registrado.</p>'}<form class="simple-card-payment-form" data-statement-id="${payableStatement.id}"><input type="date" name="date" value="${getTodayISO()}" required><input type="number" step="0.01" min="0.01" name="amount" placeholder="Valor" required><input name="observation" placeholder="Observação"><button class="action-btn" type="submit">Adicionar pagamento</button></form><details class="simple-card-advanced"><summary><span>Conferência e correções opcionais</span><small>Use somente quando a fatura do banco divergir das Notas</small></summary><div class="simple-card-advanced-body"><h4>Conferir valor fechado com o banco</h4><p class="hint">Informe o total oficial mostrado pelo banco. Ele substitui somente o valor desta fatura, não altera as Notas nem o Livre e reinicia o saldo transportado a partir deste mês.</p><div class="simple-card-reconciliation-summary"><span>Calculado pelas Notas: <b>${formatCurrency(reconciliation.calculated)}</b></span><span>Valor oficial do banco: <b>${reconciliation.bankAmount === null ? 'Não informado' : formatCurrency(reconciliation.bankAmount)}</b></span><span>Diferença: <b>${reconciliation.difference === null ? '—' : formatCurrency(reconciliation.difference)}</b></span></div><form class="simple-card-reconcile-form" data-statement-id="${payableStatement.id}"><label>Valor oficial da fatura<input type="number" step="0.01" min="0" name="bankAmount" value="${reconciliation.bankAmount ?? ''}" required></label><label>Fechamento real<input type="date" name="actualClosingDate" value="${payableStatement.actualClosingDate || payableStatement.closingDate}" required></label><label>Vencimento real (opcional)<input type="date" name="actualDueDate" value="${payableStatement.actualDueDate || ''}"></label><button class="action-btn" type="submit">Salvar conferência</button></form><h4>Juros, tarifas ou correções ausentes nas Notas</h4><p class="hint">Use ajustes apenas para valores presentes na fatura bancária que não possuem uma Nota correspondente.</p>${adjustmentRows}<form class="simple-card-adjustment-form" data-statement-id="${payableStatement.id}"><input type="date" name="date" value="${getTodayISO()}" required><input name="description" placeholder="Descrição" required><input type="number" step="0.01" name="amount" placeholder="Valor + ou -" required><button class="action-btn" type="submit">Adicionar ajuste</button></form></div></details></div></details>` : '<p class="simple-card-closing-note">Nenhuma fatura fechada para pagar neste período.</p>'}<div class="simple-card-entry-list">${
         orderSimpleCardEntries(filteredClosedEntries, closedEntries)
           .map((entry) => renderSimpleCardEntry(entry, { sourcePool: closedEntries }))
           .join('') || '<p class="hint">Nenhum lançamento encontrado nesta fatura.</p>'
@@ -6241,6 +6284,16 @@ function updateCreditCardsDashboard() {
       }</article>`;
     })
     .join('');
+
+  if (paymentProgress) {
+    const trackedPayments = paymentTrackingItems.filter((item) => item.counted);
+    const completedPayments = trackedPayments.filter((item) => item.completed).length;
+    const actionsNeeded = trackedPayments.filter((item) => item.needsAction).length;
+    paymentProgress.className = `credit-card-payment-progress ${actionsNeeded ? 'has-action' : trackedPayments.length ? 'is-complete' : 'is-empty'}`;
+    paymentProgress.innerHTML = trackedPayments.length
+      ? `<span><b>${completedPayments}/${trackedPayments.length}</b> pagamentos resolvidos</span>${actionsNeeded ? `<span class="credit-card-progress-action">${actionsNeeded} ${actionsNeeded === 1 ? 'requer ação' : 'requerem ação'}</span>` : ''}`
+      : '<span>Nenhuma fatura fechada neste mês</span>';
+  }
 
   container.querySelectorAll('.simple-card-summary').forEach((button) =>
     button.addEventListener('click', () => {

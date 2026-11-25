@@ -204,3 +204,56 @@ test('30. pagamento manual substitui a suposição automática e bloqueia nova m
   assert.match(appSource, /source: 'manual'/);
   assert.match(appSource, /legacyPaymentSuppressedAt/);
 });
+
+test('31. acompanhamento distingue pagamento automático, manual, parcial e aguardando vencimento', () => {
+  const automaticStatement = makeClosed([entry('2026-08-10', 300)]);
+  automaticStatement.dueDate = '2026-09-06';
+  const automaticTotals = cards.getCardOverview(automaticStatement, [], 2000, 0, '2026-09-07').closed;
+  assert.deepEqual(
+    cards.getPaymentTrackingStatus(automaticTotals, { dueDate: automaticStatement.dueDate, todayISO: '2026-09-07' }),
+    {
+      counted: true,
+      completed: true,
+      needsAction: false,
+      progressDone: 1,
+      progressTotal: 1,
+      mode: 'automatic',
+      label: 'Quitação automática presumida',
+      className: 'is-assumed',
+    },
+  );
+
+  const manualStatement = makeClosed([entry('2026-08-10', 300)]);
+  manualStatement.payments = [{ id: 'manual', date: '2026-09-05', amount: 300, source: 'manual' }];
+  const manualTotals = cards.getCardOverview(manualStatement, [], 2000, 0, '2026-09-07').closed;
+  const manualStatus = cards.getPaymentTrackingStatus(manualTotals, { dueDate: manualStatement.dueDate, todayISO: '2026-09-07' });
+  assert.equal(manualStatus.mode, 'manual');
+  assert.equal(manualStatus.className, 'is-complete');
+
+  const partialStatement = makeClosed([entry('2026-08-10', 300)]);
+  partialStatement.payments = [{ id: 'partial', date: '2026-09-05', amount: 100, source: 'manual' }];
+  const partialTotals = cards.getCardOverview(partialStatement, [], 2000, 0, '2026-09-07').closed;
+  const partialStatus = cards.getPaymentTrackingStatus(partialTotals, { dueDate: partialStatement.dueDate, todayISO: '2026-09-07' });
+  assert.equal(partialStatus.mode, 'manual-partial');
+  assert.equal(partialStatus.needsAction, true);
+  assert.equal(partialStatus.progressDone, 0);
+
+  const waitingStatement = makeClosed([entry('2026-08-10', 300)]);
+  const waitingTotals = cards.getCardOverview(waitingStatement, [], 2000, 0, '2026-09-01').closed;
+  const waitingStatus = cards.getPaymentTrackingStatus(waitingTotals, { dueDate: waitingStatement.dueDate, todayISO: '2026-09-01' });
+  assert.equal(waitingStatus.label, 'Aguardando vencimento');
+  assert.equal(waitingStatus.needsAction, false);
+  assert.equal(waitingStatus.progressDone, 0);
+});
+
+test('32. relatório expõe progresso e orientação de pagamento dentro de cada cartão', () => {
+  const appSource = fs.readFileSync(path.join(__dirname, '../docs/app.js'), 'utf8');
+  const cardSource = fs.readFileSync(path.join(__dirname, '../docs/card-statements.js'), 'utf8');
+  const htmlSource = fs.readFileSync(path.join(__dirname, '../docs/index.html'), 'utf8');
+  assert.match(htmlSource, /id="credit-card-payment-progress"/);
+  assert.match(appSource, /simple-card-payment-badge/);
+  assert.match(appSource, /simple-card-payment-notice/);
+  assert.match(appSource, /pagamentos resolvidos/);
+  assert.match(cardSource, /Quitação automática presumida/);
+  assert.match(appSource, /A quitação foi informada manualmente/);
+});

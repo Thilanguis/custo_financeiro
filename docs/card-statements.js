@@ -157,6 +157,83 @@
     };
   }
 
+  function getPaymentTrackingStatus(totals = {}, options = {}) {
+    if (options.hasStatement === false) {
+      return {
+        counted: false,
+        completed: false,
+        needsAction: false,
+        progressDone: 0,
+        progressTotal: 0,
+        mode: 'none',
+        label: 'Sem fatura fechada',
+        className: 'is-empty',
+      };
+    }
+
+    const remaining = roundMoney(Math.max(0, Number(totals.remaining) || 0));
+    const recordedPaid = roundMoney(Math.max(0, Number(totals.recordedPaid ?? totals.paid) || 0));
+    const assumedPaid = roundMoney(Math.max(0, Number(totals.assumedPaid) || 0));
+    const openingApplied = roundMoney(Number(totals.openingApplied) || 0);
+    const amount = roundMoney(Number(totals.amount) || 0);
+    const payableAmount = roundMoney(Math.max(0, openingApplied + amount));
+    const dueDate = String(options.dueDate || '');
+    const todayISO = String(options.todayISO || '');
+    const isDue = Boolean(dueDate && todayISO && dueDate <= todayISO);
+    const hasCharge = payableAmount > 0.005 || recordedPaid > 0.005 || assumedPaid > 0.005 || remaining > 0.005;
+
+    if (!hasCharge) {
+      return {
+        counted: true,
+        completed: true,
+        needsAction: false,
+        progressDone: 1,
+        progressTotal: 1,
+        mode: 'settled',
+        label: 'Sem valor a pagar',
+        className: 'is-complete',
+      };
+    }
+
+    if (remaining <= 0.005) {
+      const mode = assumedPaid > 0.005 ? 'automatic' : recordedPaid > 0.005 ? 'manual' : 'settled';
+      return {
+        counted: true,
+        completed: true,
+        needsAction: false,
+        progressDone: 1,
+        progressTotal: 1,
+        mode,
+        label: mode === 'automatic' ? 'Quitação automática presumida' : mode === 'manual' ? 'Pagamento informado' : 'Fatura quitada',
+        className: mode === 'automatic' ? 'is-assumed' : 'is-complete',
+      };
+    }
+
+    if (recordedPaid > 0.005) {
+      return {
+        counted: true,
+        completed: false,
+        needsAction: true,
+        progressDone: 0,
+        progressTotal: 1,
+        mode: 'manual-partial',
+        label: 'Pagamento parcial · ação necessária',
+        className: 'is-action',
+      };
+    }
+
+    return {
+      counted: true,
+      completed: false,
+      needsAction: isDue,
+      progressDone: 0,
+      progressTotal: 1,
+      mode: 'pending',
+      label: isDue ? 'Pagamento pendente · ação necessária' : 'Aguardando vencimento',
+      className: isDue ? 'is-action' : 'is-waiting',
+    };
+  }
+
   function getCardOpeningBalance(card, referenceMonth, statements = [], todayISO = '') {
     if (!card?.id || !/^\d{4}-\d{2}$/.test(String(referenceMonth || ''))) return 0;
 
@@ -345,6 +422,7 @@
     sumAdjustments,
     getStatementTotals,
     getEffectiveStatementTotals,
+    getPaymentTrackingStatus,
     getCardOpeningBalance,
     getStatus,
     createStatement,
